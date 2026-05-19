@@ -501,16 +501,367 @@ function DashboardView({ user, deals, contacts, tasks }) {
   );
 }
 
+
+function DealDetail({ deal, user, onClose, onRefresh }) {
+  const [tab,setTab]           = useState("overview");
+  const [activities,setActs]   = useState([]);
+  const [documents,setDocs]    = useState([]);
+  const [loading,setLoading]   = useState(true);
+  const [actForm,setActForm]   = useState({activity_type:"note",content:""});
+  const [savingAct,setSavingAct] = useState(false);
+  const [editMode,setEditMode] = useState(false);
+  const [editForm,setEditForm] = useState({
+    address:deal.address||"", city:deal.city||"", state:deal.state||"FL",
+    zip:deal.zip||"", price:deal.price||"", status:deal.status||"New",
+    deal_type:deal.deal_type||"Listing", mls_number:deal.mls_number||"",
+    bedrooms:deal.bedrooms||"", bathrooms:deal.bathrooms||"",
+    sqft:deal.sqft||"", year_built:deal.year_built||"",
+    commission_rate:deal.commission_rate||"", close_date:deal.close_date||"",
+    notes:deal.notes||"",
+  });
+  const [savingEdit,setSavingEdit] = useState(false);
+  const [toast,setToast]       = useState(null);
+  const setE = (k,v) => setEditForm(f=>({...f,[k]:v}));
+
+  const fmt = n=>n>=1e6?`$${(n/1e6).toFixed(1)}M`:n>=1e3?`$${(n/1e3).toFixed(0)}K`:`$${n}`;
+
+  const ACT_TYPES = [
+    {value:"note",    label:"Note",    icon:"📝"},
+    {value:"call",    label:"Call",    icon:"📞"},
+    {value:"email",   label:"Email",   icon:"📧"},
+    {value:"showing", label:"Showing", icon:"🏠"},
+    {value:"offer",   label:"Offer",   icon:"📄"},
+  ];
+
+  useEffect(()=>{
+    setLoading(true);
+    Promise.all([
+      supabase.from("deal_activities").select("*").eq("deal_id",deal.id).order("created_at",{ascending:false}),
+      supabase.from("deal_documents").select("*").eq("deal_id",deal.id).order("created_at",{ascending:false}),
+    ]).then(([a,d])=>{
+      setActs(a.data||[]);
+      setDocs(d.data||[]);
+      setLoading(false);
+    });
+  },[deal.id]);
+
+  const addActivity = async () => {
+    if(!actForm.content.trim()) return;
+    setSavingAct(true);
+    const { error } = await supabase.from("deal_activities").insert({
+      deal_id:deal.id, activity_type:actForm.activity_type,
+      content:actForm.content, created_by:user?.email,
+    });
+    setSavingAct(false);
+    if(!error){
+      setActForm({activity_type:"note",content:""});
+      const { data } = await supabase.from("deal_activities").select("*").eq("deal_id",deal.id).order("created_at",{ascending:false});
+      setActs(data||[]);
+      setToast({msg:"Activity logged",type:"success"});
+    }
+  };
+
+  const saveEdit = async () => {
+    setSavingEdit(true);
+    const update = {
+      ...editForm,
+      price:editForm.price?parseFloat(String(editForm.price).replace(/[^0-9.]/g,"")):null,
+      bedrooms:editForm.bedrooms?parseInt(editForm.bedrooms):null,
+      bathrooms:editForm.bathrooms?parseFloat(editForm.bathrooms):null,
+      sqft:editForm.sqft?parseInt(editForm.sqft):null,
+      commission_rate:editForm.commission_rate?parseFloat(editForm.commission_rate):null,
+      updated_at:new Date().toISOString(),
+    };
+    const { error } = await supabase.from("deals").update(update).eq("id",deal.id);
+    setSavingEdit(false);
+    if(!error){ setEditMode(false); onRefresh(); setToast({msg:"Deal updated",type:"success"}); }
+    else setToast({msg:"Error saving",type:"error"});
+  };
+
+  const updateStatus = async (newStatus) => {
+    await supabase.from("deals").update({status:newStatus,updated_at:new Date().toISOString()}).eq("id",deal.id);
+    await supabase.from("deal_activities").insert({
+      deal_id:deal.id, activity_type:"status_change",
+      content:`Status changed to ${newStatus}`, created_by:user?.email,
+    });
+    onRefresh();
+    setToast({msg:`Status → ${newStatus}`,type:"success"});
+    const { data } = await supabase.from("deal_activities").select("*").eq("deal_id",deal.id).order("created_at",{ascending:false});
+    setActs(data||[]);
+  };
+
+  const ACT_ICON = {note:"📝",call:"📞",email:"📧",showing:"🏠",offer:"📄",status_change:"🔄"};
+  const fmtDate = iso => {
+    if(!iso) return "";
+    const d = new Date(iso);
+    return d.toLocaleDateString("en-US",{month:"short",day:"numeric"})+" · "+d.toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"});
+  };
+
+  const TABS = [
+    {id:"overview",label:"Overview"},
+    {id:"activity",label:`Activity${activities.length>0?" ("+activities.length+")":""}`},
+    {id:"documents",label:`Documents${documents.length>0?" ("+documents.length+")":""}`},
+  ];
+
+  return (
+    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.65)", zIndex:300,
+      display:"flex", justifyContent:"flex-end" }}
+      onClick={e=>e.target===e.currentTarget&&onClose()}>
+      {toast&&<Toast message={toast.msg} type={toast.type} onDone={()=>setToast(null)} />}
+
+      <div style={{ width:"min(580px,100vw)", background:C.bg, height:"100vh",
+        display:"flex", flexDirection:"column", borderLeft:`1px solid ${C.border}`,
+        animation:"slideIn 0.2s ease" }}>
+        <style>{`@keyframes slideIn{from{transform:translateX(40px);opacity:0}to{transform:translateX(0);opacity:1}}`}</style>
+
+        {/* Header */}
+        <div style={{ padding:"18px 22px", borderBottom:`1px solid ${C.border}`,
+          display:"flex", alignItems:"flex-start", gap:14, background:C.surface }}>
+          <div style={{ flex:1, minWidth:0 }}>
+            <div style={{ fontSize:17, fontWeight:700, color:C.text, fontFamily:SERIF,
+              letterSpacing:"-0.01em", marginBottom:4 }}>
+              {deal.address||"Untitled deal"}
+            </div>
+            <div style={{ fontSize:12, color:C.text2, fontFamily:FONT }}>
+              {[deal.city,deal.state,deal.zip].filter(Boolean).join(", ")}
+            </div>
+            <div style={{ display:"flex", gap:8, marginTop:8, flexWrap:"wrap", alignItems:"center" }}>
+              <StatusBadge status={deal.status} />
+              {deal.price&&<span style={{ fontSize:12, fontWeight:700, color:C.gold, fontFamily:FONT }}>{fmt(deal.price)}</span>}
+              {deal.deal_type&&<span style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>{deal.deal_type}</span>}
+            </div>
+          </div>
+          <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+            <GoldButton small outline onClick={()=>setEditMode(true)}>Edit</GoldButton>
+            <button onClick={onClose} style={{ background:"none", border:"none",
+              color:C.text2, fontSize:20, cursor:"pointer", lineHeight:1, padding:4 }}>✕</button>
+          </div>
+        </div>
+
+        {/* Status pipeline strip */}
+        <div style={{ padding:"10px 22px", borderBottom:`1px solid ${C.border}`,
+          display:"flex", gap:4, overflowX:"auto", background:C.surface }}>
+          {Object.keys(STATUS_CONFIG).map(s=>{
+            const active = deal.status===s;
+            const cfg = STATUS_CONFIG[s];
+            return (
+              <button key={s} onClick={()=>updateStatus(s)} style={{
+                padding:"4px 11px", borderRadius:20, border:`1.5px solid ${active?cfg.color:"transparent"}`,
+                background:active?cfg.bg:"transparent", color:active?cfg.color:C.text3,
+                fontSize:11, fontWeight:active?700:400, fontFamily:FONT, cursor:"pointer",
+                whiteSpace:"nowrap", transition:"all 0.12s",
+              }}
+                onMouseEnter={e=>{ if(!active){e.currentTarget.style.background=C.surface2;e.currentTarget.style.color=C.text2;}}}
+                onMouseLeave={e=>{ if(!active){e.currentTarget.style.background="transparent";e.currentTarget.style.color=C.text3;}}}>
+                {s}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Tabs */}
+        <div style={{ display:"flex", gap:0, borderBottom:`1px solid ${C.border}`, background:C.surface }}>
+          {TABS.map(t=>(
+            <button key={t.id} onClick={()=>setTab(t.id)} style={{
+              padding:"10px 18px", border:"none", background:"transparent",
+              color:tab===t.id?C.gold:C.text2, fontSize:12, fontWeight:tab===t.id?700:400,
+              fontFamily:FONT, cursor:"pointer", borderBottom:`2px solid ${tab===t.id?C.gold:"transparent"}`,
+              transition:"color 0.1s",
+            }}>{t.label}</button>
+          ))}
+        </div>
+
+        {/* Body */}
+        <div style={{ flex:1, overflowY:"auto", padding:"20px 22px" }}>
+          {loading ? (
+            <div style={{ textAlign:"center", padding:40, color:C.text3, fontSize:13, fontFamily:FONT }}>Loading…</div>
+          ) : tab==="overview" ? (
+            <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+              {/* Key metrics */}
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
+                {[
+                  {label:"Price",   val:deal.price?fmt(deal.price):"—"},
+                  {label:"Beds",    val:deal.bedrooms||"—"},
+                  {label:"Baths",   val:deal.bathrooms||"—"},
+                  {label:"Sq Ft",   val:deal.sqft?deal.sqft.toLocaleString():"—"},
+                  {label:"Year",    val:deal.year_built||"—"},
+                  {label:"MLS #",   val:deal.mls_number||"—"},
+                ].map(item=>(
+                  <div key={item.label} style={{ background:C.surface, border:`1px solid ${C.border}`,
+                    borderRadius:10, padding:"12px 14px" }}>
+                    <div style={{ fontSize:10, fontWeight:700, color:C.text3, fontFamily:FONT,
+                      textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:4 }}>{item.label}</div>
+                    <div style={{ fontSize:15, fontWeight:700, color:C.text, fontFamily:SERIF }}>{item.val}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Commission + close date */}
+              {(deal.commission_rate||deal.close_date) && (
+                <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:10, padding:"14px 16px" }}>
+                  <div style={{ fontSize:10, fontWeight:700, color:C.text3, fontFamily:FONT,
+                    textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:10 }}>Transaction</div>
+                  <div style={{ display:"flex", gap:20 }}>
+                    {deal.commission_rate&&<div>
+                      <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>Commission</div>
+                      <div style={{ fontSize:14, fontWeight:600, color:C.gold, fontFamily:FONT }}>{deal.commission_rate}%</div>
+                    </div>}
+                    {deal.close_date&&<div>
+                      <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>Close Date</div>
+                      <div style={{ fontSize:14, fontWeight:600, color:C.text, fontFamily:FONT }}>
+                        {new Date(deal.close_date).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}
+                      </div>
+                    </div>}
+                  </div>
+                </div>
+              )}
+
+              {/* Notes */}
+              {deal.notes && (
+                <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:10, padding:"14px 16px" }}>
+                  <div style={{ fontSize:10, fontWeight:700, color:C.text3, fontFamily:FONT,
+                    textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:8 }}>Notes</div>
+                  <div style={{ fontSize:13, color:C.text2, fontFamily:FONT, lineHeight:1.6 }}>{deal.notes}</div>
+                </div>
+              )}
+
+              {/* Added by */}
+              <div style={{ fontSize:11, color:C.text3, fontFamily:FONT, marginTop:4 }}>
+                Added by {deal.created_by||"unknown"} · {fmtDate(deal.created_at)}
+              </div>
+            </div>
+
+          ) : tab==="activity" ? (
+            <div>
+              {/* Add activity */}
+              <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:10,
+                padding:"14px 16px", marginBottom:16 }}>
+                <div style={{ display:"flex", gap:6, marginBottom:10, flexWrap:"wrap" }}>
+                  {ACT_TYPES.map(t=>(
+                    <button key={t.value} onClick={()=>setActForm(f=>({...f,activity_type:t.value}))} style={{
+                      padding:"5px 11px", borderRadius:20, border:"none",
+                      background:actForm.activity_type===t.value?C.goldDim:C.surface2,
+                      color:actForm.activity_type===t.value?C.gold:C.text2,
+                      fontSize:11, fontFamily:FONT, cursor:"pointer",
+                    }}>{t.icon} {t.label}</button>
+                  ))}
+                </div>
+                <textarea value={actForm.content} onChange={e=>setActForm(f=>({...f,content:e.target.value}))}
+                  placeholder="Add a note, log a call, record a showing…" rows={3}
+                  style={{ width:"100%", padding:"9px 12px", background:C.surface2,
+                    border:`1px solid ${C.border2}`, borderRadius:7, color:C.text,
+                    fontSize:13, fontFamily:FONT, outline:"none", resize:"vertical",
+                    boxSizing:"border-box", marginBottom:10 }} />
+                <GoldButton onClick={addActivity} disabled={savingAct||!actForm.content.trim()} small>
+                  {savingAct?"Logging…":"Log activity"}
+                </GoldButton>
+              </div>
+
+              {/* Activity feed */}
+              {activities.length===0
+                ? <div style={{ textAlign:"center", padding:"32px 0", color:C.text3, fontSize:13, fontFamily:FONT }}>
+                    No activity yet
+                  </div>
+                : activities.map(a=>(
+                  <div key={a.id} style={{ display:"flex", gap:12, marginBottom:14 }}>
+                    <div style={{ width:32, height:32, borderRadius:"50%", background:C.surface,
+                      border:`1px solid ${C.border}`, display:"flex", alignItems:"center",
+                      justifyContent:"center", fontSize:14, flexShrink:0 }}>
+                      {ACT_ICON[a.activity_type]||"📝"}
+                    </div>
+                    <div style={{ flex:1 }}>
+                      <div style={{ fontSize:13, color:C.text, fontFamily:FONT, lineHeight:1.5,
+                        background:C.surface, border:`1px solid ${C.border}`, borderRadius:9,
+                        padding:"10px 13px" }}>
+                        {a.content}
+                      </div>
+                      <div style={{ fontSize:10, color:C.text3, fontFamily:FONT, marginTop:5 }}>
+                        {a.created_by} · {fmtDate(a.created_at)}
+                      </div>
+                    </div>
+                  </div>
+                ))
+              }
+            </div>
+
+          ) : (
+            /* Documents tab */
+            <div>
+              <div style={{ textAlign:"center", padding:"40px 0", color:C.text3, fontSize:13, fontFamily:FONT }}>
+                <div style={{ fontSize:28, marginBottom:10 }}>📁</div>
+                Document uploads coming in Phase 5.
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Edit modal */}
+      {editMode&&(
+        <Modal title="Edit Deal" onClose={()=>setEditMode(false)} maxWidth={520}>
+          <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+            <Field label="Address" value={editForm.address} onChange={v=>setE("address",v)} placeholder="123 Main St" />
+            <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr", gap:10 }}>
+              <Field label="City"  value={editForm.city}  onChange={v=>setE("city",v)}  placeholder="Tampa" />
+              <Field label="State" value={editForm.state} onChange={v=>setE("state",v)} placeholder="FL" />
+              <Field label="ZIP"   value={editForm.zip}   onChange={v=>setE("zip",v)}   placeholder="33601" />
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+              <Field label="Price" value={editForm.price}      onChange={v=>setE("price",v)}      placeholder="$450,000" />
+              <Field label="MLS #" value={editForm.mls_number} onChange={v=>setE("mls_number",v)} placeholder="T1234567" />
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+              <Sel label="Status" value={editForm.status}    onChange={v=>setE("status",v)}    options={Object.keys(STATUS_CONFIG)} />
+              <Sel label="Type"   value={editForm.deal_type} onChange={v=>setE("deal_type",v)} options={["Listing","Buyer","Referral","Rental"]} />
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:10 }}>
+              <Field label="Beds"     value={editForm.bedrooms}      onChange={v=>setE("bedrooms",v)}      placeholder="3" />
+              <Field label="Baths"    value={editForm.bathrooms}     onChange={v=>setE("bathrooms",v)}     placeholder="2" />
+              <Field label="Sq Ft"    value={editForm.sqft}          onChange={v=>setE("sqft",v)}          placeholder="1800" />
+              <Field label="Year"     value={editForm.year_built}    onChange={v=>setE("year_built",v)}    placeholder="2005" />
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+              <Field label="Commission %" value={editForm.commission_rate} onChange={v=>setE("commission_rate",v)} placeholder="3.0" />
+              <Field label="Close Date"   value={editForm.close_date}     onChange={v=>setE("close_date",v)}     type="date" />
+            </div>
+            <div>
+              <label style={{ fontSize:11, fontWeight:700, color:C.text2, fontFamily:FONT,
+                letterSpacing:"0.08em", textTransform:"uppercase", display:"block", marginBottom:5 }}>Notes</label>
+              <textarea value={editForm.notes} onChange={e=>setE("notes",e.target.value)} rows={3}
+                style={{ width:"100%", padding:"9px 12px", background:C.surface2, border:`1px solid ${C.border2}`,
+                  borderRadius:7, color:C.text, fontSize:13, fontFamily:FONT, outline:"none",
+                  resize:"vertical", boxSizing:"border-box" }} />
+            </div>
+            <div style={{ display:"flex", gap:10, paddingTop:4 }}>
+              <GoldButton onClick={saveEdit} disabled={savingEdit}>{savingEdit?"Saving…":"Save changes"}</GoldButton>
+              <GoldButton onClick={()=>setEditMode(false)} outline>Cancel</GoldButton>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
 function DealsView({ user, deals, onRefresh }) {
-  const [filter,setFilter]   = useState("all");
-  const [search,setSearch]   = useState("");
-  const [showAdd,setShowAdd] = useState(false);
-  const [saving,setSaving]   = useState(false);
-  const [toast,setToast]     = useState(null);
-  const [form,setForm]       = useState({address:"",city:"",state:"FL",zip:"",price:"",
+  const [filter,setFilter]     = useState("all");
+  const [search,setSearch]     = useState("");
+  const [showAdd,setShowAdd]   = useState(false);
+  const [selectedDeal,setSelectedDeal] = useState(null);
+  const [saving,setSaving]     = useState(false);
+  const [toast,setToast]       = useState(null);
+  const [form,setForm]         = useState({address:"",city:"",state:"FL",zip:"",price:"",
     status:"New",deal_type:"Listing",mls_number:"",notes:""});
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
   const fmt = n=>n>=1e6?`$${(n/1e6).toFixed(1)}M`:n>=1e3?`$${(n/1e3).toFixed(0)}K`:`$${n}`;
+
+  // Keep selected deal in sync after refresh
+  useEffect(()=>{
+    if(selectedDeal) {
+      const updated = deals.find(d=>d.id===selectedDeal.id);
+      if(updated) setSelectedDeal(updated);
+    }
+  },[deals]);
 
   const filtered = deals.filter(d=>{
     if(filter!=="all"&&d.status!==filter) return false;
@@ -552,6 +903,7 @@ function DealsView({ user, deals, onRefresh }) {
         </div>
         <div style={{ marginLeft:"auto" }}><GoldButton onClick={()=>setShowAdd(true)} small>+ Add Deal</GoldButton></div>
       </div>
+
       <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden" }}>
         <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr 1fr 1fr", padding:"9px 18px", borderBottom:`1px solid ${C.border}` }}>
           {["Address","Type","Status","Price","MLS #"].map(h=>(
@@ -560,11 +912,14 @@ function DealsView({ user, deals, onRefresh }) {
         </div>
         {filtered.length===0
           ? <div style={{ padding:"48px 18px", textAlign:"center", color:C.text3, fontSize:13, fontFamily:FONT }}>
-              {deals.length===0?"No deals yet — add your first one":"No results match your filter"}
+              {deals.length===0?"No deals yet \u2014 add your first one":"No results match your filter"}
             </div>
           : filtered.map(d=>(
-            <div key={d.id} style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr 1fr 1fr",
-              padding:"13px 18px", borderBottom:`1px solid ${C.border}`, alignItems:"center" }}
+            <div key={d.id}
+              onClick={()=>setSelectedDeal(d)}
+              style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr 1fr 1fr",
+                padding:"13px 18px", borderBottom:`1px solid ${C.border}`, alignItems:"center",
+                cursor:"pointer" }}
               onMouseEnter={e=>e.currentTarget.style.background=C.surface2}
               onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
               <div>
@@ -579,6 +934,7 @@ function DealsView({ user, deals, onRefresh }) {
           ))
         }
       </div>
+
       {showAdd&&(
         <Modal title="New Deal" onClose={()=>setShowAdd(false)}>
           <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
@@ -609,6 +965,15 @@ function DealsView({ user, deals, onRefresh }) {
             </div>
           </div>
         </Modal>
+      )}
+
+      {selectedDeal&&(
+        <DealDetail
+          deal={selectedDeal}
+          user={user}
+          onClose={()=>setSelectedDeal(null)}
+          onRefresh={onRefresh}
+        />
       )}
     </div>
   );
