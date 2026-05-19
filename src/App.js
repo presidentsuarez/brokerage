@@ -506,7 +506,18 @@ function DealDetail({ deal, user, onClose, onRefresh }) {
   const [tab,setTab]           = useState("overview");
   const [activities,setActs]   = useState([]);
   const [documents,setDocs]    = useState([]);
+  const [dealContacts,setDealContacts] = useState([]);
+  const [allContacts,setAllContacts]   = useState([]);
+  const [dealTasks,setDealTasks]       = useState([]);
   const [loading,setLoading]   = useState(true);
+  const [addingContact,setAddingContact] = useState(false);
+  const [contactToAdd,setContactToAdd]   = useState("");
+  const [contactRole,setContactRole]     = useState("Client");
+  const [savingContact,setSavingContact] = useState(false);
+  const [addingTask,setAddingTask]       = useState(false);
+  const [taskForm,setTaskForm]           = useState({title:"",priority:"medium",due_date:"",assigned_to:user?.email||""});
+  const setTF = (k,v) => setTaskForm(f=>({...f,[k]:v}));
+  const [savingTask,setSavingTask]       = useState(false);
   const [actForm,setActForm]   = useState({activity_type:"note",content:""});
   const [savingAct,setSavingAct] = useState(false);
   const [editMode,setEditMode] = useState(false);
@@ -533,16 +544,24 @@ function DealDetail({ deal, user, onClose, onRefresh }) {
     {value:"offer",   label:"Offer",   icon:"📄"},
   ];
 
-  useEffect(()=>{
-    setLoading(true);
-    Promise.all([
+  const reloadDetail = async () => {
+    const [a,d,dc,ac,t] = await Promise.all([
       supabase.from("deal_activities").select("*").eq("deal_id",deal.id).order("created_at",{ascending:false}),
       supabase.from("deal_documents").select("*").eq("deal_id",deal.id).order("created_at",{ascending:false}),
-    ]).then(([a,d])=>{
-      setActs(a.data||[]);
-      setDocs(d.data||[]);
-      setLoading(false);
-    });
+      supabase.from("deal_contacts").select("*,contacts(id,full_name,email,phone,contact_type)").eq("deal_id",deal.id),
+      supabase.from("contacts").select("id,full_name,email,contact_type").eq("org_id",ORG_ID).order("full_name"),
+      supabase.from("tasks").select("*").eq("deal_id",deal.id).order("created_at",{ascending:false}),
+    ]);
+    setActs(a.data||[]);
+    setDocs(d.data||[]);
+    setDealContacts(dc.data||[]);
+    setAllContacts(ac.data||[]);
+    setDealTasks(t.data||[]);
+  };
+
+  useEffect(()=>{
+    setLoading(true);
+    reloadDetail().then(()=>setLoading(false));
   },[deal.id]);
 
   const addActivity = async () => {
@@ -555,8 +574,7 @@ function DealDetail({ deal, user, onClose, onRefresh }) {
     setSavingAct(false);
     if(!error){
       setActForm({activity_type:"note",content:""});
-      const { data } = await supabase.from("deal_activities").select("*").eq("deal_id",deal.id).order("created_at",{ascending:false});
-      setActs(data||[]);
+      await reloadDetail();
       setToast({msg:"Activity logged",type:"success"});
     }
   };
@@ -586,8 +604,7 @@ function DealDetail({ deal, user, onClose, onRefresh }) {
     });
     onRefresh();
     setToast({msg:`Status → ${newStatus}`,type:"success"});
-    const { data } = await supabase.from("deal_activities").select("*").eq("deal_id",deal.id).order("created_at",{ascending:false});
-    setActs(data||[]);
+    await reloadDetail();
   };
 
   const ACT_ICON = {note:"📝",call:"📞",email:"📧",showing:"🏠",offer:"📄",status_change:"🔄"};
@@ -599,7 +616,9 @@ function DealDetail({ deal, user, onClose, onRefresh }) {
 
   const TABS = [
     {id:"overview",label:"Overview"},
+    {id:"people",  label:`People${dealContacts.length>0?" ("+dealContacts.length+")":""}`},
     {id:"activity",label:`Activity${activities.length>0?" ("+activities.length+")":""}`},
+    {id:"tasks",   label:`Tasks${dealTasks.length>0?" ("+dealTasks.length+")":""}`},
     {id:"documents",label:`Documents${documents.length>0?" ("+documents.length+")":""}`},
   ];
 
@@ -782,6 +801,157 @@ function DealDetail({ deal, user, onClose, onRefresh }) {
                   </div>
                 ))
               }
+            </div>
+
+          ) : tab==="people" ? (
+            <div>
+              {/* Linked contacts */}
+              <div style={{ marginBottom:16 }}>
+                {dealContacts.length===0
+                  ? <div style={{ textAlign:"center", padding:"28px 0", color:C.text3, fontSize:13, fontFamily:FONT }}>
+                      No people linked yet
+                    </div>
+                  : dealContacts.map(dc=>{
+                      const c = dc.contacts;
+                      if(!c) return null;
+                      return (
+                        <div key={dc.id} style={{ display:"flex", alignItems:"center", gap:12,
+                          padding:"12px 14px", background:C.surface, border:`1px solid ${C.border}`,
+                          borderRadius:10, marginBottom:8 }}>
+                          <Avatar name={c.full_name} email={c.email} size={36} />
+                          <div style={{ flex:1, minWidth:0 }}>
+                            <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:FONT }}>{c.full_name}</div>
+                            <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>{c.email||""}{c.phone?` · ${c.phone}`:""}</div>
+                          </div>
+                          <span style={{ fontSize:11, fontWeight:600, color:C.gold, fontFamily:FONT,
+                            background:C.goldDim, borderRadius:6, padding:"3px 9px" }}>{dc.role}</span>
+                          <button onClick={async()=>{
+                            await supabase.from("deal_contacts").delete().eq("id",dc.id);
+                            await reloadDetail();
+                            setToast({msg:"Removed",type:"success"});
+                          }} style={{ background:"none", border:"none", color:C.text3, cursor:"pointer", fontSize:14, padding:4 }}
+                            onMouseEnter={e=>e.currentTarget.style.color=C.red}
+                            onMouseLeave={e=>e.currentTarget.style.color=C.text3}>✕</button>
+                        </div>
+                      );
+                    })
+                }
+              </div>
+
+              {/* Add contact */}
+              {!addingContact ? (
+                <GoldButton small outline onClick={()=>setAddingContact(true)}>+ Link contact</GoldButton>
+              ) : (
+                <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:10, padding:"14px 16px" }}>
+                  <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+                    <div>
+                      <label style={{ fontSize:11, fontWeight:700, color:C.text2, fontFamily:FONT,
+                        letterSpacing:"0.08em", textTransform:"uppercase", display:"block", marginBottom:5 }}>Contact</label>
+                      <select value={contactToAdd} onChange={e=>setContactToAdd(e.target.value)}
+                        style={{ width:"100%", padding:"9px 12px", background:C.surface2, border:`1px solid ${C.border2}`,
+                          borderRadius:7, color:C.text, fontSize:13, fontFamily:FONT, outline:"none" }}>
+                        <option value="">Select a contact…</option>
+                        {allContacts
+                          .filter(c=>!dealContacts.find(dc=>dc.contact_id===c.id))
+                          .map(c=><option key={c.id} value={c.id}>{c.full_name} ({c.contact_type})</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={{ fontSize:11, fontWeight:700, color:C.text2, fontFamily:FONT,
+                        letterSpacing:"0.08em", textTransform:"uppercase", display:"block", marginBottom:5 }}>Role on this deal</label>
+                      <select value={contactRole} onChange={e=>setContactRole(e.target.value)}
+                        style={{ width:"100%", padding:"9px 12px", background:C.surface2, border:`1px solid ${C.border2}`,
+                          borderRadius:7, color:C.text, fontSize:13, fontFamily:FONT, outline:"none" }}>
+                        {["Buyer","Seller","Buyer Agent","Listing Agent","Lender","Attorney","Inspector","Other"].map(r=>(
+                          <option key={r} value={r}>{r}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div style={{ display:"flex", gap:8 }}>
+                      <GoldButton small disabled={!contactToAdd||savingContact} onClick={async()=>{
+                        setSavingContact(true);
+                        await supabase.from("deal_contacts").insert({
+                          deal_id:deal.id, contact_id:contactToAdd,
+                          role:contactRole, org_id:ORG_ID, added_by:user?.email,
+                        });
+                        setSavingContact(false);
+                        setAddingContact(false); setContactToAdd(""); setContactRole("Client");
+                        await reloadDetail();
+                        setToast({msg:"Contact linked",type:"success"});
+                      }}>{savingContact?"Linking…":"Link"}</GoldButton>
+                      <GoldButton small outline onClick={()=>{setAddingContact(false);setContactToAdd("");}}>Cancel</GoldButton>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+          ) : tab==="tasks" ? (
+            <div>
+              {dealTasks.length===0
+                ? <div style={{ textAlign:"center", padding:"28px 0", color:C.text3, fontSize:13, fontFamily:FONT }}>
+                    No tasks linked to this deal
+                  </div>
+                : dealTasks.map(t=>(
+                  <div key={t.id} style={{ display:"flex", alignItems:"center", gap:12,
+                    padding:"12px 14px", background:C.surface, border:`1px solid ${C.border}`,
+                    borderRadius:10, marginBottom:8 }}>
+                    <button onClick={async()=>{
+                      await supabase.from("tasks").update({status:t.status==="done"?"open":"done"}).eq("id",t.id);
+                      await reloadDetail();
+                    }} style={{
+                      width:18, height:18, borderRadius:4, flexShrink:0, cursor:"pointer", padding:0,
+                      border:`2px solid ${t.status==="done"?C.gold:C.border2}`,
+                      background:t.status==="done"?C.gold:"transparent",
+                      display:"flex", alignItems:"center", justifyContent:"center" }}>
+                      {t.status==="done"&&<span style={{ fontSize:9, color:"#0a0a0a", fontWeight:900 }}>✓</span>}
+                    </button>
+                    <div style={{ flex:1 }}>
+                      <div style={{ fontSize:13, fontWeight:500, color:t.status==="done"?C.text3:C.text,
+                        fontFamily:FONT, textDecoration:t.status==="done"?"line-through":"none" }}>{t.title}</div>
+                      {t.description&&<div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>{t.description}</div>}
+                    </div>
+                    <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:3 }}>
+                      <div style={{ width:7, height:7, borderRadius:"50%",
+                        background:{high:C.red,medium:C.amber,low:C.text3}[t.priority]||C.text3 }} />
+                      {t.due_date&&<span style={{ fontSize:10, color:C.text3, fontFamily:MONO }}>{t.due_date}</span>}
+                    </div>
+                  </div>
+                ))
+              }
+
+              {/* Add task linked to this deal */}
+              {!addingTask ? (
+                <div style={{ marginTop:8 }}>
+                  <GoldButton small outline onClick={()=>setAddingTask(true)}>+ Add task</GoldButton>
+                </div>
+              ) : (
+                <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:10, padding:"14px 16px", marginTop:8 }}>
+                  <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+                    <Field label="Task title" value={taskForm.title} onChange={v=>setTF("title",v)} placeholder="e.g. Order inspection" autoFocus />
+                    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+                      <Sel label="Priority" value={taskForm.priority} onChange={v=>setTF("priority",v)}
+                        options={[{value:"high",label:"High"},{value:"medium",label:"Medium"},{value:"low",label:"Low"}]} />
+                      <Field label="Due date" value={taskForm.due_date} onChange={v=>setTF("due_date",v)} type="date" />
+                    </div>
+                    <div style={{ display:"flex", gap:8 }}>
+                      <GoldButton small disabled={!taskForm.title.trim()||savingTask} onClick={async()=>{
+                        setSavingTask(true);
+                        await supabase.from("tasks").insert({
+                          ...taskForm, org_id:ORG_ID, deal_id:deal.id,
+                          status:"open", created_by:user?.email,
+                        });
+                        setSavingTask(false);
+                        setAddingTask(false);
+                        setTaskForm({title:"",priority:"medium",due_date:"",assigned_to:user?.email||""});
+                        await reloadDetail();
+                        setToast({msg:"Task added",type:"success"});
+                      }}>{savingTask?"Adding…":"Add task"}</GoldButton>
+                      <GoldButton small outline onClick={()=>setAddingTask(false)}>Cancel</GoldButton>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
           ) : (
@@ -1159,6 +1329,50 @@ function TasksView({ user, tasks, onRefresh }) {
   );
 }
 
+
+function OrgMembersCard() {
+  const [members, setMembers] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(()=>{
+    supabase.from("user_profiles").select("*").eq("org_id", ORG_ID).order("role")
+      .then(({ data }) => { setMembers(data||[]); setLoading(false); });
+  },[]);
+
+  const ROLE_COLOR = { owner:C.gold, admin:C.purple, member:C.text2 };
+  const ROLE_ICON  = { owner:"👑", admin:"🔑", member:"👤" };
+
+  return (
+    <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:"20px 22px" }}>
+      <div style={{ fontSize:11, fontWeight:700, color:C.text3, fontFamily:FONT,
+        letterSpacing:"0.08em", textTransform:"uppercase", marginBottom:14 }}>Team Members</div>
+      {loading
+        ? <div style={{ color:C.text3, fontSize:13, fontFamily:FONT }}>Loading…</div>
+        : members.map(m=>(
+          <div key={m.id} style={{ display:"flex", alignItems:"center", gap:12,
+            padding:"10px 0", borderBottom:`1px solid ${C.border}` }}>
+            <Avatar name={m.full_name} email={m.email} size={34} />
+            <div style={{ flex:1, minWidth:0 }}>
+              <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:FONT }}>{m.full_name||"—"}</div>
+              <div style={{ fontSize:11, color:C.text3, fontFamily:FONT, whiteSpace:"nowrap",
+                overflow:"hidden", textOverflow:"ellipsis" }}>{m.email}</div>
+              {m.title&&<div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>{m.title}</div>}
+            </div>
+            <span style={{ fontSize:11, fontWeight:700, color:ROLE_COLOR[m.role]||C.text2,
+              fontFamily:FONT, display:"flex", alignItems:"center", gap:4 }}>
+              {ROLE_ICON[m.role]} {m.role}
+            </span>
+          </div>
+        ))
+      }
+      <div style={{ marginTop:14, padding:"10px 14px", background:C.surface2,
+        borderRadius:8, fontSize:12, color:C.text3, fontFamily:FONT }}>
+        To invite new members, contact your admin or reach out to support.
+      </div>
+    </div>
+  );
+}
+
 function SettingsView({ user, onProfileSaved }) {
   const [showEdit,setShowEdit] = useState(false);
   const [showPw,setShowPw]     = useState(false);
@@ -1224,7 +1438,9 @@ function SettingsView({ user, onProfileSaved }) {
         {user?.phone&&<div style={{ marginTop:12, padding:"9px 13px", background:C.surface2, borderRadius:8, fontSize:12, color:C.text2, fontFamily:MONO }}>{user.phone}</div>}
       </div>
 
-      <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:"20px 22px" }}>
+      <OrgMembersCard />
+
+      <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:"20px 22px", marginTop:12 }}>
         <div style={{ fontSize:11, fontWeight:700, color:C.text3, fontFamily:FONT, letterSpacing:"0.08em", textTransform:"uppercase", marginBottom:14 }}>Security</div>
         <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
           <div>
