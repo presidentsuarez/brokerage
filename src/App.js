@@ -36,7 +36,8 @@ const NAV = [
   { id:"deals",     label:"Deals",     icon:"◈" },
   { id:"contacts",  label:"Contacts",  icon:"◎" },
   { id:"tasks",     label:"Tasks",     icon:"◻" },
-  { id:"settings",  label:"Settings",  icon:"⚙" },
+  { id:"notepad",   label:"Notepad",   icon:"✎", adminOnly:true },
+  { id:"settings",  label:"Settings",  icon:"⚙", adminOnly:true },
 ];
 
 // ── Shared atoms ──────────────────────────────────────────────
@@ -349,7 +350,7 @@ function Sidebar({ activeView, onNav, user, onSignOut, collapsed }) {
       </div>
 
       <nav style={{ flex:1, padding:"10px 6px", display:"flex", flexDirection:"column", gap:1 }}>
-        {NAV.filter(n=>n.id!=="settings"||isAdmin).map(item=>{
+        {NAV.filter(n=>!n.adminOnly||isAdmin).map(item=>{
           const active = activeView===item.id;
           return (
             <button key={item.id} onClick={()=>onNav(item.id)} style={{
@@ -1149,85 +1150,223 @@ function DealsView({ user, deals, onRefresh }) {
   );
 }
 
-function ContactsView({ user, contacts, onRefresh }) {
-  const [search,setSearch]   = useState("");
-  const [showAdd,setShowAdd] = useState(false);
-  const [saving,setSaving]   = useState(false);
-  const [toast,setToast]     = useState(null);
-  const [form,setForm]       = useState({full_name:"",email:"",phone:"",contact_type:"Client",notes:""});
-  const set = (k,v) => setForm(f=>({...f,[k]:v}));
 
-  const filtered = contacts.filter(c=>
-    !search||`${c.full_name} ${c.email} ${c.phone}`.toLowerCase().includes(search.toLowerCase())
-  );
+function ContactDetail({ contact, user, onClose, onRefresh }) {
+  const [editMode,setEditMode]   = useState(false);
+  const [portalMode,setPortalMode] = useState(false);
+  const [editForm,setEditForm]   = useState({
+    full_name:contact.full_name||"", email:contact.email||"",
+    phone:contact.phone||"", contact_type:contact.contact_type||"Agent",
+    status:contact.status||"Active", source:contact.source||"", notes:contact.notes||"",
+  });
+  const [portalEmail,setPortalEmail] = useState(contact.portal_email||contact.email||"");
+  const [saving,setSaving]       = useState(false);
+  const [toast,setToast]         = useState(null);
+  const setE = (k,v) => setEditForm(f=>({...f,[k]:v}));
 
-  const handleAdd = async () => {
-    if(!form.full_name.trim()) return;
+  const fmtDate = iso => {
+    if(!iso) return "";
+    const d = new Date(iso);
+    return d.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"});
+  };
+
+  const saveEdit = async () => {
     setSaving(true);
-    const { error } = await supabase.from("contacts").insert({...form,org_id:ORG_ID,created_by:user?.email});
+    const { error } = await supabase.from("contacts")
+      .update({...editForm, updated_at:new Date().toISOString()})
+      .eq("id", contact.id);
     setSaving(false);
-    if(!error){ setShowAdd(false); setForm({full_name:"",email:"",phone:"",contact_type:"Client",notes:""}); onRefresh(); setToast({msg:"Contact added",type:"success"}); }
+    if(!error){ setEditMode(false); onRefresh(); setToast({msg:"Contact updated",type:"success"}); }
+    else setToast({msg:"Error saving",type:"error"});
+  };
+
+  const enablePortal = async () => {
+    if(!portalEmail.trim()) return;
+    setSaving(true);
+    // Upsert portal access record
+    await supabase.from("agent_portal_access").upsert({
+      contact_id: contact.id,
+      portal_email: portalEmail.trim().toLowerCase(),
+      is_active: true,
+      granted_by: user?.email,
+      org_id: ORG_ID,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "portal_email" });
+    // Update contact
+    await supabase.from("contacts").update({
+      portal_enabled: true,
+      portal_email: portalEmail.trim().toLowerCase(),
+    }).eq("id", contact.id);
+    setSaving(false);
+    setPortalMode(false);
+    onRefresh();
+    setToast({msg:"Portal access enabled",type:"success"});
+  };
+
+  const disablePortal = async () => {
+    setSaving(true);
+    await supabase.from("agent_portal_access")
+      .update({ is_active: false, updated_at: new Date().toISOString() })
+      .eq("contact_id", contact.id);
+    await supabase.from("contacts")
+      .update({ portal_enabled: false })
+      .eq("id", contact.id);
+    setSaving(false);
+    onRefresh();
+    setToast({msg:"Portal access revoked",type:"success"});
+  };
+
+  const TYPE_COLOR = {
+    Client:C.blue, Agent:C.gold, Lender:C.purple,
+    Referral:C.green, Vendor:C.text2,
   };
 
   return (
-    <div style={{ padding:"20px 24px" }}>
+    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.65)", zIndex:300,
+      display:"flex", justifyContent:"flex-end" }}
+      onClick={e=>e.target===e.currentTarget&&onClose()}>
       {toast&&<Toast message={toast.msg} type={toast.type} onDone={()=>setToast(null)} />}
-      <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:16 }}>
-        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search contacts\u2026"
-          style={{ padding:"8px 12px", background:C.surface2, border:`1px solid ${C.border2}`,
-            borderRadius:8, color:C.text, fontSize:13, fontFamily:FONT, outline:"none", width:260 }}
-          onFocus={e=>e.target.style.borderColor=C.gold} onBlur={e=>e.target.style.borderColor=C.border2} />
-        <div style={{ marginLeft:"auto" }}><GoldButton onClick={()=>setShowAdd(true)} small>+ Add Contact</GoldButton></div>
-      </div>
-      <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden" }}>
-        <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1.5fr 1fr", padding:"9px 18px", borderBottom:`1px solid ${C.border}` }}>
-          {["Name","Type","Email","Phone"].map(h=>(
-            <span key={h} style={{ fontSize:10, fontWeight:700, color:C.text3, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.08em" }}>{h}</span>
-          ))}
-        </div>
-        {filtered.length===0
-          ? <div style={{ padding:"48px 18px", textAlign:"center", color:C.text3, fontSize:13, fontFamily:FONT }}>
-              {contacts.length===0?"No contacts yet":"No results"}
+
+      <div style={{ width:"min(520px,100vw)", background:C.bg, height:"100vh",
+        display:"flex", flexDirection:"column", borderLeft:`1px solid ${C.border}`,
+        animation:"slideIn 0.2s ease" }}>
+        <style>{`@keyframes slideIn{from{transform:translateX(40px);opacity:0}to{transform:translateX(0);opacity:1}}`}</style>
+
+        {/* Header */}
+        <div style={{ padding:"18px 22px", borderBottom:`1px solid ${C.border}`,
+          display:"flex", alignItems:"flex-start", gap:14, background:C.surface }}>
+          <Avatar name={contact.full_name} email={contact.email} size={44} />
+          <div style={{ flex:1, minWidth:0 }}>
+            <div style={{ fontSize:17, fontWeight:700, color:C.text, fontFamily:SERIF, letterSpacing:"-0.01em", marginBottom:3 }}>
+              {contact.full_name}
             </div>
-          : filtered.map(c=>(
-            <div key={c.id} style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1.5fr 1fr",
-              padding:"12px 18px", borderBottom:`1px solid ${C.border}`, alignItems:"center" }}
-              onMouseEnter={e=>e.currentTarget.style.background=C.surface2}
-              onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-              <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-                <Avatar name={c.full_name} email={c.email} size={28} />
-                <div>
-                  <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:FONT }}>{c.full_name}</div>
-                  {c.notes&&<div style={{ fontSize:11, color:C.text3, fontFamily:FONT, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", maxWidth:150 }}>{c.notes}</div>}
+            <div style={{ fontSize:12, color:C.text2, fontFamily:FONT }}>{contact.email}</div>
+            <div style={{ display:"flex", gap:8, marginTop:7, alignItems:"center", flexWrap:"wrap" }}>
+              <span style={{ fontSize:11, fontWeight:700,
+                color:TYPE_COLOR[contact.contact_type]||C.text2,
+                background: contact.contact_type==="Agent"?C.goldDim:"rgba(59,130,246,0.10)",
+                borderRadius:6, padding:"3px 9px" }}>{contact.contact_type}</span>
+              {contact.portal_enabled && (
+                <span style={{ fontSize:10, fontWeight:700, color:C.green,
+                  background:"rgba(34,197,94,0.10)", borderRadius:6, padding:"3px 9px",
+                  display:"flex", alignItems:"center", gap:4 }}>
+                  ⚡ Portal Active
+                </span>
+              )}
+              {contact.phone&&<span style={{ fontSize:11, color:C.text3, fontFamily:MONO }}>{contact.phone}</span>}
+            </div>
+          </div>
+          <div style={{ display:"flex", gap:8 }}>
+            <GoldButton small outline onClick={()=>setEditMode(true)}>Edit</GoldButton>
+            <button onClick={onClose} style={{ background:"none", border:"none",
+              color:C.text2, fontSize:20, cursor:"pointer", lineHeight:1, padding:4 }}>✕</button>
+          </div>
+        </div>
+
+        {/* Body */}
+        <div style={{ flex:1, overflowY:"auto", padding:"20px 22px" }}>
+
+          {/* Info grid */}
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:16 }}>
+            {[
+              {label:"Type",   val:contact.contact_type||"—"},
+              {label:"Status", val:contact.status||"—"},
+              {label:"Source", val:contact.source||"—"},
+              {label:"Added",  val:fmtDate(contact.created_at)},
+            ].map(item=>(
+              <div key={item.label} style={{ background:C.surface, border:`1px solid ${C.border}`,
+                borderRadius:10, padding:"11px 14px" }}>
+                <div style={{ fontSize:10, fontWeight:700, color:C.text3, fontFamily:FONT,
+                  textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:3 }}>{item.label}</div>
+                <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:FONT }}>{item.val}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Notes */}
+          {contact.notes&&(
+            <div style={{ background:C.surface, border:`1px solid ${C.border}`,
+              borderRadius:10, padding:"13px 16px", marginBottom:16 }}>
+              <div style={{ fontSize:10, fontWeight:700, color:C.text3, fontFamily:FONT,
+                textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:6 }}>Notes</div>
+              <div style={{ fontSize:13, color:C.text2, fontFamily:FONT, lineHeight:1.6 }}>{contact.notes}</div>
+            </div>
+          )}
+
+          {/* ── Agent Portal Toggle ── */}
+          <div style={{ background:C.surface, border:`1px solid ${contact.portal_enabled?C.goldBorder:C.border}`,
+            borderRadius:12, padding:"16px 18px" }}>
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom: contact.portal_enabled||portalMode?12:0 }}>
+              <div>
+                <div style={{ fontSize:13, fontWeight:700, color:C.text, fontFamily:FONT,
+                  display:"flex", alignItems:"center", gap:8 }}>
+                  Agent Portal
+                  {contact.portal_enabled&&<span style={{ fontSize:10, fontWeight:700,
+                    color:C.green, background:"rgba(34,197,94,0.10)",
+                    borderRadius:20, padding:"2px 8px" }}>Active</span>}
+                </div>
+                <div style={{ fontSize:11, color:C.text3, fontFamily:FONT, marginTop:2 }}>
+                  {contact.portal_enabled
+                    ? `Access: ${contact.portal_email}`
+                    : "Give this agent a personal portal login"}
                 </div>
               </div>
-              <span style={{ fontSize:11, fontWeight:600, color:C.text2, fontFamily:FONT,
-                background:C.surface2, borderRadius:5, padding:"3px 8px", width:"fit-content" }}>
-                {c.contact_type}
-              </span>
-              <span style={{ fontSize:12, color:C.text2, fontFamily:FONT }}>{c.email||"\u2014"}</span>
-              <span style={{ fontSize:12, color:C.text2, fontFamily:MONO }}>{c.phone||"\u2014"}</span>
+              <div>
+                {contact.portal_enabled ? (
+                  <GoldButton small danger onClick={disablePortal} disabled={saving}>
+                    {saving?"Revoking…":"Revoke access"}
+                  </GoldButton>
+                ) : (
+                  <GoldButton small outline onClick={()=>setPortalMode(p=>!p)}>
+                    {portalMode?"Cancel":"Enable portal"}
+                  </GoldButton>
+                )}
+              </div>
             </div>
-          ))
-        }
+
+            {/* Enable portal form */}
+            {!contact.portal_enabled && portalMode && (
+              <div style={{ borderTop:`1px solid ${C.border}`, paddingTop:12,
+                display:"flex", flexDirection:"column", gap:10 }}>
+                <Field label="Portal login email" value={portalEmail}
+                  onChange={setPortalEmail} type="email"
+                  placeholder={contact.email||"agent@example.com"} autoFocus />
+                <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>
+                  The agent will use this email to log into their portal.
+                  Make sure it matches their auth email if they already have an account.
+                </div>
+                <GoldButton onClick={enablePortal} disabled={saving||!portalEmail.trim()} small>
+                  {saving?"Enabling…":"Enable & save"}
+                </GoldButton>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
-      {showAdd&&(
-        <Modal title="New Contact" onClose={()=>setShowAdd(false)} maxWidth={440}>
+
+      {/* Edit modal */}
+      {editMode&&(
+        <Modal title="Edit Contact" onClose={()=>setEditMode(false)} maxWidth={460}>
           <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
-            <Field label="Full name" value={form.full_name} onChange={v=>set("full_name",v)} placeholder="Jane Smith" />
-            <Field label="Email"     value={form.email}     onChange={v=>set("email",v)}     type="email" placeholder="jane@example.com" />
-            <Field label="Phone"     value={form.phone}     onChange={v=>set("phone",v)}     placeholder="(813) 555-0100" />
-            <Sel   label="Type"      value={form.contact_type} onChange={v=>set("contact_type",v)} options={["Client","Agent","Lender","Referral","Vendor"]} />
+            <Field label="Full name" value={editForm.full_name} onChange={v=>setE("full_name",v)} placeholder="Jane Smith" />
+            <Field label="Email"     value={editForm.email}     onChange={v=>setE("email",v)}     type="email" />
+            <Field label="Phone"     value={editForm.phone}     onChange={v=>setE("phone",v)} />
+            <Sel   label="Type"      value={editForm.contact_type} onChange={v=>setE("contact_type",v)}
+              options={["Client","Agent","Lender","Referral","Vendor"]} />
+            <Sel   label="Status"    value={editForm.status} onChange={v=>setE("status",v)}
+              options={["Active","Inactive","Prospect"]} />
+            <Field label="Source"    value={editForm.source} onChange={v=>setE("source",v)} placeholder="Referral, ROGA Roster…" />
             <div>
               <label style={{ fontSize:11, fontWeight:700, color:C.text2, fontFamily:FONT,
                 letterSpacing:"0.08em", textTransform:"uppercase", display:"block", marginBottom:5 }}>Notes</label>
-              <textarea value={form.notes} onChange={e=>set("notes",e.target.value)} placeholder="Optional notes\u2026" rows={2}
+              <textarea value={editForm.notes} onChange={e=>setE("notes",e.target.value)} rows={3}
                 style={{ width:"100%", padding:"9px 12px", background:C.surface2, border:`1px solid ${C.border2}`,
-                  borderRadius:7, color:C.text, fontSize:13, fontFamily:FONT, outline:"none", resize:"vertical", boxSizing:"border-box" }} />
+                  borderRadius:7, color:C.text, fontSize:13, fontFamily:FONT, outline:"none",
+                  resize:"vertical", boxSizing:"border-box" }} />
             </div>
             <div style={{ display:"flex", gap:10, paddingTop:4 }}>
-              <GoldButton onClick={handleAdd} disabled={saving||!form.full_name.trim()}>{saving?"Saving\u2026":"Add Contact"}</GoldButton>
-              <GoldButton onClick={()=>setShowAdd(false)} outline>Cancel</GoldButton>
+              <GoldButton onClick={saveEdit} disabled={saving}>{saving?"Saving…":"Save changes"}</GoldButton>
+              <GoldButton onClick={()=>setEditMode(false)} outline>Cancel</GoldButton>
             </div>
           </div>
         </Modal>
@@ -1235,6 +1374,150 @@ function ContactsView({ user, contacts, onRefresh }) {
     </div>
   );
 }
+
+function ContactsView({ user, contacts, onRefresh }) {
+  const [search,setSearch]         = useState("");
+  const [typeFilter,setTypeFilter] = useState("all");
+  const [showAdd,setShowAdd]       = useState(false);
+  const [selected,setSelected]     = useState(null);
+  const [saving,setSaving]         = useState(false);
+  const [toast,setToast]           = useState(null);
+  const [form,setForm]             = useState({full_name:"",email:"",phone:"",contact_type:"Agent",status:"Active",source:"",notes:""});
+  const set = (k,v) => setForm(f=>({...f,[k]:v}));
+
+  // Keep selected in sync after refresh
+  useEffect(()=>{
+    if(selected){ const updated=contacts.find(c=>c.id===selected.id); if(updated) setSelected(updated); }
+  },[contacts]);
+
+  const TYPES = ["all","Agent","Client","Lender","Referral","Vendor"];
+  const filtered = contacts.filter(c=>{
+    if(typeFilter!=="all"&&c.contact_type!==typeFilter) return false;
+    if(search&&!`${c.full_name} ${c.email} ${c.phone}`.toLowerCase().includes(search.toLowerCase())) return false;
+    return true;
+  });
+
+  const handleAdd = async () => {
+    if(!form.full_name.trim()) return;
+    setSaving(true);
+    const { error } = await supabase.from("contacts").insert({...form,org_id:ORG_ID,created_by:user?.email});
+    setSaving(false);
+    if(!error){ setShowAdd(false); setForm({full_name:"",email:"",phone:"",contact_type:"Agent",status:"Active",source:"",notes:""}); onRefresh(); setToast({msg:"Contact added",type:"success"}); }
+  };
+
+  const TYPE_DOT = {Agent:C.gold,Client:C.blue,Lender:C.purple,Referral:C.green,Vendor:C.text3};
+
+  return (
+    <div style={{ padding:"20px 24px" }}>
+      {toast&&<Toast message={toast.msg} type={toast.type} onDone={()=>setToast(null)} />}
+
+      {/* Toolbar */}
+      <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:16, flexWrap:"wrap" }}>
+        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search contacts…"
+          style={{ padding:"8px 12px", background:C.surface2, border:`1px solid ${C.border2}`,
+            borderRadius:8, color:C.text, fontSize:13, fontFamily:FONT, outline:"none", width:240 }}
+          onFocus={e=>e.target.style.borderColor=C.gold} onBlur={e=>e.target.style.borderColor=C.border2} />
+        <div style={{ display:"flex", gap:5, flexWrap:"wrap" }}>
+          {TYPES.map(t=>(
+            <button key={t} onClick={()=>setTypeFilter(t)} style={{
+              padding:"5px 12px", borderRadius:20,
+              border:`1.5px solid ${typeFilter===t?"rgba(212,175,55,0.30)":C.border}`,
+              background:typeFilter===t?"rgba(212,175,55,0.15)":"transparent",
+              color:typeFilter===t?C.gold:C.text2,
+              fontSize:11, fontFamily:FONT, cursor:"pointer" }}>
+              {t==="all"?"All":t}
+            </button>
+          ))}
+        </div>
+        <div style={{ marginLeft:"auto", display:"flex", gap:8, alignItems:"center" }}>
+          <span style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>{filtered.length} contacts</span>
+          <GoldButton onClick={()=>setShowAdd(true)} small>+ Add Contact</GoldButton>
+        </div>
+      </div>
+
+      {/* Table */}
+      <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden" }}>
+        <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1.5fr 1fr 80px",
+          padding:"9px 18px", borderBottom:`1px solid ${C.border}` }}>
+          {["Name","Type","Email","Phone","Portal"].map(h=>(
+            <span key={h} style={{ fontSize:10, fontWeight:700, color:C.text3,
+              fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.08em" }}>{h}</span>
+          ))}
+        </div>
+        {filtered.length===0
+          ? <div style={{ padding:"48px 18px", textAlign:"center", color:C.text3, fontSize:13, fontFamily:FONT }}>
+              {contacts.length===0?"No contacts yet":"No results"}
+            </div>
+          : filtered.map(c=>(
+            <div key={c.id}
+              onClick={()=>setSelected(c)}
+              style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1.5fr 1fr 80px",
+                padding:"12px 18px", borderBottom:`1px solid ${C.border}`,
+                alignItems:"center", cursor:"pointer" }}
+              onMouseEnter={e=>e.currentTarget.style.background=C.surface2}
+              onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+              <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                <Avatar name={c.full_name} email={c.email} size={28} />
+                <div>
+                  <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:FONT }}>{c.full_name}</div>
+                  {c.notes&&<div style={{ fontSize:10, color:C.text3, fontFamily:FONT,
+                    whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", maxWidth:150 }}>{c.notes}</div>}
+                </div>
+              </div>
+              <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                <div style={{ width:6, height:6, borderRadius:"50%", background:TYPE_DOT[c.contact_type]||C.text3 }} />
+                <span style={{ fontSize:12, color:C.text2, fontFamily:FONT }}>{c.contact_type}</span>
+              </div>
+              <span style={{ fontSize:12, color:C.text2, fontFamily:FONT,
+                whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{c.email||"—"}</span>
+              <span style={{ fontSize:12, color:C.text2, fontFamily:MONO }}>{c.phone||"—"}</span>
+              <div style={{ display:"flex", justifyContent:"center" }}>
+                {c.portal_enabled
+                  ? <span style={{ fontSize:10, fontWeight:700, color:C.green,
+                      background:"rgba(34,197,94,0.10)", borderRadius:20, padding:"3px 8px" }}>ON</span>
+                  : <span style={{ fontSize:10, color:C.text3, fontFamily:FONT }}>—</span>
+                }
+              </div>
+            </div>
+          ))
+        }
+      </div>
+
+      {/* Add modal */}
+      {showAdd&&(
+        <Modal title="New Contact" onClose={()=>setShowAdd(false)} maxWidth={460}>
+          <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+            <Field label="Full name" value={form.full_name} onChange={v=>set("full_name",v)} placeholder="Jane Smith" />
+            <Field label="Email"     value={form.email}     onChange={v=>set("email",v)}     type="email" />
+            <Field label="Phone"     value={form.phone}     onChange={v=>set("phone",v)}     placeholder="(813) 555-0100" />
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+              <Sel label="Type"   value={form.contact_type} onChange={v=>set("contact_type",v)}
+                options={["Agent","Client","Lender","Referral","Vendor"]} />
+              <Field label="Source" value={form.source} onChange={v=>set("source",v)} placeholder="Referral, Walk-in…" />
+            </div>
+            <div>
+              <label style={{ fontSize:11, fontWeight:700, color:C.text2, fontFamily:FONT,
+                letterSpacing:"0.08em", textTransform:"uppercase", display:"block", marginBottom:5 }}>Notes</label>
+              <textarea value={form.notes} onChange={e=>set("notes",e.target.value)} placeholder="Optional notes…" rows={2}
+                style={{ width:"100%", padding:"9px 12px", background:C.surface2, border:`1px solid ${C.border2}`,
+                  borderRadius:7, color:C.text, fontSize:13, fontFamily:FONT, outline:"none",
+                  resize:"vertical", boxSizing:"border-box" }} />
+            </div>
+            <div style={{ display:"flex", gap:10, paddingTop:4 }}>
+              <GoldButton onClick={handleAdd} disabled={saving||!form.full_name.trim()}>{saving?"Saving…":"Add Contact"}</GoldButton>
+              <GoldButton onClick={()=>setShowAdd(false)} outline>Cancel</GoldButton>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {selected&&(
+        <ContactDetail contact={selected} user={user} onClose={()=>setSelected(null)} onRefresh={onRefresh} />
+      )}
+    </div>
+  );
+}
+
 
 function TasksView({ user, tasks, onRefresh }) {
   const [showAdd,setShowAdd] = useState(false);
@@ -1329,6 +1612,155 @@ function TasksView({ user, tasks, onRefresh }) {
   );
 }
 
+
+
+function NotesView({ user }) {
+  const [notes,setNotes]           = useState([]);
+  const [loading,setLoading]       = useState(true);
+  const [editingNote,setEditingNote] = useState(null);
+  const [saving,setSaving]         = useState(false);
+  const [toast,setToast]           = useState(null);
+  const [newTitle,setNewTitle]     = useState("");
+
+  const loadNotes = async () => {
+    const { data } = await supabase.from("team_notes")
+      .select("*").eq("org_id", ORG_ID)
+      .order("pinned", {ascending:false})
+      .order("updated_at", {ascending:false});
+    setNotes(data||[]);
+    setLoading(false);
+  };
+
+  useEffect(()=>{ loadNotes(); },[]);
+
+  const createNote = async () => {
+    const { data } = await supabase.from("team_notes")
+      .insert({ org_id:ORG_ID, title:"New Note", content:"", created_by:user?.email, updated_by:user?.email })
+      .select().single();
+    if(data){ await loadNotes(); setEditingNote(data); }
+  };
+
+  const saveNote = async () => {
+    if(!editingNote) return;
+    setSaving(true);
+    await supabase.from("team_notes").update({
+      title:   editingNote.title,
+      content: editingNote.content,
+      updated_by: user?.email,
+      updated_at: new Date().toISOString(),
+    }).eq("id", editingNote.id);
+    setSaving(false);
+    setNotes(n=>n.map(x=>x.id===editingNote.id?{...x,...editingNote,updated_at:new Date().toISOString()}:x));
+    setEditingNote(null);
+    setToast({msg:"Note saved",type:"success"});
+  };
+
+  const deleteNote = async (id) => {
+    await supabase.from("team_notes").delete().eq("id", id);
+    setNotes(n=>n.filter(x=>x.id!==id));
+    if(editingNote?.id===id) setEditingNote(null);
+    setToast({msg:"Note deleted",type:"success"});
+  };
+
+  const togglePin = async (note) => {
+    await supabase.from("team_notes").update({pinned:!note.pinned}).eq("id",note.id);
+    setNotes(n=>n.map(x=>x.id===note.id?{...x,pinned:!x.pinned}:x).sort((a,b)=>b.pinned-a.pinned));
+  };
+
+  const fmtDate = iso => {
+    if(!iso) return "";
+    return new Date(iso).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"});
+  };
+
+  return (
+    <div style={{ padding:"20px 24px", maxWidth:900 }}>
+      {toast&&<Toast message={toast.msg} type={toast.type} onDone={()=>setToast(null)} />}
+
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:20 }}>
+        <div>
+          <h2 style={{ fontSize:18, fontWeight:700, fontFamily:SERIF, color:C.text, margin:"0 0 3px", letterSpacing:"-0.01em" }}>Team Notepad</h2>
+          <p style={{ fontSize:12, color:C.text2, fontFamily:FONT, margin:0 }}>Shared notes for {user?.full_name?.split(" ")[0]||"the team"} and admins</p>
+        </div>
+        <GoldButton onClick={createNote} small>+ New Note</GoldButton>
+      </div>
+
+      {loading ? (
+        <div style={{ color:C.text3, fontSize:13, fontFamily:FONT, padding:"40px 0", textAlign:"center" }}>Loading…</div>
+      ) : editingNote ? (
+        /* ── Editor ── */
+        <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:"22px 24px" }}>
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:14 }}>
+            <input value={editingNote.title}
+              onChange={e=>setEditingNote(n=>({...n,title:e.target.value}))}
+              placeholder="Note title"
+              style={{ flex:1, fontSize:18, fontWeight:700, color:C.text, fontFamily:SERIF,
+                background:"transparent", border:"none", outline:"none",
+                borderBottom:`1px solid ${C.border2}`, paddingBottom:8, marginRight:16 }} />
+            <div style={{ display:"flex", gap:8 }}>
+              <GoldButton onClick={saveNote} disabled={saving} small>{saving?"Saving…":"Save"}</GoldButton>
+              <GoldButton onClick={()=>setEditingNote(null)} outline small>Cancel</GoldButton>
+            </div>
+          </div>
+          <textarea
+            value={editingNote.content}
+            onChange={e=>setEditingNote(n=>({...n,content:e.target.value}))}
+            placeholder="Write your notes here…"
+            style={{ width:"100%", minHeight:360, padding:"12px 0", background:"transparent",
+              border:"none", outline:"none", color:C.text2, fontSize:13, fontFamily:FONT,
+              resize:"vertical", lineHeight:1.75, boxSizing:"border-box" }}
+            autoFocus
+          />
+          <div style={{ borderTop:`1px solid ${C.border}`, paddingTop:12, marginTop:4,
+            display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+            <span style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>
+              Last saved: {fmtDate(editingNote.updated_at)} · {editingNote.updated_by||""}
+            </span>
+            <GoldButton onClick={()=>deleteNote(editingNote.id)} danger small>Delete note</GoldButton>
+          </div>
+        </div>
+      ) : (
+        /* ── Note list ── */
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))", gap:12 }}>
+          {notes.length===0 ? (
+            <div style={{ gridColumn:"1/-1", textAlign:"center", padding:"48px 0",
+              color:C.text3, fontSize:13, fontFamily:FONT }}>
+              No notes yet — click + New Note to get started.
+            </div>
+          ) : notes.map(n=>(
+            <div key={n.id}
+              onClick={()=>setEditingNote(n)}
+              style={{ background:C.surface, border:`1px solid ${n.pinned?C.goldBorder:C.border}`,
+                borderRadius:12, padding:"16px 18px", cursor:"pointer",
+                transition:"border-color 0.12s, background 0.12s",
+                display:"flex", flexDirection:"column", gap:6 }}
+              onMouseEnter={e=>e.currentTarget.style.background=C.surface2}
+              onMouseLeave={e=>e.currentTarget.style.background=C.surface}>
+              <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:8 }}>
+                <div style={{ fontSize:14, fontWeight:700, color:C.text, fontFamily:SERIF,
+                  letterSpacing:"-0.01em", lineHeight:1.3 }}>{n.title||"Untitled"}</div>
+                <button onClick={e=>{e.stopPropagation();togglePin(n);}}
+                  style={{ background:"none", border:"none", cursor:"pointer", padding:0,
+                    fontSize:13, color:n.pinned?C.gold:C.text3, flexShrink:0,
+                    lineHeight:1, marginTop:1 }}
+                  title={n.pinned?"Unpin":"Pin to top"}>
+                  {n.pinned?"📌":"📍"}
+                </button>
+              </div>
+              <div style={{ fontSize:12, color:C.text3, fontFamily:FONT, lineHeight:1.5,
+                overflow:"hidden", display:"-webkit-box", WebkitLineClamp:3,
+                WebkitBoxOrient:"vertical" }}>
+                {n.content||"Empty note"}
+              </div>
+              <div style={{ fontSize:10, color:C.text3, fontFamily:FONT, marginTop:4 }}>
+                {fmtDate(n.updated_at)} · {n.updated_by||n.created_by||""}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function OrgMembersCard() {
   const [members, setMembers] = useState([]);
@@ -1522,7 +1954,7 @@ export default function App() {
     if(!session) return;
     const [d,c,t] = await Promise.all([
       supabase.from("deals").select("*").eq("org_id",ORG_ID).order("created_at",{ascending:false}),
-      supabase.from("contacts").select("*").eq("org_id",ORG_ID).order("full_name"),
+      supabase.from("contacts").select("*").eq("org_id",ORG_ID).order("contact_type").order("full_name"),
       supabase.from("tasks").select("*").eq("org_id",ORG_ID).order("created_at",{ascending:false}),
     ]);
     setDeals(d.data||[]); setContacts(c.data||[]); setTasks(t.data||[]);
@@ -1569,6 +2001,7 @@ export default function App() {
           {view==="contacts" &&<ContactsView  user={cu} contacts={contacts} onRefresh={loadData} />}
           {view==="tasks"    &&<TasksView     user={cu} tasks={tasks}    onRefresh={loadData} />}
           {view==="settings" &&<SettingsView  user={cu} onProfileSaved={onProfileSaved} />}
+          {view==="notepad"  &&<NotesView     user={cu} />}
         </main>
       </div>
     </div>
