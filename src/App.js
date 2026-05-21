@@ -46,6 +46,7 @@ const NAV = [
   { id:"deals",     label:"Deals",     icon:"◈" },
   { id:"contacts",  label:"Contacts",  icon:"◎" },
   { id:"tasks",     label:"Tasks",     icon:"◻" },
+  { id:"calendar",  label:"Calendar",  icon:"◷" },
   { id:"robots",    label:"Ari",       icon:"✦", platformOnly:true },
   { id:"notepad",   label:"Notepad",   icon:"✎", platformOnly:true },
   { id:"settings",  label:"Settings",  icon:"⚙", platformOnly:true },
@@ -1177,6 +1178,7 @@ const PORTAL_NAV = [
   { id:"portal_contacts",  label:"Contacts",   icon:"◎" },
   { id:"portal_tasks",     label:"Tasks",      icon:"◻" },
   { id:"portal_team",      label:"Team",       icon:"◑" },
+  { id:"portal_calendar",  label:"Calendar",   icon:"◷" },
   { id:"portal_chat",      label:"Chat · Ari", icon:"✦" },
 ];
 
@@ -1882,6 +1884,7 @@ function AgentPortalApp({ agentContact, session, onSignOut, isPreview=false }) {
     portal_contacts:  ["My Contacts", `${myContacts.length} contacts`],
     portal_tasks:     ["Tasks", `${myTasks.filter(t=>t.status!=="done").length} open`],
     portal_team:      ["Team Directory", "Realty One Group Advantage"],
+    portal_calendar:  ["Calendar", "Realty One Group Advantage"],
     portal_chat:      ["Chat · Ari", "Your AI assistant"],
   };
   const [ptitle, psub] = PORTAL_TITLES[view]||["Portal",""];
@@ -1910,6 +1913,7 @@ function AgentPortalApp({ agentContact, session, onSignOut, isPreview=false }) {
               {view==="portal_contacts"  && <PortalContacts />}
               {view==="portal_tasks"     && <PortalTasks />}
               {view==="portal_team"      && <PortalTeam />}
+              {view==="portal_calendar"  && <CalendarView user={{email:agentEmail,role:"member"}} isPortal={true} agentContact={agentContact} />}
               {view==="portal_chat"      && <PortalChat />}
             </>
           }
@@ -2580,6 +2584,359 @@ function NotesView({ user }) {
 // ROBOTS PAGE + ARI CHAT (Phase 3 — Javier only)
 // ════════════════════════════════════════════════════════════
 
+// ════════════════════════════════════════════════════════════
+// CALENDAR — Phase 5
+// Shared between main app (CalendarView) and agent portal
+// ════════════════════════════════════════════════════════════
+
+const EVENT_TYPES = {
+  showing:    { label:"Showing",    color:"#3b82f6" },
+  open_house: { label:"Open House", color:"#D4AF37" },
+  training:   { label:"Training",   color:"#a855f7" },
+  meeting:    { label:"Meeting",    color:"#22c55e" },
+  deadline:   { label:"Deadline",   color:"#ef4444" },
+  event:      { label:"Event",      color:"#94a3b8" },
+};
+
+const DAYS   = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+
+function CalendarView({ user, isPortal=false, agentContact=null }) {
+  const today       = new Date();
+  const [cur, setCur]         = useState(new Date(today.getFullYear(), today.getMonth(), 1));
+  const [events, setEvents]   = useState([]);
+  const [selectedDay, setSel] = useState(null);
+  const [showAdd, setShowAdd] = useState(false);
+  const [saving, setSaving]   = useState(false);
+  const [toast, setToast]     = useState(null);
+  const [form, setForm]       = useState({
+    title:"", event_date:"", start_time:"", end_time:"",
+    event_type:"event", visibility:"org", description:"",
+  });
+  const setF = (k,v) => setForm(f=>({...f,[k]:v}));
+
+  const isAdmin = ["admin","owner"].includes(user?.role);
+  const canCreateOrg = isAdmin && !isPortal;
+
+  const loadEvents = async () => {
+    const monthStart = `${cur.getFullYear()}-${String(cur.getMonth()+1).padStart(2,"0")}-01`;
+    const nextMonth  = new Date(cur.getFullYear(), cur.getMonth()+2, 1);
+    const monthEnd   = `${nextMonth.getFullYear()}-${String(nextMonth.getMonth()).padStart(2,"0")}-${String(new Date(nextMonth-1).getDate()).padStart(2,"0")}`;
+
+    let q = supabase.from("org_events").select("*")
+      .eq("org_id", ORG_ID)
+      .gte("event_date", monthStart)
+      .lte("event_date", monthEnd)
+      .order("event_date").order("start_time");
+
+    // Agents see org events + their own personal events
+    if(isPortal && agentContact) {
+      q = supabase.from("org_events").select("*")
+        .eq("org_id", ORG_ID)
+        .gte("event_date", monthStart)
+        .lte("event_date", monthEnd)
+        .or(`visibility.eq.org,created_by.eq.${agentContact.email||"__none__"},contact_id.eq.${agentContact.id}`)
+        .order("event_date").order("start_time");
+    }
+
+    const { data } = await q;
+    setEvents(data||[]);
+  };
+
+  useEffect(()=>{ loadEvents(); },[cur.getMonth(), cur.getFullYear()]);
+
+  const addEvent = async () => {
+    if(!form.title.trim()||!form.event_date) return;
+    setSaving(true);
+    const payload = {
+      ...form,
+      org_id: ORG_ID,
+      created_by: user?.email || agentContact?.email,
+      contact_id: isPortal && form.visibility==="personal" ? agentContact?.id : null,
+      visibility: isPortal ? "personal" : form.visibility,
+    };
+    const { error } = await supabase.from("org_events").insert(payload);
+    setSaving(false);
+    if(!error){
+      setShowAdd(false);
+      setForm({title:"",event_date:"",start_time:"",end_time:"",event_type:"event",visibility:"org",description:""});
+      loadEvents();
+      setToast({msg:"Event added",type:"success"});
+    }
+  };
+
+  const deleteEvent = async (id) => {
+    await supabase.from("org_events").delete().eq("id",id);
+    loadEvents();
+    setSel(null);
+    setToast({msg:"Event removed",type:"success"});
+  };
+
+  // Build month grid
+  const year  = cur.getFullYear();
+  const month = cur.getMonth();
+  const firstDay = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month+1, 0).getDate();
+  const daysInPrev  = new Date(year, month, 0).getDate();
+
+  const cells = [];
+  // prev month tail
+  for(let i = firstDay-1; i >= 0; i--)
+    cells.push({day: daysInPrev-i, curr:false, date:null});
+  // this month
+  for(let d=1; d<=daysInMonth; d++){
+    const dateStr = `${year}-${String(month+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
+    cells.push({day:d, curr:true, date:dateStr});
+  }
+  // next month pad to complete grid
+  const remaining = 42 - cells.length;
+  for(let d=1; d<=remaining; d++)
+    cells.push({day:d, curr:false, date:null});
+
+  const eventsOn = (dateStr) => events.filter(e=>e.event_date===dateStr);
+  const todayStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,"0")}-${String(today.getDate()).padStart(2,"0")}`;
+  const selEvents = selectedDay ? eventsOn(selectedDay) : [];
+
+  // Upcoming events (next 14 days from today)
+  const upcoming = events.filter(e=>e.event_date>=todayStr).slice(0,8);
+
+  return (
+    <div style={{ padding:"20px 24px", maxWidth:1000 }}>
+      {toast&&<Toast message={toast.msg} type={toast.type} onDone={()=>setToast(null)} />}
+
+      {/* Header */}
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:20 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:14 }}>
+          <div style={{ display:"flex", gap:4 }}>
+            <button onClick={()=>setCur(new Date(year,month-1,1))} style={{
+              background:C.surface, border:`1px solid ${C.border}`, borderRadius:7,
+              color:C.text2, fontSize:16, cursor:"pointer", padding:"5px 10px",
+              lineHeight:1, transition:"color 0.1s" }}
+              onMouseEnter={e=>e.currentTarget.style.color=C.gold}
+              onMouseLeave={e=>e.currentTarget.style.color=C.text2}>‹</button>
+            <button onClick={()=>setCur(new Date(year,month+1,1))} style={{
+              background:C.surface, border:`1px solid ${C.border}`, borderRadius:7,
+              color:C.text2, fontSize:16, cursor:"pointer", padding:"5px 10px",
+              lineHeight:1, transition:"color 0.1s" }}
+              onMouseEnter={e=>e.currentTarget.style.color=C.gold}
+              onMouseLeave={e=>e.currentTarget.style.color=C.text2}>›</button>
+          </div>
+          <h2 style={{ fontSize:18, fontWeight:700, fontFamily:SERIF, color:C.text,
+            margin:0, letterSpacing:"-0.01em" }}>
+            {MONTHS[month]} {year}
+          </h2>
+          <button onClick={()=>setCur(new Date(today.getFullYear(),today.getMonth(),1))}
+            style={{ background:"none", border:`1px solid ${C.border}`, borderRadius:6,
+              color:C.text3, fontSize:11, fontFamily:FONT, cursor:"pointer", padding:"4px 10px" }}>
+            Today
+          </button>
+        </div>
+        <GoldButton small onClick={()=>{ setForm(f=>({...f,event_date:selectedDay||todayStr})); setShowAdd(true); }}>
+          + Add Event
+        </GoldButton>
+      </div>
+
+      <div style={{ display:"flex", gap:16, alignItems:"flex-start" }}>
+        {/* Calendar grid */}
+        <div style={{ flex:1, minWidth:0 }}>
+          {/* Day headers */}
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", gap:2, marginBottom:4 }}>
+            {DAYS.map(d=>(
+              <div key={d} style={{ textAlign:"center", fontSize:10, fontWeight:700,
+                color:C.text3, fontFamily:FONT, textTransform:"uppercase",
+                letterSpacing:"0.08em", padding:"4px 0" }}>{d}</div>
+            ))}
+          </div>
+
+          {/* Cells */}
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", gap:2 }}>
+            {cells.map((cell,i)=>{
+              const dayEvs  = cell.date ? eventsOn(cell.date) : [];
+              const isToday = cell.date===todayStr;
+              const isSel   = cell.date===selectedDay;
+              return (
+                <div key={i}
+                  onClick={()=>cell.curr&&cell.date&&setSel(cell.date===selectedDay?null:cell.date)}
+                  style={{
+                    minHeight:72, padding:"6px 7px",
+                    background: isSel ? C.goldDim : C.surface,
+                    border:`1px solid ${isSel?C.goldBorder:C.border}`,
+                    borderRadius:8, cursor:cell.curr?"pointer":"default",
+                    opacity:cell.curr?1:0.3, transition:"all 0.1s",
+                  }}
+                  onMouseEnter={e=>{ if(cell.curr&&!isSel) e.currentTarget.style.background=C.surface2; }}
+                  onMouseLeave={e=>{ if(!isSel) e.currentTarget.style.background=cell.curr?C.surface:"transparent"; }}>
+                  <div style={{ fontSize:12, fontWeight:isToday?700:400,
+                    color:isToday?C.gold:cell.curr?C.text:C.text3,
+                    fontFamily:FONT, marginBottom:4,
+                    ...(isToday?{ background:C.goldDim, borderRadius:20,
+                      width:22, height:22, display:"flex", alignItems:"center",
+                      justifyContent:"center", margin:"0 auto 4px" }:{})
+                  }}>{cell.day}</div>
+                  <div style={{ display:"flex", flexDirection:"column", gap:2 }}>
+                    {dayEvs.slice(0,2).map(ev=>(
+                      <div key={ev.id} style={{
+                        fontSize:10, fontWeight:600, fontFamily:FONT,
+                        color:"#0a0a0a", padding:"1px 5px", borderRadius:4,
+                        background:EVENT_TYPES[ev.event_type]?.color||C.text3,
+                        whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis",
+                      }}>{ev.title}</div>
+                    ))}
+                    {dayEvs.length>2&&(
+                      <div style={{ fontSize:9, color:C.text3, fontFamily:FONT, paddingLeft:4 }}>
+                        +{dayEvs.length-2} more
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Event type legend */}
+          <div style={{ display:"flex", gap:12, flexWrap:"wrap", marginTop:14, paddingTop:12,
+            borderTop:`1px solid ${C.border}` }}>
+            {Object.entries(EVENT_TYPES).map(([k,v])=>(
+              <div key={k} style={{ display:"flex", alignItems:"center", gap:5 }}>
+                <div style={{ width:8, height:8, borderRadius:3, background:v.color }} />
+                <span style={{ fontSize:10, color:C.text3, fontFamily:FONT }}>{v.label}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Right panel — selected day or upcoming */}
+        <div style={{ width:240, flexShrink:0 }}>
+          {selectedDay ? (
+            <div style={{ background:C.surface, border:`1px solid ${C.goldBorder}`,
+              borderRadius:12, padding:"16px 16px", overflow:"hidden" }}>
+              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12 }}>
+                <div style={{ fontSize:12, fontWeight:700, color:C.gold, fontFamily:FONT }}>
+                  {new Date(selectedDay+"T12:00:00").toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"})}
+                </div>
+                <button onClick={()=>setSel(null)} style={{ background:"none", border:"none",
+                  color:C.text3, fontSize:14, cursor:"pointer", padding:2 }}>✕</button>
+              </div>
+              {selEvents.length===0 ? (
+                <div style={{ fontSize:12, color:C.text3, fontFamily:FONT, padding:"16px 0", textAlign:"center" }}>
+                  No events
+                  <div style={{ marginTop:8 }}>
+                    <GoldButton small outline onClick={()=>{ setForm(f=>({...f,event_date:selectedDay})); setShowAdd(true); }}>
+                      + Add one
+                    </GoldButton>
+                  </div>
+                </div>
+              ) : selEvents.map(ev=>(
+                <div key={ev.id} style={{ marginBottom:10, padding:"10px 12px",
+                  background:C.surface2, borderRadius:9,
+                  borderLeft:`3px solid ${EVENT_TYPES[ev.event_type]?.color||C.text3}` }}>
+                  <div style={{ fontSize:12, fontWeight:700, color:C.text, fontFamily:FONT,
+                    marginBottom:3 }}>{ev.title}</div>
+                  {(ev.start_time||ev.end_time)&&(
+                    <div style={{ fontSize:11, color:C.text3, fontFamily:MONO }}>
+                      {ev.start_time}{ev.end_time?` – ${ev.end_time}`:""}
+                    </div>
+                  )}
+                  {ev.description&&(
+                    <div style={{ fontSize:11, color:C.text3, fontFamily:FONT,
+                      marginTop:4, lineHeight:1.5 }}>{ev.description}</div>
+                  )}
+                  <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:6 }}>
+                    <span style={{ fontSize:10, padding:"2px 7px", borderRadius:4,
+                      background:EVENT_TYPES[ev.event_type]?.color||C.text3,
+                      color:"#0a0a0a", fontWeight:700, fontFamily:FONT }}>
+                      {EVENT_TYPES[ev.event_type]?.label||ev.event_type}
+                    </span>
+                    {(canCreateOrg || ev.created_by===user?.email || ev.created_by===agentContact?.email) && (
+                      <button onClick={()=>deleteEvent(ev.id)}
+                        style={{ background:"none", border:"none", color:C.text3,
+                          fontSize:11, cursor:"pointer", fontFamily:FONT, padding:2 }}
+                        onMouseEnter={e=>e.currentTarget.style.color=C.red}
+                        onMouseLeave={e=>e.currentTarget.style.color=C.text3}>
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div style={{ background:C.surface, border:`1px solid ${C.border}`,
+              borderRadius:12, overflow:"hidden" }}>
+              <div style={{ padding:"12px 14px", borderBottom:`1px solid ${C.border}` }}>
+                <span style={{ fontSize:11, fontWeight:700, color:C.text2, fontFamily:FONT,
+                  textTransform:"uppercase", letterSpacing:"0.08em" }}>Upcoming</span>
+              </div>
+              {upcoming.length===0 ? (
+                <div style={{ padding:"24px 14px", textAlign:"center",
+                  color:C.text3, fontSize:12, fontFamily:FONT }}>No upcoming events</div>
+              ) : upcoming.map(ev=>(
+                <div key={ev.id}
+                  onClick={()=>setSel(ev.event_date)}
+                  style={{ padding:"11px 14px", borderBottom:`1px solid ${C.border}`,
+                    cursor:"pointer", borderLeft:`3px solid ${EVENT_TYPES[ev.event_type]?.color||C.text3}` }}
+                  onMouseEnter={e=>e.currentTarget.style.background=C.surface2}
+                  onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                  <div style={{ fontSize:12, fontWeight:600, color:C.text, fontFamily:FONT,
+                    marginBottom:2 }}>{ev.title}</div>
+                  <div style={{ fontSize:10, color:C.text3, fontFamily:FONT }}>
+                    {new Date(ev.event_date+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"})}
+                    {ev.start_time ? ` · ${ev.start_time}` : ""}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Add event modal */}
+      {showAdd&&(
+        <Modal title="New Event" onClose={()=>setShowAdd(false)} maxWidth={480}>
+          <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+            <Field label="Title" value={form.title} onChange={v=>setF("title",v)} placeholder="e.g. Open House" autoFocus />
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
+              <Field label="Date"       value={form.event_date}  onChange={v=>setF("event_date",v)}  type="date" />
+              <Field label="Start time" value={form.start_time}  onChange={v=>setF("start_time",v)}  placeholder="10:00 AM" />
+              <Field label="End time"   value={form.end_time}    onChange={v=>setF("end_time",v)}    placeholder="12:00 PM" />
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+              <Sel label="Type" value={form.event_type} onChange={v=>setF("event_type",v)}
+                options={Object.entries(EVENT_TYPES).map(([k,v])=>({value:k,label:v.label}))} />
+              {canCreateOrg && (
+                <Sel label="Visibility" value={form.visibility} onChange={v=>setF("visibility",v)}
+                  options={[{value:"org",label:"Org-wide"},{value:"personal",label:"Personal"}]} />
+              )}
+            </div>
+            <div>
+              <label style={{ fontSize:11, fontWeight:700, color:C.text2, fontFamily:FONT,
+                letterSpacing:"0.08em", textTransform:"uppercase", display:"block", marginBottom:5 }}>Notes</label>
+              <textarea value={form.description} onChange={e=>setF("description",e.target.value)}
+                placeholder="Optional details…" rows={2}
+                style={{ width:"100%", padding:"9px 12px", background:C.surface2,
+                  border:`1px solid ${C.border2}`, borderRadius:7, color:C.text,
+                  fontSize:13, fontFamily:FONT, outline:"none", resize:"vertical",
+                  boxSizing:"border-box" }} />
+            </div>
+            {!canCreateOrg&&isPortal&&(
+              <div style={{ fontSize:11, color:C.text3, fontFamily:FONT,
+                background:C.surface2, borderRadius:7, padding:"8px 12px" }}>
+                This event will be personal (visible only to you).
+              </div>
+            )}
+            <div style={{ display:"flex", gap:10, paddingTop:4 }}>
+              <GoldButton onClick={addEvent} disabled={saving||!form.title.trim()||!form.event_date}>
+                {saving?"Saving…":"Add event"}
+              </GoldButton>
+              <GoldButton onClick={()=>setShowAdd(false)} outline>Cancel</GoldButton>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
 function RobotsView({ user, deals, contacts, tasks }) {
   const [messages, setMessages]   = useState([]);
   const [input, setInput]         = useState("");
@@ -3083,6 +3440,7 @@ export default function App() {
     tasks:[`Tasks`,`${tasks.filter(t=>t.status!=="done").length} open`],
     settings:["Settings","Account & org"],
     robots:  ["Ari", "Business Unit Leader · ROGA"],
+    calendar:["Calendar", "Realty One Group Advantage"],
   };
   const [title,subtitle] = TITLES[view]||["Prism",""];
   const cu = userProfile||{email:session.user.email,role:"member"};
@@ -3102,6 +3460,7 @@ export default function App() {
           {view==="settings" &&<SettingsView  user={cu} onProfileSaved={onProfileSaved} />}
           {view==="notepad"  &&<NotesView     user={cu} />}
           {view==="robots"   &&<RobotsView    user={cu} deals={deals} contacts={contacts} tasks={tasks} />}
+          {view==="calendar" &&<CalendarView   user={cu} />}
         </main>
       </div>
     </div>
