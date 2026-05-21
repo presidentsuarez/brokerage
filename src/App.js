@@ -543,12 +543,14 @@ function TopBar({ title, subtitle, onToggleSidebar, actions }) {
 }
 
 function TempPasswordBanner({ onAction }) {
+  const isMobile = useIsMobile();
   return (
     <div style={{ background:"rgba(212,175,55,0.10)", borderBottom:`1px solid rgba(212,175,55,0.25)`,
-      padding:"9px 20px", display:"flex", alignItems:"center", gap:12 }}>
+      padding:isMobile?"10px 14px":"9px 20px",
+      display:"flex", alignItems:"center", gap:10, flexWrap:"wrap" }}>
       <span>⚠️</span>
-      <span style={{ fontSize:12, color:C.gold, fontFamily:FONT, flex:1 }}>
-        You're using a temporary password — change it now to secure your account.
+      <span style={{ fontSize:12, color:C.gold, fontFamily:FONT, flex:1, minWidth:160 }}>
+        {isMobile ? "Temp password — change it now." : "You're using a temporary password — change it now to secure your account."}
       </span>
       <GoldButton small onClick={onAction}>Change password</GoldButton>
     </div>
@@ -577,14 +579,14 @@ function DashboardView({ user, deals, contacts, tasks }) {
   const fmt    = n=>n>=1e6?`$${(n/1e6).toFixed(1)}M`:n>=1e3?`$${(n/1e3).toFixed(0)}K`:`$${n}`;
 
   return (
-    <div style={{ padding:"24px", maxWidth:1100 }}>
+    <div style={{ padding:"16px", maxWidth:1100 }}>
       <div style={{ marginBottom:22 }}>
         <h2 style={{ fontSize:20, fontWeight:700, fontFamily:SERIF, color:C.text,
           margin:"0 0 3px", letterSpacing:"-0.02em" }}>
           Welcome back, {(user?.full_name||"").split(" ")[0]||"there"}.
         </h2>
         <p style={{ fontSize:12, color:C.text2, fontFamily:FONT, margin:0 }}>
-          {ORG_NAME} \u00b7 {new Date().toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"})}
+          {ORG_NAME} · {new Date().toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"})}
         </p>
       </div>
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(165px,1fr))", gap:12, marginBottom:26 }}>
@@ -1555,7 +1557,7 @@ function AgentPortalApp({ agentContact, session, onSignOut, isPreview=false }) {
           ))}
         </div>
 
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(240px,1fr))", gap:12 }}>
           {/* Recent deals */}
           <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden" }}>
             <div style={{ padding:"12px 16px", borderBottom:`1px solid ${C.border}` }}>
@@ -1809,7 +1811,7 @@ function AgentPortalApp({ agentContact, session, onSignOut, isPreview=false }) {
     const ROLE_COLOR = { "Broker":C.gold, "Operations":C.purple, "Front Desk":C.blue };
 
     return (
-      <div style={{ padding:"20px 24px", maxWidth:640 }}>
+      <div style={{ padding:"16px", maxWidth:640 }}>
         <div style={{ marginBottom:18 }}>
           <h2 style={{ fontSize:16, fontWeight:700, fontFamily:SERIF, color:C.text, margin:"0 0 4px" }}>Your Team</h2>
           <p style={{ fontSize:12, color:C.text2, fontFamily:FONT, margin:0 }}>
@@ -2715,7 +2717,7 @@ function NotesView({ user }) {
   };
 
   return (
-    <div style={{ padding:"20px 24px", maxWidth:900 }}>
+    <div style={{ padding:"16px", maxWidth:900 }}>
       {toast&&<Toast message={toast.msg} type={toast.type} onDone={()=>setToast(null)} />}
 
       <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:20 }}>
@@ -2925,7 +2927,7 @@ function CalendarView({ user, isPortal=false, agentContact=null }) {
   const upcoming = events.filter(e=>e.event_date>=todayStr).slice(0,8);
 
   return (
-    <div style={{ padding:"20px 24px", maxWidth:1000 }}>
+    <div style={{ padding:"16px", maxWidth:1000 }}>
       {toast&&<Toast message={toast.msg} type={toast.type} onDone={()=>setToast(null)} />}
 
       {/* Header */}
@@ -3503,7 +3505,7 @@ function SettingsView({ user, onProfileSaved }) {
   };
 
   return (
-    <div style={{ padding:"20px 24px", maxWidth:600 }}>
+    <div style={{ padding:"16px" , maxWidth:600 }}>
       {toast&&<Toast message={toast.msg} type={toast.type} onDone={()=>setToast(null)} />}
 
       <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:"20px 22px", marginBottom:12 }}>
@@ -3672,7 +3674,7 @@ export default function App() {
   };
   const [title,subtitle] = TITLES[view]||["Prism",""];
   const cu = userProfile||{email:session.user.email,role:"member"};
-  const sw = sidebarCollapsed?56:220;
+  const sw = isMobile ? 0 : sidebarCollapsed ? 56 : 220;
 
   return (
     <div style={{ display:"flex", background:C.bg, minHeight:"100vh" }}>
@@ -3687,9 +3689,17 @@ export default function App() {
         ::-webkit-scrollbar-thumb { background: rgba(212,175,55,0.2); border-radius: 4px; }
         button { touch-action: manipulation; }
       `}</style>
-      <Sidebar activeView={view} onNav={setView} user={cu} onSignOut={signOut} collapsed={sidebarCollapsed} />
-      <div style={{ marginLeft:sw, flex:1, transition:"margin-left 0.2s", display:"flex", flexDirection:"column", minWidth:0 }}>
-        <TopBar title={title} subtitle={subtitle} onToggleSidebar={()=>setSC(c=>!c)} />
+      <Sidebar
+        activeView={view} onNav={setView} user={cu} onSignOut={signOut}
+        collapsed={sidebarCollapsed}
+        mobileOpen={mobileMenuOpen}
+        onMobileClose={()=>setMobileMenu(false)}
+      />
+      <div style={{ marginLeft:sw, flex:1, transition:"margin-left 0.2s",
+        display:"flex", flexDirection:"column", minWidth:0,
+        paddingBottom:isMobile?60:0 }}>
+        <TopBar title={title} subtitle={subtitle}
+          onToggleSidebar={()=>isMobile ? setMobileMenu(o=>!o) : setSC(c=>!c)} />
         {showTempBanner&&<TempPasswordBanner onAction={()=>{ setTempBanner(false); setAuthScreen("setpassword"); }} />}
         <main style={{ flex:1, overflowY:"auto" }}>
           {view==="dashboard"&&<DashboardView user={cu} deals={deals} contacts={contacts} tasks={tasks} />}
