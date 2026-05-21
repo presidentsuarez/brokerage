@@ -629,6 +629,173 @@ function DashboardView({ user, deals, contacts, tasks }) {
 }
 
 
+
+function DealFinancialCalculator({ deal, linkedAgents, user, onClose, onSaved }) {
+  const [agentIdx, setAgentIdx] = useState(0);
+  const [salePrice, setSalePrice] = useState(String(deal.price||""));
+  const [commRate,  setCommRate]  = useState(String(deal.commission_rate||"3"));
+  const [pkg,       setPkg]       = useState(null);
+  const [pkgLoading,setPkgLoading]= useState(false);
+  const [saving,    setSaving]    = useState(false);
+  const [toast,     setToast]     = useState(null);
+
+  const agent = linkedAgents[agentIdx]?.contacts;
+  const role  = linkedAgents[agentIdx]?.role;
+  const fmt   = n => n>=1e6?`$${(n/1e6).toFixed(2)}M`:n>=1e3?`$${(n/1e3).toFixed(1)}K`:`$${(n||0).toFixed(0)}`;
+
+  useEffect(()=>{
+    if(!agent?.id) return;
+    setPkgLoading(true);
+    supabase.from("agent_fee_packages").select("*")
+      .eq("contact_id", agent.id).eq("is_active", true).maybeSingle()
+      .then(({data})=>{ setPkg(data||null); setPkgLoading(false); });
+  },[agent?.id]);
+
+  const price      = parseFloat(String(salePrice).replace(/[^0-9.]/g,""))||0;
+  const rate       = parseFloat(commRate)||0;
+  const grossComm  = price * rate / 100;
+  const agentGross = pkg ? grossComm * (pkg.split_agent_pct||80)/100 : grossComm * 0.8;
+  const royalty    = pkg?.royalty_fee_pct ? agentGross * pkg.royalty_fee_pct/100 : 0;
+  const agentNet   = agentGross
+    - (pkg?.flat_transaction_fee||0)
+    - (pkg?.e_and_o_fee||0)
+    - royalty;
+  const brokerNet  = grossComm - agentNet;
+
+  const save = async () => {
+    setSaving(true);
+    const { error } = await supabase.from("deal_financials").insert({
+      org_id:      ORG_ID,
+      deal_id:     deal.id,
+      contact_id:  agent?.id || null,
+      package_id:  pkg?.id   || null,
+      sale_price:  price,
+      commission_rate: rate,
+      agent_split_pct: pkg?.split_agent_pct || 80,
+      co_op_split_pct: pkg?.co_op_split_pct || null,
+      agent_gross: agentGross,
+      transaction_fee: pkg?.flat_transaction_fee||0,
+      e_and_o_fee:     pkg?.e_and_o_fee||0,
+      royalty_fee:     royalty,
+      brokerage_net:   brokerNet,
+      status:          "closed",
+      close_date:      deal.close_date || new Date().toISOString().slice(0,10),
+      created_by:      user?.email,
+    });
+    setSaving(false);
+    if(!error){
+      // Move to next agent or finish
+      if(agentIdx < linkedAgents.length - 1) {
+        setAgentIdx(i=>i+1);
+        setToast({msg:"Saved — next agent",type:"success"});
+      } else {
+        onSaved();
+      }
+    } else {
+      setToast({msg:"Error saving",type:"error"});
+    }
+  };
+
+  return (
+    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.8)", zIndex:500,
+      display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}>
+      {toast&&<Toast message={toast.msg} type={toast.type} onDone={()=>setToast(null)} />}
+      <div style={{ background:C.surface, border:`1px solid ${C.goldBorder}`,
+        borderRadius:16, padding:28, width:"100%", maxWidth:480,
+        maxHeight:"90vh", overflowY:"auto" }}>
+
+        {/* Header */}
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:6 }}>
+          <div>
+            <h2 style={{ fontSize:17, fontWeight:700, color:C.text, fontFamily:SERIF, margin:0 }}>
+              $ Record Financials
+            </h2>
+            <div style={{ fontSize:11, color:C.text3, fontFamily:FONT, marginTop:2 }}>
+              {deal.address} · {linkedAgents.length > 1 ? `Agent ${agentIdx+1} of ${linkedAgents.length}` : ""}
+            </div>
+          </div>
+          <button onClick={onClose} style={{ background:"none", border:"none",
+            color:C.text2, fontSize:20, cursor:"pointer" }}>✕</button>
+        </div>
+
+        {/* Agent badge */}
+        {agent && (
+          <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:18,
+            padding:"10px 14px", background:C.goldDim, border:`1px solid ${C.goldBorder}`,
+            borderRadius:10 }}>
+            <Avatar name={agent.full_name} email={agent.email} size={32} />
+            <div>
+              <div style={{ fontSize:13, fontWeight:700, color:C.text, fontFamily:FONT }}>{agent.full_name}</div>
+              <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>
+                {role}
+                {pkgLoading ? " · Loading package…" : pkg ? ` · ${pkg.package_name}` : " · ⚠️ No package set"}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Inputs */}
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:16 }}>
+          <Field label="Sale Price ($)" value={salePrice} onChange={setSalePrice} placeholder="500000" />
+          <Field label="Commission %" value={commRate}   onChange={setCommRate}  placeholder="3.0" />
+        </div>
+
+        {/* Live calculation */}
+        {price > 0 && rate > 0 && (
+          <div style={{ background:C.surface2, border:`1px solid ${C.border}`,
+            borderRadius:10, padding:"14px 16px", marginBottom:16 }}>
+            <div style={{ fontSize:10, fontWeight:700, color:C.text3, fontFamily:FONT,
+              textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:10 }}>
+              Breakdown
+            </div>
+            <div style={{ display:"flex", flexDirection:"column", gap:5 }}>
+              {[
+                {l:"Gross Commission",   v:grossComm,  c:C.text},
+                {l:`Agent Gross (${pkg?.split_agent_pct||80}%)`, v:agentGross, c:C.text},
+                pkg?.flat_transaction_fee > 0 && {l:"− Transaction Fee", v:-pkg.flat_transaction_fee, c:C.red},
+                pkg?.e_and_o_fee > 0         && {l:"− E&O Fee",          v:-pkg.e_and_o_fee,         c:C.red},
+                royalty > 0                  && {l:`− Royalty (${pkg?.royalty_fee_pct}%)`, v:-royalty, c:C.red},
+              ].filter(Boolean).map((row,i)=>(
+                <div key={i} style={{ display:"flex", justifyContent:"space-between",
+                  padding:"4px 0", borderBottom:`1px solid ${C.border}` }}>
+                  <span style={{ fontSize:12, color:C.text2, fontFamily:FONT }}>{row.l}</span>
+                  <span style={{ fontSize:12, fontWeight:600, color:row.c, fontFamily:MONO }}>
+                    {row.v >= 0 ? fmt(row.v) : `−${fmt(Math.abs(row.v))}`}
+                  </span>
+                </div>
+              ))}
+              <div style={{ display:"flex", justifyContent:"space-between", padding:"6px 0" }}>
+                <span style={{ fontSize:14, fontWeight:700, color:C.text, fontFamily:FONT }}>Agent Net</span>
+                <span style={{ fontSize:14, fontWeight:700, color:C.green, fontFamily:MONO }}>{fmt(agentNet)}</span>
+              </div>
+              <div style={{ display:"flex", justifyContent:"space-between", padding:"4px 0" }}>
+                <span style={{ fontSize:12, color:C.text2, fontFamily:FONT }}>Brokerage Net</span>
+                <span style={{ fontSize:13, fontWeight:700, color:C.gold, fontFamily:MONO }}>{fmt(brokerNet)}</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {!pkg && !pkgLoading && agent && (
+          <div style={{ padding:"10px 14px", background:"rgba(245,158,11,0.08)",
+            border:`1px solid rgba(245,158,11,0.25)`, borderRadius:8, marginBottom:14,
+            fontSize:12, color:C.amber, fontFamily:FONT }}>
+            ⚠️ {agent.full_name} has no package set. Go to Financials → Agent Packages to set one.
+            Calculation uses 80/20 default.
+          </div>
+        )}
+
+        <div style={{ display:"flex", gap:10 }}>
+          <GoldButton onClick={save} disabled={saving||!price||!rate}>
+            {saving ? "Saving…" : agentIdx < linkedAgents.length-1 ? "Save & Next Agent" : "Save Financials"}
+          </GoldButton>
+          <GoldButton onClick={onClose} outline>Skip</GoldButton>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function DealDetail({ deal, user, onClose, onRefresh }) {
   const [tab,setTab]           = useState("overview");
   const [activities,setActs]   = useState([]);
@@ -637,6 +804,8 @@ function DealDetail({ deal, user, onClose, onRefresh }) {
   const [allContacts,setAllContacts]   = useState([]);
   const [dealTasks,setDealTasks]       = useState([]);
   const [loading,setLoading]   = useState(true);
+  const [showFinancials, setShowFinancials] = useState(false);
+  const [financialAgents, setFinancialAgents] = useState([]);
   const [addingContact,setAddingContact] = useState(false);
   const [contactToAdd,setContactToAdd]   = useState("");
   const [contactRole,setContactRole]     = useState("Client");
@@ -732,6 +901,16 @@ function DealDetail({ deal, user, onClose, onRefresh }) {
     onRefresh();
     setToast({msg:`Status → ${newStatus}`,type:"success"});
     await reloadDetail();
+    // Trigger financial calculator when deal closes
+    if(newStatus === "Closed") {
+      const { data: linked } = await supabase.from("deal_contacts")
+        .select("*, contacts(id,full_name,email)")
+        .eq("deal_id", deal.id);
+      if(linked && linked.length > 0) {
+        setFinancialAgents(linked);
+        setShowFinancials(true);
+      }
+    }
   };
 
   const ACT_ICON = {note:"📝",call:"📞",email:"📧",showing:"🏠",offer:"📄",status_change:"🔄"};
@@ -875,6 +1054,20 @@ function DealDetail({ deal, user, onClose, onRefresh }) {
               <div style={{ fontSize:11, color:C.text3, fontFamily:FONT, marginTop:4 }}>
                 Added by {deal.created_by||"unknown"} · {fmtDate(deal.created_at)}
               </div>
+
+              {/* Record financials shortcut when closed */}
+              {deal.status === "Closed" && (
+                <div style={{ marginTop:12 }}>
+                  <GoldButton small onClick={async()=>{
+                    const { data:linked } = await supabase.from("deal_contacts")
+                      .select("*, contacts(id,full_name,email)").eq("deal_id",deal.id);
+                    setFinancialAgents(linked||[]);
+                    setShowFinancials(true);
+                  }}>
+                    $ Record Financials
+                  </GoldButton>
+                </div>
+              )}
             </div>
 
           ) : tab==="activity" ? (
@@ -1092,6 +1285,21 @@ function DealDetail({ deal, user, onClose, onRefresh }) {
           )}
         </div>
       </div>
+
+      {/* Financial calculator modal */}
+      {showFinancials && (
+        <DealFinancialCalculator
+          deal={deal}
+          linkedAgents={financialAgents}
+          user={user}
+          onClose={()=>setShowFinancials(false)}
+          onSaved={()=>{
+            setShowFinancials(false);
+            setToast({msg:"Financials recorded",type:"success"});
+            onRefresh();
+          }}
+        />
+      )}
 
       {/* Edit modal */}
       {editMode&&(
@@ -1358,7 +1566,226 @@ const PORTAL_NAV = [
   { id:"portal_chat",      label:"Chat · Ari", icon:"✦" },
 ];
 
-function AgentPortalApp({ agentContact, session, onSignOut, isPreview=false }) {
+function PortalChatPanel({
+  chatMsgs, setChatMsgs, chatInput, setChatInput,
+  chatSending, setChSend, chatConvId, setChatConvId,
+  chatBottomRef, agentName, agentEmail, agentContact,
+  myDeals, myTasks
+}) {
+
+    // scroll on new messages
+    useEffect(()=>{ chatBottomRef.current?.scrollIntoView({behavior:"smooth"}); },[chatMsgs]);
+
+    const buildAgentContext = () => {
+      const dealLines = myDeals.map(d=>
+        `${d.address||"Untitled"} (${d.agent_role}, ${d.status}${d.price?`, $${d.price}`:""})`
+      ).join("; ");
+      const taskLines = myTasks.filter(t=>t.status!=="done").map(t=>t.title).join("; ");
+      return `\nAGENT CONTEXT:\nAgent: ${agentName} (${agentEmail})\nPipeline (${myDeals.length} deals): ${dealLines||"none"}\nOpen tasks: ${taskLines||"none"}\nDate: ${new Date().toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric",year:"numeric"})}`;
+    };
+
+    const sendChat = async () => {
+      if(!chatInput.trim()||chatSending) return;
+      const userMsg = {role:"user",content:chatInput.trim(),ts:new Date().toISOString()};
+      const newMsgs = [...chatMsgs, userMsg];
+      setChatMsgs(newMsgs);
+      setChatInput("");
+      setChSend(true);
+      try {
+        const apiMsgs = newMsgs.map(m=>({role:m.role==="user"?"user":"assistant",content:m.content}));
+        if(apiMsgs.length===1) apiMsgs[0].content += buildAgentContext();
+
+        const res = await fetch("https://api.anthropic.com/v1/messages",{
+          method:"POST",
+          headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({
+            model:"claude-sonnet-4-20250514",
+            max_tokens:1000,
+            system:`You are Ari, the AI assistant for ${agentName} at Realty One Group Advantage. You are their personal brokerage AI coach and resource. Help with: pipeline questions, drafting emails and offers, real estate advice, showing prep, goal tracking, and client communication. Their broker team: Dara Khoyi (Broker, khoyi1234@gmail.com), Alex Khoi (Broker, alex@brokeralex.com), Josh Maples (Front Desk, roga.lutz@gmail.com), Javier Suarez (Operations, javier@thesuarezcapital.com). Be encouraging, practical, and direct. Keep responses concise. If they need broker support, point them to Dara or Alex.`,
+            messages:apiMsgs,
+          }),
+        });
+        const data = await res.json();
+        const text = data.content?.[0]?.text || "Something went wrong — try again.";
+        const ariMsg = {role:"assistant",content:text,ts:new Date().toISOString()};
+        const final = [...newMsgs, ariMsg];
+        setChatMsgs(final);
+
+        if(chatConvId){
+          await supabase.from("robot_conversations")
+            .update({messages:final,updated_at:new Date().toISOString()})
+            .eq("id",chatConvId);
+        } else {
+          const {data:conv} = await supabase.from("robot_conversations").insert({
+            robot_id:ARI_ID, org_id:ORG_ID,
+            user_email:agentEmail, contact_id:agentContact?.id,
+            messages:final,
+          }).select().single();
+          if(conv) setChatConvId(conv.id);
+        }
+      } catch(e) {
+        setChatMsgs(m=>[...m,{role:"assistant",content:"Connection error — please try again.",ts:new Date().toISOString()}]);
+      } finally { setChSend(false); }
+    };
+
+    const PROMPTS = [
+      "What's in my pipeline right now?",
+      "Help me draft a follow-up email to a buyer",
+      "What should I focus on this week?",
+      "How do I prep for a listing presentation?",
+      "Who should I contact for broker support?",
+    ];
+
+    const fmtTime = iso => iso ? new Date(iso).toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"}) : "";
+
+    return (
+      <div style={{ display:"flex", height:"calc(100vh - 56px)", overflow:"hidden" }}>
+        {/* Ari sidebar */}
+        <div style={{ width:220, background:C.surface, borderRight:`1px solid ${C.border}`,
+          display:"flex", flexDirection:"column", padding:"20px 16px", flexShrink:0 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:16 }}>
+            <div style={{ width:40, height:40, borderRadius:10, flexShrink:0,
+              background:`linear-gradient(135deg,${C.gold},${C.goldLight})`,
+              display:"flex", alignItems:"center", justifyContent:"center", fontSize:16 }}>✦</div>
+            <div>
+              <div style={{ fontSize:14, fontWeight:700, color:C.text, fontFamily:SERIF }}>Ari</div>
+              <div style={{ fontSize:10, color:C.text3, fontFamily:FONT }}>Your AI assistant</div>
+            </div>
+          </div>
+
+          <div style={{ fontSize:11, color:C.text3, fontFamily:FONT, lineHeight:1.65, marginBottom:16 }}>
+            Ask me anything — pipeline help, drafting emails, real estate questions, or what to focus on today.
+          </div>
+
+          <div style={{ fontSize:10, fontWeight:700, color:C.text3, fontFamily:FONT,
+            textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:8 }}>Try asking</div>
+          {PROMPTS.map(q=>(
+            <button key={q} onClick={()=>setChatInput(q)} style={{
+              display:"block", width:"100%", textAlign:"left",
+              padding:"7px 0", background:"none", border:"none",
+              borderBottom:`1px solid ${C.border}`, color:C.text2,
+              fontSize:11, fontFamily:FONT, cursor:"pointer", transition:"color 0.1s",
+              lineHeight:1.4 }}
+              onMouseEnter={e=>e.currentTarget.style.color=C.gold}
+              onMouseLeave={e=>e.currentTarget.style.color=C.text2}>
+              {q}
+            </button>
+          ))}
+
+          <div style={{ marginTop:"auto", paddingTop:16 }}>
+            <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:chatMsgs.length>0?8:0 }}>
+              <div style={{ width:7, height:7, borderRadius:"50%",
+                background:chatSending?C.amber:C.green,
+                animation:chatSending?"ariPulse 1s infinite":"none" }} />
+              <span style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>
+                {chatSending?"Thinking…":"Ready"}
+              </span>
+            </div>
+            {chatMsgs.length>0&&(
+              <button onClick={async()=>{
+                if(chatConvId) await supabase.from("robot_conversations")
+                  .update({messages:[],updated_at:new Date().toISOString()}).eq("id",chatConvId);
+                setChatMsgs([]);
+              }} style={{ background:"none", border:`1px solid ${C.border}`,
+                borderRadius:6, color:C.text3, fontSize:11, fontFamily:FONT,
+                cursor:"pointer", padding:"6px 12px", width:"100%", transition:"color 0.1s" }}
+                onMouseEnter={e=>e.currentTarget.style.color=C.red}
+                onMouseLeave={e=>e.currentTarget.style.color=C.text3}>
+                Clear chat
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Chat area */}
+        <div style={{ flex:1, display:"flex", flexDirection:"column", minWidth:0 }}>
+          <div style={{ flex:1, overflowY:"auto", padding:"20px 24px",
+            display:"flex", flexDirection:"column", gap:14 }}>
+            {chatMsgs.length===0&&(
+              <div style={{ flex:1, display:"flex", flexDirection:"column",
+                alignItems:"center", justifyContent:"center", gap:10, opacity:0.4 }}>
+                <div style={{ fontSize:36 }}>✦</div>
+                <div style={{ fontSize:13, color:C.text3, fontFamily:FONT }}>
+                  Hey {agentName.split(" ")[0]} — what can I help with?
+                </div>
+              </div>
+            )}
+            {chatMsgs.map((m,i)=>(
+              <div key={i} style={{ display:"flex", gap:10,
+                flexDirection:m.role==="user"?"row-reverse":"row", alignItems:"flex-start" }}>
+                {m.role==="assistant"
+                  ? <div style={{ width:30, height:30, borderRadius:8, flexShrink:0,
+                      background:`linear-gradient(135deg,${C.gold},${C.goldLight})`,
+                      display:"flex", alignItems:"center", justifyContent:"center", fontSize:13 }}>✦</div>
+                  : <Avatar name={agentName} email={agentEmail} size={30} />
+                }
+                <div style={{ maxWidth:"74%", minWidth:0 }}>
+                  <div style={{
+                    padding:"11px 15px", borderRadius:12,
+                    background:m.role==="user"?C.goldDim:C.surface,
+                    border:`1px solid ${m.role==="user"?C.goldBorder:C.border}`,
+                    color:C.text, fontSize:13, fontFamily:FONT,
+                    lineHeight:1.65, whiteSpace:"pre-wrap", wordBreak:"break-word",
+                  }}>{m.content}</div>
+                  <div style={{ fontSize:10, color:C.text3, fontFamily:FONT, marginTop:3,
+                    textAlign:m.role==="user"?"right":"left" }}>{fmtTime(m.ts)}</div>
+                </div>
+              </div>
+            ))}
+            {chatSending&&(
+              <div style={{ display:"flex", gap:10, alignItems:"flex-start" }}>
+                <div style={{ width:30, height:30, borderRadius:8, flexShrink:0,
+                  background:`linear-gradient(135deg,${C.gold},${C.goldLight})`,
+                  display:"flex", alignItems:"center", justifyContent:"center", fontSize:13 }}>✦</div>
+                <div style={{ padding:"11px 15px", borderRadius:12,
+                  background:C.surface, border:`1px solid ${C.border}`,
+                  display:"flex", gap:5, alignItems:"center" }}>
+                  {[0,1,2].map(i=>(
+                    <div key={i} style={{ width:6,height:6,borderRadius:"50%",
+                      background:C.gold,opacity:0.7,
+                      animation:`ariDot 1s ${i*0.15}s infinite` }} />
+                  ))}
+                </div>
+              </div>
+            )}
+            <div ref={chatBottomRef} />
+          </div>
+
+          <div style={{ padding:"14px 20px", borderTop:`1px solid ${C.border}`, background:C.surface }}>
+            <div style={{ display:"flex", gap:10 }}>
+              <textarea value={chatInput}
+                onChange={e=>setChatInput(e.target.value)}
+                onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendChat();}}}
+                placeholder="Ask Ari anything… (Enter to send)"
+                rows={2}
+                style={{ flex:1, padding:"10px 13px", background:C.surface2,
+                  border:`1.5px solid ${C.border2}`, borderRadius:9,
+                  color:C.text, fontSize:13, fontFamily:FONT, outline:"none",
+                  resize:"none", lineHeight:1.5, transition:"border-color 0.15s",
+                  boxSizing:"border-box" }}
+                onFocus={e=>e.target.style.borderColor=C.gold}
+                onBlur={e=>e.target.style.borderColor=C.border2} />
+              <button onClick={sendChat} disabled={chatSending||!chatInput.trim()} style={{
+                padding:"0 18px", borderRadius:9, border:"none", flexShrink:0,
+                background:chatSending||!chatInput.trim()?C.surface3:`linear-gradient(135deg,${C.gold},${C.goldLight})`,
+                color:chatSending||!chatInput.trim()?C.text3:"#0a0a0a",
+                fontSize:13, fontWeight:700, fontFamily:FONT,
+                cursor:chatSending||!chatInput.trim()?"not-allowed":"pointer" }}>
+                {chatSending?"…":"Send"}
+              </button>
+            </div>
+          </div>
+        </div>
+        <style>{`
+          @keyframes ariPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.5)}}
+          @keyframes ariDot{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
+        `}</style>
+      </div>
+    );
+}
+
+function AgentPortalApp(
+{ agentContact, session, onSignOut, isPreview=false }) {
   const [view, setView]       = useState("portal_dashboard");
   const [myDeals, setMyDeals] = useState([]);
   const [myContacts, setMyCon] = useState([]);
@@ -1854,220 +2281,8 @@ function AgentPortalApp({ agentContact, session, onSignOut, isPreview=false }) {
   };
 
   // ── Chat with Ari (Phase 4) ──
-  const PortalChat = () => {
 
-    // scroll on new messages
-    useEffect(()=>{ chatBottomRef.current?.scrollIntoView({behavior:"smooth"}); },[chatMsgs]);
-
-    const buildAgentContext = () => {
-      const dealLines = myDeals.map(d=>
-        `${d.address||"Untitled"} (${d.agent_role}, ${d.status}${d.price?`, $${d.price}`:""})`
-      ).join("; ");
-      const taskLines = myTasks.filter(t=>t.status!=="done").map(t=>t.title).join("; ");
-      return `\nAGENT CONTEXT:\nAgent: ${agentName} (${agentEmail})\nPipeline (${myDeals.length} deals): ${dealLines||"none"}\nOpen tasks: ${taskLines||"none"}\nDate: ${new Date().toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric",year:"numeric"})}`;
-    };
-
-    const sendChat = async () => {
-      if(!chatInput.trim()||chatSending) return;
-      const userMsg = {role:"user",content:chatInput.trim(),ts:new Date().toISOString()};
-      const newMsgs = [...chatMsgs, userMsg];
-      setChatMsgs(newMsgs);
-      setChatInput("");
-      setChSend(true);
-      try {
-        const apiMsgs = newMsgs.map(m=>({role:m.role==="user"?"user":"assistant",content:m.content}));
-        if(apiMsgs.length===1) apiMsgs[0].content += buildAgentContext();
-
-        const res = await fetch("https://api.anthropic.com/v1/messages",{
-          method:"POST",
-          headers:{"Content-Type":"application/json"},
-          body:JSON.stringify({
-            model:"claude-sonnet-4-20250514",
-            max_tokens:1000,
-            system:`You are Ari, the AI assistant for ${agentName} at Realty One Group Advantage. You are their personal brokerage AI coach and resource. Help with: pipeline questions, drafting emails and offers, real estate advice, showing prep, goal tracking, and client communication. Their broker team: Dara Khoyi (Broker, khoyi1234@gmail.com), Alex Khoi (Broker, alex@brokeralex.com), Josh Maples (Front Desk, roga.lutz@gmail.com), Javier Suarez (Operations, javier@thesuarezcapital.com). Be encouraging, practical, and direct. Keep responses concise. If they need broker support, point them to Dara or Alex.`,
-            messages:apiMsgs,
-          }),
-        });
-        const data = await res.json();
-        const text = data.content?.[0]?.text || "Something went wrong — try again.";
-        const ariMsg = {role:"assistant",content:text,ts:new Date().toISOString()};
-        const final = [...newMsgs, ariMsg];
-        setChatMsgs(final);
-
-        if(chatConvId){
-          await supabase.from("robot_conversations")
-            .update({messages:final,updated_at:new Date().toISOString()})
-            .eq("id",chatConvId);
-        } else {
-          const {data:conv} = await supabase.from("robot_conversations").insert({
-            robot_id:ARI_ID, org_id:ORG_ID,
-            user_email:agentEmail, contact_id:agentContact?.id,
-            messages:final,
-          }).select().single();
-          if(conv) setChatConvId(conv.id);
-        }
-      } catch(e) {
-        setChatMsgs(m=>[...m,{role:"assistant",content:"Connection error — please try again.",ts:new Date().toISOString()}]);
-      } finally { setChSend(false); }
-    };
-
-    const PROMPTS = [
-      "What's in my pipeline right now?",
-      "Help me draft a follow-up email to a buyer",
-      "What should I focus on this week?",
-      "How do I prep for a listing presentation?",
-      "Who should I contact for broker support?",
-    ];
-
-    const fmtTime = iso => iso ? new Date(iso).toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"}) : "";
-
-    return (
-      <div style={{ display:"flex", height:"calc(100vh - 56px)", overflow:"hidden" }}>
-        {/* Ari sidebar */}
-        <div style={{ width:220, background:C.surface, borderRight:`1px solid ${C.border}`,
-          display:"flex", flexDirection:"column", padding:"20px 16px", flexShrink:0 }}>
-          <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:16 }}>
-            <div style={{ width:40, height:40, borderRadius:10, flexShrink:0,
-              background:`linear-gradient(135deg,${C.gold},${C.goldLight})`,
-              display:"flex", alignItems:"center", justifyContent:"center", fontSize:16 }}>✦</div>
-            <div>
-              <div style={{ fontSize:14, fontWeight:700, color:C.text, fontFamily:SERIF }}>Ari</div>
-              <div style={{ fontSize:10, color:C.text3, fontFamily:FONT }}>Your AI assistant</div>
-            </div>
-          </div>
-
-          <div style={{ fontSize:11, color:C.text3, fontFamily:FONT, lineHeight:1.65, marginBottom:16 }}>
-            Ask me anything — pipeline help, drafting emails, real estate questions, or what to focus on today.
-          </div>
-
-          <div style={{ fontSize:10, fontWeight:700, color:C.text3, fontFamily:FONT,
-            textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:8 }}>Try asking</div>
-          {PROMPTS.map(q=>(
-            <button key={q} onClick={()=>setChatInput(q)} style={{
-              display:"block", width:"100%", textAlign:"left",
-              padding:"7px 0", background:"none", border:"none",
-              borderBottom:`1px solid ${C.border}`, color:C.text2,
-              fontSize:11, fontFamily:FONT, cursor:"pointer", transition:"color 0.1s",
-              lineHeight:1.4 }}
-              onMouseEnter={e=>e.currentTarget.style.color=C.gold}
-              onMouseLeave={e=>e.currentTarget.style.color=C.text2}>
-              {q}
-            </button>
-          ))}
-
-          <div style={{ marginTop:"auto", paddingTop:16 }}>
-            <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:chatMsgs.length>0?8:0 }}>
-              <div style={{ width:7, height:7, borderRadius:"50%",
-                background:chatSending?C.amber:C.green,
-                animation:chatSending?"ariPulse 1s infinite":"none" }} />
-              <span style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>
-                {chatSending?"Thinking…":"Ready"}
-              </span>
-            </div>
-            {chatMsgs.length>0&&(
-              <button onClick={async()=>{
-                if(chatConvId) await supabase.from("robot_conversations")
-                  .update({messages:[],updated_at:new Date().toISOString()}).eq("id",chatConvId);
-                setChatMsgs([]);
-              }} style={{ background:"none", border:`1px solid ${C.border}`,
-                borderRadius:6, color:C.text3, fontSize:11, fontFamily:FONT,
-                cursor:"pointer", padding:"6px 12px", width:"100%", transition:"color 0.1s" }}
-                onMouseEnter={e=>e.currentTarget.style.color=C.red}
-                onMouseLeave={e=>e.currentTarget.style.color=C.text3}>
-                Clear chat
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* Chat area */}
-        <div style={{ flex:1, display:"flex", flexDirection:"column", minWidth:0 }}>
-          <div style={{ flex:1, overflowY:"auto", padding:"20px 24px",
-            display:"flex", flexDirection:"column", gap:14 }}>
-            {chatMsgs.length===0&&(
-              <div style={{ flex:1, display:"flex", flexDirection:"column",
-                alignItems:"center", justifyContent:"center", gap:10, opacity:0.4 }}>
-                <div style={{ fontSize:36 }}>✦</div>
-                <div style={{ fontSize:13, color:C.text3, fontFamily:FONT }}>
-                  Hey {agentName.split(" ")[0]} — what can I help with?
-                </div>
-              </div>
-            )}
-            {chatMsgs.map((m,i)=>(
-              <div key={i} style={{ display:"flex", gap:10,
-                flexDirection:m.role==="user"?"row-reverse":"row", alignItems:"flex-start" }}>
-                {m.role==="assistant"
-                  ? <div style={{ width:30, height:30, borderRadius:8, flexShrink:0,
-                      background:`linear-gradient(135deg,${C.gold},${C.goldLight})`,
-                      display:"flex", alignItems:"center", justifyContent:"center", fontSize:13 }}>✦</div>
-                  : <Avatar name={agentName} email={agentEmail} size={30} />
-                }
-                <div style={{ maxWidth:"74%", minWidth:0 }}>
-                  <div style={{
-                    padding:"11px 15px", borderRadius:12,
-                    background:m.role==="user"?C.goldDim:C.surface,
-                    border:`1px solid ${m.role==="user"?C.goldBorder:C.border}`,
-                    color:C.text, fontSize:13, fontFamily:FONT,
-                    lineHeight:1.65, whiteSpace:"pre-wrap", wordBreak:"break-word",
-                  }}>{m.content}</div>
-                  <div style={{ fontSize:10, color:C.text3, fontFamily:FONT, marginTop:3,
-                    textAlign:m.role==="user"?"right":"left" }}>{fmtTime(m.ts)}</div>
-                </div>
-              </div>
-            ))}
-            {chatSending&&(
-              <div style={{ display:"flex", gap:10, alignItems:"flex-start" }}>
-                <div style={{ width:30, height:30, borderRadius:8, flexShrink:0,
-                  background:`linear-gradient(135deg,${C.gold},${C.goldLight})`,
-                  display:"flex", alignItems:"center", justifyContent:"center", fontSize:13 }}>✦</div>
-                <div style={{ padding:"11px 15px", borderRadius:12,
-                  background:C.surface, border:`1px solid ${C.border}`,
-                  display:"flex", gap:5, alignItems:"center" }}>
-                  {[0,1,2].map(i=>(
-                    <div key={i} style={{ width:6,height:6,borderRadius:"50%",
-                      background:C.gold,opacity:0.7,
-                      animation:`ariDot 1s ${i*0.15}s infinite` }} />
-                  ))}
-                </div>
-              </div>
-            )}
-            <div ref={chatBottomRef} />
-          </div>
-
-          <div style={{ padding:"14px 20px", borderTop:`1px solid ${C.border}`, background:C.surface }}>
-            <div style={{ display:"flex", gap:10 }}>
-              <textarea value={chatInput}
-                onChange={e=>setChatInput(e.target.value)}
-                onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendChat();}}}
-                placeholder="Ask Ari anything… (Enter to send)"
-                rows={2}
-                style={{ flex:1, padding:"10px 13px", background:C.surface2,
-                  border:`1.5px solid ${C.border2}`, borderRadius:9,
-                  color:C.text, fontSize:13, fontFamily:FONT, outline:"none",
-                  resize:"none", lineHeight:1.5, transition:"border-color 0.15s",
-                  boxSizing:"border-box" }}
-                onFocus={e=>e.target.style.borderColor=C.gold}
-                onBlur={e=>e.target.style.borderColor=C.border2} />
-              <button onClick={sendChat} disabled={chatSending||!chatInput.trim()} style={{
-                padding:"0 18px", borderRadius:9, border:"none", flexShrink:0,
-                background:chatSending||!chatInput.trim()?C.surface3:`linear-gradient(135deg,${C.gold},${C.goldLight})`,
-                color:chatSending||!chatInput.trim()?C.text3:"#0a0a0a",
-                fontSize:13, fontWeight:700, fontFamily:FONT,
-                cursor:chatSending||!chatInput.trim()?"not-allowed":"pointer" }}>
-                {chatSending?"…":"Send"}
-              </button>
-            </div>
-          </div>
-        </div>
-        <style>{`
-          @keyframes ariPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.5)}}
-          @keyframes ariDot{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
-        `}</style>
-      </div>
-    );
-  };
-
-  const PORTAL_TITLES = {
+    const PORTAL_TITLES = {
     portal_dashboard: ["Dashboard", `Welcome, ${agentName.split(" ")[0]}`],
     portal_pipeline:  ["My Pipeline", `${myDeals.length} deals`],
     portal_contacts:  ["My Contacts", `${myContacts.length} contacts`],
@@ -2104,7 +2319,18 @@ function AgentPortalApp({ agentContact, session, onSignOut, isPreview=false }) {
               {view==="portal_tasks"     && <PortalTasks />}
               {view==="portal_team"      && <PortalTeam />}
               {view==="portal_calendar"  && <CalendarView user={{email:agentEmail,role:"member"}} isPortal={true} agentContact={agentContact} />}
-              {view==="portal_chat"      && <PortalChat />}
+              {view==="portal_chat" && (
+              <PortalChatPanel
+                chatMsgs={chatMsgs} setChatMsgs={setChatMsgs}
+                chatInput={chatInput} setChatInput={setChatInput}
+                chatSending={chatSending} setChSend={setChSend}
+                chatConvId={chatConvId} setChatConvId={setChatConvId}
+                chatBottomRef={chatBottomRef}
+                agentName={agentName} agentEmail={agentEmail}
+                agentContact={agentContact}
+                myDeals={myDeals} myTasks={myTasks}
+              />
+            )}
             </>
           }
         </main>
@@ -2116,8 +2342,9 @@ function AgentPortalApp({ agentContact, session, onSignOut, isPreview=false }) {
 
 function AgentPortalPreview({ contact, onClose }) {
   return (
-    <div style={{ position:"fixed", inset:0, zIndex:400, background:C.bg }}>
-      {/* Preview top bar */}
+    <div style={{ position:"fixed", inset:0, zIndex:400, background:C.bg,
+      transform:"translateZ(0)", willChange:"transform" }}>
+      {/* Preview top bar — fixed relative to this container (via transform containment) */}
       <div style={{ position:"fixed", top:0, left:0, right:0, zIndex:401,
         background:"rgba(10,10,10,0.95)", backdropFilter:"blur(8px)",
         borderBottom:`1px solid ${C.goldBorder}`,
