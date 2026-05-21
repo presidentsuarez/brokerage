@@ -10,6 +10,14 @@ const APP_NAME = "Prism";
 const ORG_NAME = "Realty One Group Advantage";
 const ORG_ID   = "8cc1004c-c4da-4aab-b79a-f8b507983303";
 
+// Returns display label for created_by fields based on role
+const creatorLabel = (user) => {
+  if (!user) return "Unknown";
+  const name = user.full_name || user.email;
+  if (user.role === "admin") return `${name} · Manager`;
+  return name;
+};
+
 const C = {
   gold:"#D4AF37", goldLight:"#E8C84A", goldDim:"rgba(212,175,55,0.15)",
   goldBorder:"rgba(212,175,55,0.30)", bg:"#0a0a0a", surface:"#111111",
@@ -570,7 +578,7 @@ function DealDetail({ deal, user, onClose, onRefresh }) {
     setSavingAct(true);
     const { error } = await supabase.from("deal_activities").insert({
       deal_id:deal.id, activity_type:actForm.activity_type,
-      content:actForm.content, created_by:user?.email,
+      content:actForm.content, created_by:creatorLabel(user),
     });
     setSavingAct(false);
     if(!error){
@@ -601,7 +609,7 @@ function DealDetail({ deal, user, onClose, onRefresh }) {
     await supabase.from("deals").update({status:newStatus,updated_at:new Date().toISOString()}).eq("id",deal.id);
     await supabase.from("deal_activities").insert({
       deal_id:deal.id, activity_type:"status_change",
-      content:`Status changed to ${newStatus}`, created_by:user?.email,
+      content:`Status changed to ${newStatus}`, created_by:creatorLabel(user),
     });
     onRefresh();
     setToast({msg:`Status → ${newStatus}`,type:"success"});
@@ -873,7 +881,7 @@ function DealDetail({ deal, user, onClose, onRefresh }) {
                         setSavingContact(true);
                         await supabase.from("deal_contacts").insert({
                           deal_id:deal.id, contact_id:contactToAdd,
-                          role:contactRole, org_id:ORG_ID, added_by:user?.email,
+                          role:contactRole, org_id:ORG_ID, added_by:creatorLabel(user),
                         });
                         setSavingContact(false);
                         setAddingContact(false); setContactToAdd(""); setContactRole("Client");
@@ -940,7 +948,7 @@ function DealDetail({ deal, user, onClose, onRefresh }) {
                         setSavingTask(true);
                         await supabase.from("tasks").insert({
                           ...taskForm, org_id:ORG_ID, deal_id:deal.id,
-                          status:"open", created_by:user?.email,
+                          status:"open", created_by:creatorLabel(user),
                         });
                         setSavingTask(false);
                         setAddingTask(false);
@@ -1046,7 +1054,7 @@ function DealsView({ user, deals, onRefresh }) {
     const { error } = await supabase.from("deals").insert({
       ...form,
       price:form.price?parseFloat(form.price.replace(/[^0-9.]/g,"")):null,
-      org_id:ORG_ID, created_by:user?.email,
+      org_id:ORG_ID, created_by:creatorLabel(user),
     });
     setSaving(false);
     if(!error){ setShowAdd(false); setForm({address:"",city:"",state:"FL",zip:"",price:"",status:"New",deal_type:"Listing",mls_number:"",notes:""}); onRefresh(); setToast({msg:"Deal added",type:"success"}); }
@@ -1188,7 +1196,7 @@ function ContactDetail({ contact, user, onClose, onRefresh }) {
       contact_id: contact.id,
       portal_email: portalEmail.trim().toLowerCase(),
       is_active: true,
-      granted_by: user?.email,
+      granted_by: creatorLabel(user),
       org_id: ORG_ID,
       updated_at: new Date().toISOString(),
     }, { onConflict: "portal_email" });
@@ -1400,7 +1408,7 @@ function ContactsView({ user, contacts, onRefresh }) {
   const handleAdd = async () => {
     if(!form.full_name.trim()) return;
     setSaving(true);
-    const { error } = await supabase.from("contacts").insert({...form,org_id:ORG_ID,created_by:user?.email});
+    const { error } = await supabase.from("contacts").insert({...form,org_id:ORG_ID,created_by:creatorLabel(user)});
     setSaving(false);
     if(!error){ setShowAdd(false); setForm({full_name:"",email:"",phone:"",contact_type:"Agent",status:"Active",source:"",notes:""}); onRefresh(); setToast({msg:"Contact added",type:"success"}); }
   };
@@ -1530,7 +1538,7 @@ function TasksView({ user, tasks, onRefresh }) {
   const handleAdd = async () => {
     if(!form.title.trim()) return;
     setSaving(true);
-    await supabase.from("tasks").insert({...form,org_id:ORG_ID,status:"open",created_by:user?.email});
+    await supabase.from("tasks").insert({...form,org_id:ORG_ID,status:"open",created_by:creatorLabel(user)});
     setSaving(false); setShowAdd(false);
     setForm({title:"",description:"",priority:"medium",due_date:"",assigned_to:user?.email||""});
     onRefresh();
@@ -1635,7 +1643,7 @@ function NotesView({ user }) {
 
   const createNote = async () => {
     const { data } = await supabase.from("team_notes")
-      .insert({ org_id:ORG_ID, title:"New Note", content:"", created_by:user?.email, updated_by:user?.email })
+      .insert({ org_id:ORG_ID, title:"New Note", content:"", created_by:creatorLabel(user), updated_by:creatorLabel(user) })
       .select().single();
     if(data){ await loadNotes(); setEditingNote(data); }
   };
@@ -1646,7 +1654,7 @@ function NotesView({ user }) {
     await supabase.from("team_notes").update({
       title:   editingNote.title,
       content: editingNote.content,
-      updated_by: user?.email,
+      updated_by: creatorLabel(user),
       updated_at: new Date().toISOString(),
     }).eq("id", editingNote.id);
     setSaving(false);
