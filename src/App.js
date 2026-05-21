@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { createClient } from "@supabase/supabase-js";
 
 const supabase = createClient(
@@ -10,6 +10,7 @@ const APP_NAME = "Prism";
 const ORG_NAME = "Realty One Group Advantage";
 const ORG_ID          = "8cc1004c-c4da-4aab-b79a-f8b507983303";
 const PLATFORM_ADMIN  = "javier@thesuarezcapital.com";
+const ARI_ID          = "f0ffc5bf-fd8b-454e-b5fc-13bd3aea7b72";
 
 // Returns display label for created_by fields based on role
 const creatorLabel = (user) => {
@@ -45,6 +46,7 @@ const NAV = [
   { id:"deals",     label:"Deals",     icon:"◈" },
   { id:"contacts",  label:"Contacts",  icon:"◎" },
   { id:"tasks",     label:"Tasks",     icon:"◻" },
+  { id:"robots",    label:"Ari",       icon:"✦", platformOnly:true },
   { id:"notepad",   label:"Notepad",   icon:"✎", platformOnly:true },
   { id:"settings",  label:"Settings",  icon:"⚙", platformOnly:true },
 ];
@@ -1165,188 +1167,582 @@ function DealsView({ user, deals, onRefresh }) {
 
 
 
-function AgentPortalPreview({ contact, onClose }) {
-  const [deals, setDeals]   = useState([]);
-  const [tasks, setTasks]   = useState([]);
+// ════════════════════════════════════════════════════════════
+// AGENT PORTAL — Full experience (Phase 1+2)
+// ════════════════════════════════════════════════════════════
+
+const PORTAL_NAV = [
+  { id:"portal_dashboard", label:"Dashboard",  icon:"⬡" },
+  { id:"portal_pipeline",  label:"Pipeline",   icon:"◈" },
+  { id:"portal_contacts",  label:"Contacts",   icon:"◎" },
+  { id:"portal_tasks",     label:"Tasks",      icon:"◻" },
+  { id:"portal_team",      label:"Team",       icon:"◑" },
+  { id:"portal_chat",      label:"Chat · Ari", icon:"✦" },
+];
+
+function AgentPortalApp({ agentContact, session, onSignOut, isPreview=false }) {
+  const [view, setView]       = useState("portal_dashboard");
+  const [myDeals, setMyDeals] = useState([]);
+  const [myContacts, setMyCon] = useState([]);
+  const [myTasks, setMyTasks] = useState([]);
+  const [team, setTeam]       = useState([]);
   const [loading, setLoading] = useState(true);
+  const [sidebarCollapsed, setSC] = useState(false);
+
+  const agentName  = agentContact?.full_name || "Agent";
+  const agentEmail = agentContact?.email || session?.user?.email || "";
+  const agentPhone = agentContact?.phone || "";
 
   useEffect(()=>{
-    Promise.all([
-      supabase.from("deal_contacts")
-        .select("deal_id, role, deals(id,address,city,state,price,status,deal_type,mls_number)")
-        .eq("contact_id", contact.id),
-      supabase.from("tasks")
-        .select("*")
-        .eq("org_id", ORG_ID)
-        .eq("assigned_to", contact.email||"__none__")
-        .eq("status","open"),
-    ]).then(([dc, t])=>{
-      setDeals((dc.data||[]).map(r=>r.deals).filter(Boolean));
-      setTasks(t.data||[]);
+    const load = async () => {
+      const [dc, ct, t, tm] = await Promise.all([
+        // deals linked to this agent
+        supabase.from("deal_contacts")
+          .select("role, deals(id,address,city,state,price,status,deal_type,mls_number,bedrooms,bathrooms,sqft,close_date,commission_rate,notes,created_at)")
+          .eq("contact_id", agentContact?.id || "00000000-0000-0000-0000-000000000000"),
+        // contacts created by agent
+        supabase.from("contacts")
+          .select("*").eq("org_id", ORG_ID)
+          .eq("created_by", agentEmail).order("full_name"),
+        // tasks assigned to agent
+        supabase.from("tasks")
+          .select("*").eq("org_id", ORG_ID)
+          .eq("assigned_to", agentEmail).order("due_date"),
+        // team directory
+        supabase.from("user_profiles")
+          .select("full_name,email,brokerage_role,role,phone")
+          .eq("org_id", ORG_ID).order("full_name"),
+      ]);
+      setMyDeals((dc.data||[]).map(r=>({...r.deals, agent_role:r.role})).filter(d=>d?.id));
+      setMyCon(ct.data||[]);
+      setMyTasks(t.data||[]);
+      setTeam(tm.data||[]);
       setLoading(false);
-    });
-  },[contact.id]);
+    };
+    load();
+  },[agentContact?.id, agentEmail]);
 
-  const fmt = n => n>=1e6?`$${(n/1e6).toFixed(1)}M`:n>=1e3?`$${(n/1e3).toFixed(0)}K`:`$${n}`;
+  const refreshTasks = async () => {
+    const { data } = await supabase.from("tasks").select("*")
+      .eq("org_id",ORG_ID).eq("assigned_to",agentEmail).order("due_date");
+    setMyTasks(data||[]);
+  };
+
+  const fmt = n=>n>=1e6?`$${(n/1e6).toFixed(1)}M`:n>=1e3?`$${(n/1e3).toFixed(0)}K`:`$${n}`;
+  const sw  = sidebarCollapsed ? 56 : 220;
+
+  // ── Agent Sidebar ──
+  const AgentSidebar = () => (
+    <div style={{ width:sw, minWidth:sw, background:C.surface,
+      borderRight:`1px solid ${C.border}`, height:"100vh",
+      display:"flex", flexDirection:"column",
+      transition:"width 0.2s,min-width 0.2s", overflow:"hidden",
+      position:"fixed", top:0, left:0, zIndex:100 }}>
+
+      <div style={{ padding:sidebarCollapsed?"16px 14px":"16px 18px",
+        display:"flex", alignItems:"center", gap:10,
+        borderBottom:`1px solid ${C.border}`, minHeight:56 }}>
+        <PrismMark size={26} />
+        {!sidebarCollapsed && (
+          <div style={{ overflow:"hidden" }}>
+            <div style={{ fontSize:13, fontWeight:700, color:C.text,
+              fontFamily:SERIF, whiteSpace:"nowrap" }}>Agent Portal</div>
+            <div style={{ fontSize:9, color:C.text3, fontFamily:FONT,
+              textTransform:"uppercase", letterSpacing:"0.05em" }}>ROG Advantage</div>
+          </div>
+        )}
+      </div>
+
+      <nav style={{ flex:1, padding:"10px 6px", display:"flex", flexDirection:"column", gap:1 }}>
+        {PORTAL_NAV.map(item=>{
+          const active = view===item.id;
+          return (
+            <button key={item.id} onClick={()=>setView(item.id)} style={{
+              display:"flex", alignItems:"center", gap:10,
+              padding:sidebarCollapsed?"10px 0":"9px 12px",
+              justifyContent:sidebarCollapsed?"center":"flex-start",
+              borderRadius:8, border:"none", cursor:"pointer", width:"100%",
+              background:active?C.goldDim:"transparent",
+              color:active?C.gold:C.text2,
+              fontSize:13, fontWeight:active?600:400, fontFamily:FONT,
+              transition:"all 0.1s" }}
+              onMouseEnter={e=>{if(!active){e.currentTarget.style.background=C.surface2;e.currentTarget.style.color=C.text;}}}
+              onMouseLeave={e=>{if(!active){e.currentTarget.style.background="transparent";e.currentTarget.style.color=C.text2;}}}>
+              <span style={{ fontSize:15, lineHeight:1, flexShrink:0 }}>{item.icon}</span>
+              {!sidebarCollapsed&&<span style={{ whiteSpace:"nowrap" }}>{item.label}</span>}
+              {active&&!sidebarCollapsed&&<div style={{ marginLeft:"auto", width:3, height:14, borderRadius:2, background:C.gold }} />}
+            </button>
+          );
+        })}
+      </nav>
+
+      <div style={{ padding:sidebarCollapsed?"10px 6px":"10px 12px",
+        borderTop:`1px solid ${C.border}` }}>
+        {!sidebarCollapsed && (
+          <div style={{ display:"flex", alignItems:"center", gap:9, marginBottom:8, padding:"2px 4px" }}>
+            <Avatar name={agentName} email={agentEmail} size={28} />
+            <div style={{ flex:1, minWidth:0 }}>
+              <div style={{ fontSize:12, fontWeight:600, color:C.text, fontFamily:FONT,
+                whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{agentName}</div>
+              <div style={{ fontSize:10, color:C.text3, fontFamily:FONT }}>Agent</div>
+            </div>
+          </div>
+        )}
+        {isPreview ? (
+          <div style={{ padding:"6px 10px", background:C.goldDim,
+            border:`1px solid ${C.goldBorder}`, borderRadius:6,
+            fontSize:10, color:C.gold, fontFamily:FONT, textAlign:"center" }}>
+            Preview Mode
+          </div>
+        ) : (
+          <button onClick={onSignOut} style={{
+            width:"100%", padding:sidebarCollapsed?"7px 0":"7px 10px",
+            background:C.surface2, border:`1px solid ${C.border}`,
+            borderRadius:6, color:C.text3, fontSize:11, fontFamily:FONT, cursor:"pointer",
+            display:"flex", alignItems:"center", justifyContent:sidebarCollapsed?"center":"flex-start", gap:6,
+            transition:"color 0.12s" }}
+            onMouseEnter={e=>e.currentTarget.style.color=C.red}
+            onMouseLeave={e=>e.currentTarget.style.color=C.text3}>
+            <span style={{ fontSize:13 }}>⎋</span>
+            {!sidebarCollapsed&&<span>Sign out</span>}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+
+  // ── Portal Dashboard ──
+  const PortalDashboard = () => {
+    const active   = myDeals.filter(d=>!["Closed","Dead"].includes(d.status));
+    const closed   = myDeals.filter(d=>d.status==="Closed");
+    const underC   = myDeals.filter(d=>d.status==="Under Contract");
+    const openT    = myTasks.filter(t=>t.status!=="done");
+    const gci      = closed.reduce((s,d)=>s+((d.price||0)*((d.commission_rate||3)/100)),0);
+    const upcoming = myTasks.filter(t=>t.status!=="done"&&t.due_date).sort((a,b)=>a.due_date>b.due_date?1:-1).slice(0,3);
+
+    return (
+      <div style={{ padding:"24px" }}>
+        <div style={{ marginBottom:22 }}>
+          <h2 style={{ fontSize:20, fontWeight:700, fontFamily:SERIF, color:C.text,
+            margin:"0 0 3px", letterSpacing:"-0.02em" }}>
+            Hey {agentName.split(" ")[0]} 👋
+          </h2>
+          <p style={{ fontSize:12, color:C.text2, fontFamily:FONT, margin:0 }}>
+            {new Date().toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"})} · Realty One Group Advantage
+          </p>
+        </div>
+
+        {/* Stats */}
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))", gap:12, marginBottom:24 }}>
+          {[
+            {label:"Active",        val:active.length,  accent:C.blue},
+            {label:"Under Contract",val:underC.length,  accent:C.amber},
+            {label:"Closed",        val:closed.length,  accent:C.green},
+            {label:"Est. GCI",      val:gci>0?fmt(gci):"—", accent:C.gold},
+            {label:"Open Tasks",    val:openT.length,   accent:openT.length>3?C.amber:C.text2},
+          ].map(s=>(
+            <div key={s.label} style={{ background:C.surface, border:`1px solid ${C.border}`,
+              borderRadius:12, padding:"16px 18px" }}>
+              <div style={{ fontSize:22, fontWeight:700, color:s.accent||C.gold,
+                fontFamily:SERIF, letterSpacing:"-0.02em" }}>{s.val}</div>
+              <div style={{ fontSize:10, fontWeight:700, color:C.text2, fontFamily:FONT,
+                textTransform:"uppercase", letterSpacing:"0.07em", marginTop:2 }}>{s.label}</div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
+          {/* Recent deals */}
+          <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden" }}>
+            <div style={{ padding:"12px 16px", borderBottom:`1px solid ${C.border}` }}>
+              <span style={{ fontSize:11, fontWeight:700, color:C.text2, fontFamily:FONT,
+                textTransform:"uppercase", letterSpacing:"0.08em" }}>My Pipeline</span>
+            </div>
+            {myDeals.length===0
+              ? <div style={{ padding:"28px 16px", textAlign:"center", color:C.text3, fontSize:12, fontFamily:FONT }}>No deals yet</div>
+              : myDeals.slice(0,4).map(d=>(
+                <div key={d.id} style={{ padding:"11px 16px", borderBottom:`1px solid ${C.border}`,
+                  display:"flex", alignItems:"center", gap:10 }}>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ fontSize:12, fontWeight:600, color:C.text, fontFamily:FONT,
+                      whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
+                      {d.address||"Untitled"}
+                    </div>
+                    <div style={{ fontSize:10, color:C.text3, fontFamily:FONT }}>
+                      {d.agent_role} · {[d.city,d.state].filter(Boolean).join(", ")}
+                    </div>
+                  </div>
+                  <StatusBadge status={d.status} />
+                </div>
+              ))
+            }
+          </div>
+
+          {/* Upcoming tasks */}
+          <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden" }}>
+            <div style={{ padding:"12px 16px", borderBottom:`1px solid ${C.border}` }}>
+              <span style={{ fontSize:11, fontWeight:700, color:C.text2, fontFamily:FONT,
+                textTransform:"uppercase", letterSpacing:"0.08em" }}>Upcoming Tasks</span>
+            </div>
+            {upcoming.length===0
+              ? <div style={{ padding:"28px 16px", textAlign:"center", color:C.text3, fontSize:12, fontFamily:FONT }}>All clear</div>
+              : upcoming.map(t=>(
+                <div key={t.id} style={{ padding:"11px 16px", borderBottom:`1px solid ${C.border}`,
+                  display:"flex", alignItems:"center", gap:10 }}>
+                  <div style={{ width:7, height:7, borderRadius:"50%", flexShrink:0,
+                    background:{high:C.red,medium:C.amber,low:C.text3}[t.priority]||C.text3 }} />
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ fontSize:12, fontWeight:500, color:C.text, fontFamily:FONT,
+                      whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{t.title}</div>
+                  </div>
+                  {t.due_date&&<span style={{ fontSize:10, color:C.text3, fontFamily:MONO }}>{t.due_date}</span>}
+                </div>
+              ))
+            }
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // ── Pipeline ──
+  const PortalPipeline = () => {
+    const fmt2 = n=>n>=1e6?`$${(n/1e6).toFixed(1)}M`:n>=1e3?`$${(n/1e3).toFixed(0)}K`:`$${n}`;
+    return (
+      <div style={{ padding:"20px 24px" }}>
+        <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden" }}>
+          <div style={{ padding:"13px 18px", borderBottom:`1px solid ${C.border}`,
+            display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+            <span style={{ fontSize:11, fontWeight:700, color:C.text2, fontFamily:FONT,
+              textTransform:"uppercase", letterSpacing:"0.08em" }}>My Listing Pipeline</span>
+            <span style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>{myDeals.length} deals</span>
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr 1fr", padding:"8px 18px", borderBottom:`1px solid ${C.border}` }}>
+            {["Property","My Role","Status","Price"].map(h=>(
+              <span key={h} style={{ fontSize:10, fontWeight:700, color:C.text3,
+                fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.08em" }}>{h}</span>
+            ))}
+          </div>
+          {myDeals.length===0
+            ? <div style={{ padding:"48px 18px", textAlign:"center", color:C.text3, fontSize:13, fontFamily:FONT }}>
+                No deals linked to you yet.<br/>
+                <span style={{ fontSize:11, marginTop:6, display:"block" }}>Contact your broker to get linked to your listings.</span>
+              </div>
+            : myDeals.map(d=>(
+              <div key={d.id} style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr 1fr",
+                padding:"12px 18px", borderBottom:`1px solid ${C.border}`, alignItems:"center" }}
+                onMouseEnter={e=>e.currentTarget.style.background=C.surface2}
+                onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                <div>
+                  <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:FONT }}>{d.address||"—"}</div>
+                  <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>
+                    {[d.city,d.state].filter(Boolean).join(", ")}
+                    {d.mls_number?` · MLS ${d.mls_number}`:""}
+                  </div>
+                </div>
+                <span style={{ fontSize:11, fontWeight:600, color:C.gold, fontFamily:FONT,
+                  background:C.goldDim, borderRadius:5, padding:"2px 8px", width:"fit-content" }}>
+                  {d.agent_role||"Agent"}
+                </span>
+                <StatusBadge status={d.status} />
+                <span style={{ fontSize:12, fontWeight:700, color:C.gold, fontFamily:MONO }}>
+                  {d.price?fmt2(d.price):"—"}
+                </span>
+              </div>
+            ))
+          }
+        </div>
+      </div>
+    );
+  };
+
+  // ── Contacts ──
+  const PortalContacts = () => {
+    const [search,setSearch] = useState("");
+    const filtered = myContacts.filter(c=>
+      !search||`${c.full_name} ${c.email} ${c.phone}`.toLowerCase().includes(search.toLowerCase())
+    );
+    return (
+      <div style={{ padding:"20px 24px" }}>
+        <div style={{ display:"flex", gap:10, marginBottom:16 }}>
+          <input value={search} onChange={e=>setSearch(e.target.value)}
+            placeholder="Search my contacts…"
+            style={{ padding:"8px 12px", background:C.surface2, border:`1px solid ${C.border2}`,
+              borderRadius:8, color:C.text, fontSize:13, fontFamily:FONT, outline:"none", width:260 }}
+            onFocus={e=>e.target.style.borderColor=C.gold}
+            onBlur={e=>e.target.style.borderColor=C.border2} />
+        </div>
+        <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden" }}>
+          <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1.5fr 1fr",
+            padding:"8px 18px", borderBottom:`1px solid ${C.border}` }}>
+            {["Name","Type","Email","Phone"].map(h=>(
+              <span key={h} style={{ fontSize:10, fontWeight:700, color:C.text3,
+                fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.08em" }}>{h}</span>
+            ))}
+          </div>
+          {filtered.length===0
+            ? <div style={{ padding:"40px 18px", textAlign:"center", color:C.text3, fontSize:13, fontFamily:FONT }}>
+                {myContacts.length===0?"You haven't added any contacts yet":"No results"}
+              </div>
+            : filtered.map(c=>(
+              <div key={c.id} style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1.5fr 1fr",
+                padding:"11px 18px", borderBottom:`1px solid ${C.border}`, alignItems:"center" }}>
+                <div style={{ display:"flex", alignItems:"center", gap:9 }}>
+                  <Avatar name={c.full_name} email={c.email} size={26} />
+                  <span style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:FONT }}>{c.full_name}</span>
+                </div>
+                <span style={{ fontSize:11, color:C.text2, fontFamily:FONT }}>{c.contact_type}</span>
+                <span style={{ fontSize:12, color:C.text2, fontFamily:FONT }}>{c.email||"—"}</span>
+                <span style={{ fontSize:12, color:C.text2, fontFamily:MONO }}>{c.phone||"—"}</span>
+              </div>
+            ))
+          }
+        </div>
+      </div>
+    );
+  };
+
+  // ── Tasks ──
+  const PortalTasks = () => {
+    const [showAdd,setShowAdd] = useState(false);
+    const [form,setForm]       = useState({title:"",priority:"medium",due_date:""});
+    const [saving,setSaving]   = useState(false);
+    const open = myTasks.filter(t=>t.status!=="done");
+    const done = myTasks.filter(t=>t.status==="done");
+
+    const toggle = async t => {
+      await supabase.from("tasks").update({status:t.status==="done"?"open":"done"}).eq("id",t.id);
+      refreshTasks();
+    };
+    const addTask = async () => {
+      if(!form.title.trim()) return;
+      setSaving(true);
+      await supabase.from("tasks").insert({
+        ...form, org_id:ORG_ID, status:"open",
+        assigned_to:agentEmail, created_by:agentName,
+      });
+      setSaving(false); setShowAdd(false); setForm({title:"",priority:"medium",due_date:""});
+      refreshTasks();
+    };
+    const PCOL = {high:C.red,medium:C.amber,low:C.text3};
+
+    return (
+      <div style={{ padding:"20px 24px" }}>
+        <div style={{ display:"flex", justifyContent:"flex-end", marginBottom:14 }}>
+          <GoldButton small onClick={()=>setShowAdd(true)}>+ Add Task</GoldButton>
+        </div>
+        <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden", marginBottom:14 }}>
+          <div style={{ padding:"11px 18px", borderBottom:`1px solid ${C.border}` }}>
+            <span style={{ fontSize:11, fontWeight:700, color:C.text2, fontFamily:FONT,
+              textTransform:"uppercase", letterSpacing:"0.08em" }}>Open · {open.length}</span>
+          </div>
+          {open.length===0
+            ? <div style={{ padding:"28px 18px", textAlign:"center", color:C.text3, fontSize:13, fontFamily:FONT }}>All clear 🎉</div>
+            : open.map(t=>(
+              <div key={t.id} style={{ display:"flex", alignItems:"center", gap:12,
+                padding:"11px 18px", borderBottom:`1px solid ${C.border}` }}>
+                <button onClick={()=>toggle(t)} style={{ width:18, height:18, borderRadius:4,
+                  flexShrink:0, cursor:"pointer", padding:0,
+                  border:`2px solid ${C.border2}`, background:"transparent",
+                  display:"flex", alignItems:"center", justifyContent:"center" }} />
+                <div style={{ flex:1 }}>
+                  <div style={{ fontSize:13, fontWeight:500, color:C.text, fontFamily:FONT }}>{t.title}</div>
+                  {t.description&&<div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>{t.description}</div>}
+                </div>
+                <div style={{ width:7, height:7, borderRadius:"50%", background:PCOL[t.priority]||C.text3 }} />
+                {t.due_date&&<span style={{ fontSize:10, color:C.text3, fontFamily:MONO }}>{t.due_date}</span>}
+              </div>
+            ))
+          }
+        </div>
+        {done.length>0&&(
+          <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden" }}>
+            <div style={{ padding:"11px 18px", borderBottom:`1px solid ${C.border}` }}>
+              <span style={{ fontSize:11, fontWeight:700, color:C.text3, fontFamily:FONT,
+                textTransform:"uppercase", letterSpacing:"0.08em" }}>Done · {done.length}</span>
+            </div>
+            {done.slice(0,4).map(t=>(
+              <div key={t.id} style={{ display:"flex", alignItems:"center", gap:12,
+                padding:"11px 18px", borderBottom:`1px solid ${C.border}` }}>
+                <button onClick={()=>toggle(t)} style={{ width:18, height:18, borderRadius:4,
+                  flexShrink:0, cursor:"pointer", padding:0,
+                  border:`2px solid ${C.gold}`, background:C.gold,
+                  display:"flex", alignItems:"center", justifyContent:"center" }}>
+                  <span style={{ fontSize:9, color:"#0a0a0a", fontWeight:900 }}>✓</span>
+                </button>
+                <div style={{ flex:1, fontSize:13, color:C.text3, fontFamily:FONT,
+                  textDecoration:"line-through" }}>{t.title}</div>
+              </div>
+            ))}
+          </div>
+        )}
+        {showAdd&&(
+          <Modal title="New Task" onClose={()=>setShowAdd(false)} maxWidth={400}>
+            <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+              <Field label="Task" value={form.title} onChange={v=>setForm(f=>({...f,title:v}))} placeholder="e.g. Follow up with buyer" autoFocus />
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+                <Sel label="Priority" value={form.priority} onChange={v=>setForm(f=>({...f,priority:v}))}
+                  options={[{value:"high",label:"High"},{value:"medium",label:"Medium"},{value:"low",label:"Low"}]} />
+                <Field label="Due Date" value={form.due_date} onChange={v=>setForm(f=>({...f,due_date:v}))} type="date" />
+              </div>
+              <div style={{ display:"flex", gap:10, paddingTop:4 }}>
+                <GoldButton onClick={addTask} disabled={saving||!form.title.trim()}>
+                  {saving?"Adding…":"Add task"}
+                </GoldButton>
+                <GoldButton onClick={()=>setShowAdd(false)} outline>Cancel</GoldButton>
+              </div>
+            </div>
+          </Modal>
+        )}
+      </div>
+    );
+  };
+
+  // ── Team Directory ──
+  const PortalTeam = () => {
+    const ROLE_ORDER = { "Broker":1, "Operations":2, "Front Desk":3 };
+    const sorted = [...team].sort((a,b)=>(ROLE_ORDER[a.brokerage_role]||9)-(ROLE_ORDER[b.brokerage_role]||9));
+    const ROLE_COLOR = { "Broker":C.gold, "Operations":C.purple, "Front Desk":C.blue };
+
+    return (
+      <div style={{ padding:"20px 24px", maxWidth:640 }}>
+        <div style={{ marginBottom:18 }}>
+          <h2 style={{ fontSize:16, fontWeight:700, fontFamily:SERIF, color:C.text, margin:"0 0 4px" }}>Your Team</h2>
+          <p style={{ fontSize:12, color:C.text2, fontFamily:FONT, margin:0 }}>
+            Realty One Group Advantage — reach out anytime
+          </p>
+        </div>
+        {sorted.map(m=>(
+          <div key={m.email} style={{ display:"flex", alignItems:"center", gap:14,
+            padding:"16px 18px", background:C.surface, border:`1px solid ${C.border}`,
+            borderRadius:12, marginBottom:10 }}>
+            <Avatar name={m.full_name} email={m.email} size={44} />
+            <div style={{ flex:1 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:3 }}>
+                <div style={{ fontSize:14, fontWeight:700, color:C.text, fontFamily:SERIF }}>{m.full_name}</div>
+                <span style={{ fontSize:10, fontWeight:700, padding:"2px 8px", borderRadius:20,
+                  color:ROLE_COLOR[m.brokerage_role]||C.text2,
+                  background:m.brokerage_role==="Broker"?C.goldDim:"rgba(59,130,246,0.10)" }}>
+                  {m.brokerage_role||m.role}
+                </span>
+              </div>
+              <div style={{ fontSize:12, color:C.text2, fontFamily:FONT }}>{m.email}</div>
+              {m.phone&&<div style={{ fontSize:12, color:C.text3, fontFamily:MONO, marginTop:2 }}>{m.phone}</div>}
+            </div>
+            <a href={`mailto:${m.email}`} style={{ padding:"7px 14px", borderRadius:8,
+              border:`1.5px solid ${C.goldBorder}`, background:"transparent", color:C.gold,
+              fontSize:12, fontWeight:600, fontFamily:FONT, cursor:"pointer",
+              textDecoration:"none" }}>Email</a>
+          </div>
+        ))}
+        <div style={{ marginTop:16, padding:"14px 18px", background:C.surface2,
+          borderRadius:10, border:`1px solid ${C.border}` }}>
+          <div style={{ fontSize:11, fontWeight:700, color:C.text2, fontFamily:FONT,
+            textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:6 }}>Office</div>
+          <div style={{ fontSize:13, color:C.text2, fontFamily:FONT }}>Realty One Group Advantage</div>
+          <div style={{ fontSize:11, color:C.text3, fontFamily:FONT, marginTop:2 }}>Tampa, FL</div>
+        </div>
+      </div>
+    );
+  };
+
+  // ── Chat stub (Phase 4) ──
+  const PortalChat = () => (
+    <div style={{ padding:"20px 24px", maxWidth:640 }}>
+      <div style={{ background:C.surface, border:`1px solid ${C.goldBorder}`,
+        borderRadius:14, padding:"32px 28px", textAlign:"center" }}>
+        <div style={{ fontSize:32, marginBottom:12 }}>✦</div>
+        <div style={{ fontSize:16, fontWeight:700, fontFamily:SERIF, color:C.text, marginBottom:6 }}>
+          Chat with Ari
+        </div>
+        <div style={{ fontSize:13, color:C.text2, fontFamily:FONT, lineHeight:1.6, marginBottom:16 }}>
+          Ari is your AI assistant — ask about your pipeline, get help drafting emails,
+          prep for showings, or just ask a real estate question.
+        </div>
+        <div style={{ fontSize:11, color:C.gold, fontFamily:FONT,
+          background:C.goldDim, borderRadius:8, padding:"8px 16px", display:"inline-block" }}>
+          Coming in the next update ✦
+        </div>
+      </div>
+    </div>
+  );
+
+  const PORTAL_TITLES = {
+    portal_dashboard: ["Dashboard", `Welcome, ${agentName.split(" ")[0]}`],
+    portal_pipeline:  ["My Pipeline", `${myDeals.length} deals`],
+    portal_contacts:  ["My Contacts", `${myContacts.length} contacts`],
+    portal_tasks:     ["Tasks", `${myTasks.filter(t=>t.status!=="done").length} open`],
+    portal_team:      ["Team Directory", "Realty One Group Advantage"],
+    portal_chat:      ["Chat · Ari", "Your AI assistant"],
+  };
+  const [ptitle, psub] = PORTAL_TITLES[view]||["Portal",""];
 
   return (
-    <div style={{ position:"fixed", inset:0, zIndex:400,
-      background:"rgba(0,0,0,0.85)", display:"flex", alignItems:"center", justifyContent:"center" }}
-      onClick={e=>e.target===e.currentTarget&&onClose()}>
-
-      {/* Preview chrome */}
-      <div style={{ width:"min(720px,96vw)", height:"min(88vh,700px)", display:"flex",
-        flexDirection:"column", borderRadius:16, overflow:"hidden",
-        boxShadow:"0 32px 80px rgba(0,0,0,0.6)", border:`1px solid ${C.border}` }}>
-
-        {/* Preview bar */}
-        <div style={{ background:"#0d0d0d", padding:"10px 18px",
-          display:"flex", alignItems:"center", justifyContent:"space-between",
-          borderBottom:`1px solid ${C.border}`, flexShrink:0 }}>
-          <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-            <div style={{ display:"flex", gap:5 }}>
-              {["#ef4444","#f59e0b","#22c55e"].map(c=>(
-                <div key={c} style={{ width:10, height:10, borderRadius:"50%", background:c }} />
-              ))}
-            </div>
-            <span style={{ fontSize:11, color:C.text3, fontFamily:MONO }}>
-              Agent Portal Preview — {contact.full_name}
-            </span>
+    <div style={{ display:"flex", background:C.bg, minHeight:"100vh" }}>
+      <AgentSidebar />
+      <div style={{ marginLeft:sw, flex:1, transition:"margin-left 0.2s",
+        display:"flex", flexDirection:"column", minWidth:0 }}>
+        <TopBar title={ptitle} subtitle={psub}
+          onToggleSidebar={()=>setSC(c=>!c)} />
+        {isPreview && (
+          <div style={{ background:"rgba(212,175,55,0.08)", borderBottom:`1px solid ${C.goldBorder}`,
+            padding:"8px 20px", fontSize:11, color:C.gold, fontFamily:FONT,
+            display:"flex", alignItems:"center", gap:8 }}>
+            <span>👁</span>
+            <span>Previewing portal as <strong>{agentName}</strong> — this is what they see when they log in</span>
           </div>
-          <button onClick={onClose} style={{ background:"none", border:"none",
-            color:C.text3, cursor:"pointer", fontSize:14, padding:4,
-            fontFamily:FONT }}>✕ Close preview</button>
-        </div>
+        )}
+        <main style={{ flex:1, overflowY:"auto" }}>
+          {loading
+            ? <div style={{ padding:40, textAlign:"center", color:C.text3, fontSize:13, fontFamily:FONT }}>Loading…</div>
+            : <>
+              {view==="portal_dashboard" && <PortalDashboard />}
+              {view==="portal_pipeline"  && <PortalPipeline />}
+              {view==="portal_contacts"  && <PortalContacts />}
+              {view==="portal_tasks"     && <PortalTasks />}
+              {view==="portal_team"      && <PortalTeam />}
+              {view==="portal_chat"      && <PortalChat />}
+            </>
+          }
+        </main>
+      </div>
+    </div>
+  );
+}
 
-        {/* Portal content */}
-        <div style={{ flex:1, overflowY:"auto",
-          background:"#0f172a", fontFamily:FONT }}>
 
-          {/* Portal header */}
-          <div style={{ background:"linear-gradient(135deg,#1a1a2e,#16213e)",
-            padding:"28px 32px", borderBottom:"1px solid rgba(255,255,255,0.08)" }}>
-            <div style={{ display:"flex", alignItems:"center", gap:14, marginBottom:20 }}>
-              <div style={{ width:36, height:36,
-                background:"linear-gradient(135deg,#D4AF37,#E8C84A)",
-                clipPath:"polygon(50% 0%,100% 75%,50% 100%,0% 75%)" }} />
-              <div>
-                <div style={{ fontSize:15, fontWeight:700, color:"#f1f5f9",
-                  fontFamily:SERIF, letterSpacing:"-0.01em" }}>Prism Agent Portal</div>
-                <div style={{ fontSize:10, color:"#64748b", letterSpacing:"0.06em",
-                  textTransform:"uppercase" }}>Realty One Group Advantage</div>
-              </div>
-            </div>
-            <div style={{ display:"flex", alignItems:"center", gap:14 }}>
-              <Avatar name={contact.full_name} email={contact.email} size={48} />
-              <div>
-                <div style={{ fontSize:20, fontWeight:700, color:"#f1f5f9",
-                  fontFamily:SERIF, letterSpacing:"-0.02em" }}>
-                  Welcome back, {contact.full_name.split(" ")[0]}.
-                </div>
-                <div style={{ fontSize:12, color:"#94a3b8", marginTop:2 }}>
-                  {contact.email}
-                  {contact.phone ? ` · ${contact.phone}` : ""}
-                </div>
-              </div>
-            </div>
+function AgentPortalPreview({ contact, onClose }) {
+  return (
+    <div style={{ position:"fixed", inset:0, zIndex:400, background:C.bg }}>
+      {/* Preview top bar */}
+      <div style={{ position:"fixed", top:0, left:0, right:0, zIndex:401,
+        background:"rgba(10,10,10,0.95)", backdropFilter:"blur(8px)",
+        borderBottom:`1px solid ${C.goldBorder}`,
+        padding:"10px 20px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+          <div style={{ display:"flex", gap:5 }}>
+            {["#ef4444","#f59e0b","#22c55e"].map(c=>(
+              <div key={c} style={{ width:10, height:10, borderRadius:"50%", background:c }} />
+            ))}
           </div>
-
-          {loading ? (
-            <div style={{ padding:40, textAlign:"center", color:"#64748b", fontSize:13 }}>Loading…</div>
-          ) : (
-            <div style={{ padding:"24px 32px", display:"flex", flexDirection:"column", gap:20 }}>
-
-              {/* Stats strip */}
-              <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:12 }}>
-                {[
-                  {label:"Active Deals", val:deals.filter(d=>!["Closed","Dead"].includes(d.status)).length, icon:"◈"},
-                  {label:"Closed Deals", val:deals.filter(d=>d.status==="Closed").length, icon:"✓"},
-                  {label:"Open Tasks",   val:tasks.length, icon:"◻"},
-                ].map(s=>(
-                  <div key={s.label} style={{ background:"rgba(255,255,255,0.04)",
-                    border:"1px solid rgba(255,255,255,0.08)", borderRadius:10,
-                    padding:"14px 16px" }}>
-                    <div style={{ fontSize:22, fontWeight:700, color:"#D4AF37",
-                      fontFamily:SERIF }}>{s.val}</div>
-                    <div style={{ fontSize:10, fontWeight:700, color:"#64748b",
-                      textTransform:"uppercase", letterSpacing:"0.07em", marginTop:2 }}>{s.label}</div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Deals */}
-              <div>
-                <div style={{ fontSize:11, fontWeight:700, color:"#64748b",
-                  textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:10 }}>
-                  My Deals
-                </div>
-                {deals.length===0 ? (
-                  <div style={{ padding:"24px 0", textAlign:"center",
-                    color:"#475569", fontSize:13 }}>No deals linked yet</div>
-                ) : deals.map(d=>(
-                  <div key={d.id} style={{ display:"flex", alignItems:"center", gap:12,
-                    padding:"12px 16px", background:"rgba(255,255,255,0.04)",
-                    border:"1px solid rgba(255,255,255,0.07)", borderRadius:10,
-                    marginBottom:8 }}>
-                    <div style={{ flex:1, minWidth:0 }}>
-                      <div style={{ fontSize:13, fontWeight:600, color:"#f1f5f9" }}>
-                        {d.address||"Untitled"}
-                      </div>
-                      <div style={{ fontSize:11, color:"#64748b" }}>
-                        {[d.city,d.state].filter(Boolean).join(", ")}
-                        {d.mls_number ? ` · MLS ${d.mls_number}` : ""}
-                      </div>
-                    </div>
-                    <StatusBadge status={d.status} />
-                    {d.price && <span style={{ fontSize:12, fontWeight:700,
-                      color:"#D4AF37", fontFamily:MONO }}>{fmt(d.price)}</span>}
-                  </div>
-                ))}
-              </div>
-
-              {/* Tasks */}
-              {tasks.length>0 && (
-                <div>
-                  <div style={{ fontSize:11, fontWeight:700, color:"#64748b",
-                    textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:10 }}>
-                    My Tasks
-                  </div>
-                  {tasks.map(t=>(
-                    <div key={t.id} style={{ display:"flex", alignItems:"center", gap:12,
-                      padding:"10px 16px", background:"rgba(255,255,255,0.04)",
-                      border:"1px solid rgba(255,255,255,0.07)", borderRadius:10, marginBottom:6 }}>
-                      <div style={{ width:8, height:8, borderRadius:"50%", flexShrink:0,
-                        background:{high:"#ef4444",medium:"#f59e0b",low:"#64748b"}[t.priority]||"#64748b" }} />
-                      <div style={{ flex:1, fontSize:13, color:"#cbd5e1" }}>{t.title}</div>
-                      {t.due_date && <span style={{ fontSize:10, color:"#64748b", fontFamily:MONO }}>{t.due_date}</span>}
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* Placeholder sections */}
-              <div style={{ borderTop:"1px solid rgba(255,255,255,0.06)",
-                paddingTop:20, display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
-                {["Documents","Messages","Announcements","Commission Tracker"].map(label=>(
-                  <div key={label} style={{ padding:"16px 18px",
-                    background:"rgba(255,255,255,0.03)",
-                    border:"1px dashed rgba(255,255,255,0.08)", borderRadius:10,
-                    textAlign:"center" }}>
-                    <div style={{ fontSize:12, color:"#475569", fontFamily:FONT }}>
-                      {label}
-                    </div>
-                    <div style={{ fontSize:10, color:"#334155", marginTop:3 }}>Coming soon</div>
-                  </div>
-                ))}
-              </div>
-
-              <div style={{ textAlign:"center", padding:"8px 0 4px",
-                fontSize:10, color:"#334155", letterSpacing:"0.06em" }}>
-                PRISM · REALTY ONE GROUP ADVANTAGE · AGENT PORTAL
-              </div>
-            </div>
-          )}
+          <span style={{ fontSize:11, color:C.gold, fontFamily:MONO, letterSpacing:"0.04em" }}>
+            PORTAL PREVIEW — {contact.full_name}
+          </span>
         </div>
+        <button onClick={onClose} style={{ background:C.surface2, border:`1px solid ${C.border}`,
+          borderRadius:7, color:C.text2, fontSize:12, fontFamily:FONT,
+          cursor:"pointer", padding:"6px 14px", display:"flex", alignItems:"center", gap:6 }}>
+          ✕ Exit Preview
+        </button>
+      </div>
+      {/* Full portal shifted down for preview bar */}
+      <div style={{ paddingTop:40, height:"100vh", overflowY:"auto" }}>
+        <AgentPortalApp
+          agentContact={contact}
+          session={null}
+          onSignOut={onClose}
+          isPreview={true}
+        />
       </div>
     </div>
   );
@@ -1971,6 +2367,277 @@ function NotesView({ user }) {
   );
 }
 
+// ════════════════════════════════════════════════════════════
+// ROBOTS PAGE + ARI CHAT (Phase 3 — Javier only)
+// ════════════════════════════════════════════════════════════
+
+function RobotsView({ user, deals, contacts, tasks }) {
+  const [messages, setMessages]   = useState([]);
+  const [input, setInput]         = useState("");
+  const [sending, setSending]     = useState(false);
+  const [convId, setConvId]       = useState(null);
+  const [ariStatus, setAriStatus] = useState("idle");
+  const bottomRef = useRef(null);
+
+  // Load or create Ari's conversation for this user
+  useEffect(()=>{
+    supabase.from("robot_conversations")
+      .select("*").eq("robot_id", ARI_ID)
+      .eq("user_email", user?.email).eq("org_id", ORG_ID)
+      .order("updated_at", {ascending:false}).limit(1)
+      .then(({data})=>{
+        if(data&&data[0]) {
+          setConvId(data[0].id);
+          setMessages(data[0].messages||[]);
+        }
+      });
+  },[user?.email]);
+
+  useEffect(()=>{
+    bottomRef.current?.scrollIntoView({behavior:"smooth"});
+  },[messages]);
+
+  const buildContext = () => {
+    const dealSummary = deals.slice(0,20).map(d=>
+      `${d.address||"Untitled"} (${d.status}, ${d.deal_type}${d.price?`, $${d.price}`:""})`
+    ).join("; ");
+    const agentCount = contacts.filter(c=>c.contact_type==="Agent").length;
+    const openTasks  = tasks.filter(t=>t.status!=="done").length;
+    return `\nLIVE ORG CONTEXT:\nDeals (${deals.length} total): ${dealSummary||"none"}\nContacts: ${contacts.length} total (${agentCount} agents)\nOpen tasks: ${openTasks}\nDate: ${new Date().toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric",year:"numeric"})}`;
+  };
+
+  const sendMessage = async () => {
+    if(!input.trim()||sending) return;
+    const userMsg = { role:"user", content:input.trim(), ts: new Date().toISOString() };
+    const newMsgs = [...messages, userMsg];
+    setMessages(newMsgs);
+    setInput("");
+    setSending(true);
+    setAriStatus("thinking");
+
+    try {
+      // Build messages for Claude API
+      const apiMessages = newMsgs.map(m=>({
+        role: m.role==="user"?"user":"assistant",
+        content: m.content,
+      }));
+
+      // Add org context to first user message
+      if(apiMessages.length===1) {
+        apiMessages[0].content = apiMessages[0].content + buildContext();
+      }
+
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 1000,
+          system: `You are Ari, the AI Business Unit Leader for Realty One Group Advantage (ROGA). You support Javier Suarez (Operations) with brokerage intelligence — deal pipeline analysis, agent performance, operational guidance, market context, and strategic recommendations. You have live access to org data when provided. Be direct, sharp, and practical. Never start with "Certainly!" or "Of course!". Get to the point. Use bullet points for lists. Keep responses focused.`,
+          messages: apiMessages,
+        }),
+      });
+      const data = await res.json();
+      const ariText = data.content?.[0]?.text || "Sorry, I ran into an issue. Try again.";
+      const ariMsg  = { role:"assistant", content:ariText, ts: new Date().toISOString() };
+      const finalMsgs = [...newMsgs, ariMsg];
+      setMessages(finalMsgs);
+
+      // Save/update conversation
+      if(convId) {
+        await supabase.from("robot_conversations").update({
+          messages:finalMsgs, updated_at:new Date().toISOString()
+        }).eq("id", convId);
+      } else {
+        const {data:conv} = await supabase.from("robot_conversations").insert({
+          robot_id: ARI_ID, org_id: ORG_ID,
+          user_email: user?.email, messages: finalMsgs,
+        }).select().single();
+        if(conv) setConvId(conv.id);
+      }
+    } catch(e) {
+      const errMsg = { role:"assistant", content:"Connection error — check your API key or try again.", ts:new Date().toISOString() };
+      setMessages(m=>[...m, errMsg]);
+    } finally {
+      setSending(false);
+      setAriStatus("idle");
+    }
+  };
+
+  const clearChat = async () => {
+    if(convId) await supabase.from("robot_conversations").update({messages:[],updated_at:new Date().toISOString()}).eq("id",convId);
+    setMessages([]);
+  };
+
+  const fmtTime = iso => {
+    if(!iso) return "";
+    return new Date(iso).toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"});
+  };
+
+  return (
+    <div style={{ display:"flex", height:"calc(100vh - 56px)", overflow:"hidden" }}>
+      {/* Ari sidebar */}
+      <div style={{ width:240, background:C.surface, borderRight:`1px solid ${C.border}`,
+        display:"flex", flexDirection:"column", padding:"20px 16px", flexShrink:0 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:20 }}>
+          <div style={{ width:44, height:44, borderRadius:12, flexShrink:0,
+            background:`linear-gradient(135deg,${C.gold},${C.goldLight})`,
+            display:"flex", alignItems:"center", justifyContent:"center",
+            fontSize:18 }}>✦</div>
+          <div>
+            <div style={{ fontSize:15, fontWeight:700, color:C.text, fontFamily:SERIF }}>Ari</div>
+            <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>Business Unit Leader</div>
+          </div>
+        </div>
+
+        <div style={{ fontSize:11, color:C.text3, fontFamily:FONT, lineHeight:1.6, marginBottom:20 }}>
+          Ari has live access to your deals, contacts, tasks, and agent roster. Ask anything about your brokerage.
+        </div>
+
+        <div style={{ background:C.surface2, borderRadius:10, padding:"12px 14px", marginBottom:16 }}>
+          <div style={{ fontSize:10, fontWeight:700, color:C.text3, fontFamily:FONT,
+            textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:8 }}>Try asking</div>
+          {[
+            "What's my pipeline look like?",
+            "Which deals need attention?",
+            "Summarize this week's activity",
+            "How many agents are active?",
+            "Draft a follow-up email for a buyer",
+          ].map(q=>(
+            <button key={q} onClick={()=>setInput(q)} style={{
+              display:"block", width:"100%", textAlign:"left", padding:"6px 0",
+              background:"none", border:"none", borderBottom:`1px solid ${C.border}`,
+              color:C.text2, fontSize:11, fontFamily:FONT, cursor:"pointer",
+              transition:"color 0.1s" }}
+              onMouseEnter={e=>e.currentTarget.style.color=C.gold}
+              onMouseLeave={e=>e.currentTarget.style.color=C.text2}>
+              {q}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ marginTop:"auto" }}>
+          <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:8 }}>
+            <div style={{ width:7, height:7, borderRadius:"50%",
+              background:ariStatus==="thinking"?C.amber:C.green,
+              animation:ariStatus==="thinking"?"pulse 1s infinite":"none" }} />
+            <span style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>
+              {ariStatus==="thinking"?"Thinking…":"Ready"}
+            </span>
+          </div>
+          {messages.length>0&&(
+            <button onClick={clearChat} style={{ background:"none", border:`1px solid ${C.border}`,
+              borderRadius:6, color:C.text3, fontSize:11, fontFamily:FONT, cursor:"pointer",
+              padding:"6px 12px", width:"100%", transition:"color 0.1s" }}
+              onMouseEnter={e=>e.currentTarget.style.color=C.red}
+              onMouseLeave={e=>e.currentTarget.style.color=C.text3}>
+              Clear chat
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Chat area */}
+      <div style={{ flex:1, display:"flex", flexDirection:"column", minWidth:0 }}>
+        {/* Messages */}
+        <div style={{ flex:1, overflowY:"auto", padding:"20px 24px",
+          display:"flex", flexDirection:"column", gap:16 }}>
+          {messages.length===0 && (
+            <div style={{ flex:1, display:"flex", flexDirection:"column",
+              alignItems:"center", justifyContent:"center", gap:12, opacity:0.5 }}>
+              <div style={{ fontSize:40 }}>✦</div>
+              <div style={{ fontSize:14, color:C.text3, fontFamily:FONT, textAlign:"center" }}>
+                Ask Ari anything about your brokerage
+              </div>
+            </div>
+          )}
+          {messages.map((m,i)=>(
+            <div key={i} style={{ display:"flex", gap:12,
+              flexDirection:m.role==="user"?"row-reverse":"row",
+              alignItems:"flex-start" }}>
+              {m.role==="assistant" ? (
+                <div style={{ width:32, height:32, borderRadius:8, flexShrink:0,
+                  background:`linear-gradient(135deg,${C.gold},${C.goldLight})`,
+                  display:"flex", alignItems:"center", justifyContent:"center",
+                  fontSize:14 }}>✦</div>
+              ) : (
+                <Avatar name={user?.full_name} email={user?.email} size={32} />
+              )}
+              <div style={{ maxWidth:"72%", minWidth:0 }}>
+                <div style={{
+                  padding:"12px 16px", borderRadius:12,
+                  background: m.role==="user" ? C.goldDim : C.surface,
+                  border: m.role==="user" ? `1px solid ${C.goldBorder}` : `1px solid ${C.border}`,
+                  color: C.text, fontSize:13, fontFamily:FONT, lineHeight:1.65,
+                  whiteSpace:"pre-wrap", wordBreak:"break-word",
+                }}>
+                  {m.content}
+                </div>
+                <div style={{ fontSize:10, color:C.text3, fontFamily:FONT,
+                  marginTop:4, textAlign:m.role==="user"?"right":"left" }}>
+                  {fmtTime(m.ts)}
+                </div>
+              </div>
+            </div>
+          ))}
+          {sending && (
+            <div style={{ display:"flex", gap:12, alignItems:"flex-start" }}>
+              <div style={{ width:32, height:32, borderRadius:8, flexShrink:0,
+                background:`linear-gradient(135deg,${C.gold},${C.goldLight})`,
+                display:"flex", alignItems:"center", justifyContent:"center",
+                fontSize:14 }}>✦</div>
+              <div style={{ padding:"12px 16px", borderRadius:12,
+                background:C.surface, border:`1px solid ${C.border}`,
+                display:"flex", gap:5, alignItems:"center" }}>
+                {[0,1,2].map(i=>(
+                  <div key={i} style={{ width:6, height:6, borderRadius:"50%",
+                    background:C.gold, opacity:0.6,
+                    animation:`bounce 1s ${i*0.15}s infinite` }} />
+                ))}
+              </div>
+            </div>
+          )}
+          <div ref={bottomRef} />
+        </div>
+
+        {/* Input */}
+        <div style={{ padding:"16px 24px", borderTop:`1px solid ${C.border}`,
+          background:C.surface }}>
+          <div style={{ display:"flex", gap:10 }}>
+            <textarea value={input}
+              onChange={e=>setInput(e.target.value)}
+              onKeyDown={e=>{ if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendMessage();}}}
+              placeholder="Ask Ari… (Enter to send, Shift+Enter for new line)"
+              rows={2}
+              style={{ flex:1, padding:"11px 14px", background:C.surface2,
+                border:`1.5px solid ${C.border2}`, borderRadius:10, color:C.text,
+                fontSize:13, fontFamily:FONT, outline:"none", resize:"none",
+                lineHeight:1.5, transition:"border-color 0.15s" }}
+              onFocus={e=>e.target.style.borderColor=C.gold}
+              onBlur={e=>e.target.style.borderColor=C.border2} />
+            <button onClick={sendMessage} disabled={sending||!input.trim()} style={{
+              padding:"0 20px", borderRadius:10, border:"none",
+              background:sending||!input.trim()
+                ? C.surface3
+                :`linear-gradient(135deg,${C.gold},${C.goldLight})`,
+              color:sending||!input.trim()?C.text3:"#0a0a0a",
+              fontSize:13, fontWeight:700, fontFamily:FONT,
+              cursor:sending||!input.trim()?"not-allowed":"pointer",
+              flexShrink:0 }}>
+              {sending?"…":"Send"}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <style>{`
+        @keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.5)}}
+        @keyframes bounce{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
+      `}</style>
+    </div>
+  );
+}
+
 function OrgMembersCard() {
   const [members, setMembers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -2137,24 +2804,37 @@ export default function App() {
   const [tasks,setTasks]                 = useState([]);
   const [dataLoaded,setDataLoaded]       = useState(false);
 
+  const [agentPortalContact, setAgentPortalContact] = useState(null);
+
   useEffect(()=>{
     supabase.auth.getSession().then(({data:{session}})=>{ setSession(session); setAuthLoading(false); });
     const {data:{subscription}} = supabase.auth.onAuthStateChange((event,session)=>{
       setSession(session);
       if(event==="PASSWORD_RECOVERY") setAuthScreen("setpassword");
-      if(!session){ setUserProfile(null); setDataLoaded(false); setAuthScreen("login"); }
+      if(!session){ setUserProfile(null); setDataLoaded(false); setAuthScreen("login"); setAgentPortalContact(null); }
     });
     return ()=>subscription.unsubscribe();
   },[]);
 
   useEffect(()=>{
     if(!session?.user) return;
-    supabase.from("user_profiles").select("*").eq("email",session.user.email).single()
-      .then(({data})=>{
+    const email = session.user.email;
+    // Check if team user first
+    supabase.from("user_profiles").select("*").eq("email",email).maybeSingle()
+      .then(async ({data})=>{
         if(data){
+          // Team user — main app
           setUserProfile(data);
           const hrs = (Date.now()-new Date(data.created_at))/3600000;
           if(hrs<72) setTempBanner(true);
+        } else {
+          // Check agent portal access
+          const { data:portal } = await supabase.from("agent_portal_access")
+            .select("*, contacts(*)")
+            .eq("portal_email",email).eq("is_active",true).maybeSingle();
+          if(portal?.contacts) {
+            setAgentPortalContact(portal.contacts);
+          }
         }
       });
   },[session]);
@@ -2193,6 +2873,7 @@ export default function App() {
     contacts:[`Contacts`,`${contacts.length} total`],
     tasks:[`Tasks`,`${tasks.filter(t=>t.status!=="done").length} open`],
     settings:["Settings","Account & org"],
+    robots:  ["Ari", "Business Unit Leader · ROGA"],
   };
   const [title,subtitle] = TITLES[view]||["Prism",""];
   const cu = userProfile||{email:session.user.email,role:"member"};
@@ -2211,6 +2892,7 @@ export default function App() {
           {view==="tasks"    &&<TasksView     user={cu} tasks={tasks}    onRefresh={loadData} />}
           {view==="settings" &&<SettingsView  user={cu} onProfileSaved={onProfileSaved} />}
           {view==="notepad"  &&<NotesView     user={cu} />}
+          {view==="robots"   &&<RobotsView    user={cu} deals={deals} contacts={contacts} tasks={tasks} />}
         </main>
       </div>
     </div>
