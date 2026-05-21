@@ -8,7 +8,8 @@ const supabase = createClient(
 
 const APP_NAME = "Prism";
 const ORG_NAME = "Realty One Group Advantage";
-const ORG_ID   = "8cc1004c-c4da-4aab-b79a-f8b507983303";
+const ORG_ID          = "8cc1004c-c4da-4aab-b79a-f8b507983303";
+const PLATFORM_ADMIN  = "javier@thesuarezcapital.com";
 
 // Returns display label for created_by fields based on role
 const creatorLabel = (user) => {
@@ -44,8 +45,8 @@ const NAV = [
   { id:"deals",     label:"Deals",     icon:"◈" },
   { id:"contacts",  label:"Contacts",  icon:"◎" },
   { id:"tasks",     label:"Tasks",     icon:"◻" },
-  { id:"notepad",   label:"Notepad",   icon:"✎", adminOnly:true },
-  { id:"settings",  label:"Settings",  icon:"⚙", adminOnly:true },
+  { id:"notepad",   label:"Notepad",   icon:"✎", platformOnly:true },
+  { id:"settings",  label:"Settings",  icon:"⚙", platformOnly:true },
 ];
 
 // ── Shared atoms ──────────────────────────────────────────────
@@ -358,7 +359,11 @@ function Sidebar({ activeView, onNav, user, onSignOut, collapsed }) {
       </div>
 
       <nav style={{ flex:1, padding:"10px 6px", display:"flex", flexDirection:"column", gap:1 }}>
-        {NAV.filter(n=>!n.adminOnly||isAdmin).map(item=>{
+        {NAV.filter(n=>{
+          if(n.platformOnly) return user?.email===PLATFORM_ADMIN;
+          if(n.adminOnly)    return isAdmin;
+          return true;
+        }).map(item=>{
           const active = activeView===item.id;
           return (
             <button key={item.id} onClick={()=>onNav(item.id)} style={{
@@ -1159,6 +1164,194 @@ function DealsView({ user, deals, onRefresh }) {
 }
 
 
+
+function AgentPortalPreview({ contact, onClose }) {
+  const [deals, setDeals]   = useState([]);
+  const [tasks, setTasks]   = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(()=>{
+    Promise.all([
+      supabase.from("deal_contacts")
+        .select("deal_id, role, deals(id,address,city,state,price,status,deal_type,mls_number)")
+        .eq("contact_id", contact.id),
+      supabase.from("tasks")
+        .select("*")
+        .eq("org_id", ORG_ID)
+        .eq("assigned_to", contact.email||"__none__")
+        .eq("status","open"),
+    ]).then(([dc, t])=>{
+      setDeals((dc.data||[]).map(r=>r.deals).filter(Boolean));
+      setTasks(t.data||[]);
+      setLoading(false);
+    });
+  },[contact.id]);
+
+  const fmt = n => n>=1e6?`$${(n/1e6).toFixed(1)}M`:n>=1e3?`$${(n/1e3).toFixed(0)}K`:`$${n}`;
+
+  return (
+    <div style={{ position:"fixed", inset:0, zIndex:400,
+      background:"rgba(0,0,0,0.85)", display:"flex", alignItems:"center", justifyContent:"center" }}
+      onClick={e=>e.target===e.currentTarget&&onClose()}>
+
+      {/* Preview chrome */}
+      <div style={{ width:"min(720px,96vw)", height:"min(88vh,700px)", display:"flex",
+        flexDirection:"column", borderRadius:16, overflow:"hidden",
+        boxShadow:"0 32px 80px rgba(0,0,0,0.6)", border:`1px solid ${C.border}` }}>
+
+        {/* Preview bar */}
+        <div style={{ background:"#0d0d0d", padding:"10px 18px",
+          display:"flex", alignItems:"center", justifyContent:"space-between",
+          borderBottom:`1px solid ${C.border}`, flexShrink:0 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+            <div style={{ display:"flex", gap:5 }}>
+              {["#ef4444","#f59e0b","#22c55e"].map(c=>(
+                <div key={c} style={{ width:10, height:10, borderRadius:"50%", background:c }} />
+              ))}
+            </div>
+            <span style={{ fontSize:11, color:C.text3, fontFamily:MONO }}>
+              Agent Portal Preview — {contact.full_name}
+            </span>
+          </div>
+          <button onClick={onClose} style={{ background:"none", border:"none",
+            color:C.text3, cursor:"pointer", fontSize:14, padding:4,
+            fontFamily:FONT }}>✕ Close preview</button>
+        </div>
+
+        {/* Portal content */}
+        <div style={{ flex:1, overflowY:"auto",
+          background:"#0f172a", fontFamily:FONT }}>
+
+          {/* Portal header */}
+          <div style={{ background:"linear-gradient(135deg,#1a1a2e,#16213e)",
+            padding:"28px 32px", borderBottom:"1px solid rgba(255,255,255,0.08)" }}>
+            <div style={{ display:"flex", alignItems:"center", gap:14, marginBottom:20 }}>
+              <div style={{ width:36, height:36,
+                background:"linear-gradient(135deg,#D4AF37,#E8C84A)",
+                clipPath:"polygon(50% 0%,100% 75%,50% 100%,0% 75%)" }} />
+              <div>
+                <div style={{ fontSize:15, fontWeight:700, color:"#f1f5f9",
+                  fontFamily:SERIF, letterSpacing:"-0.01em" }}>Prism Agent Portal</div>
+                <div style={{ fontSize:10, color:"#64748b", letterSpacing:"0.06em",
+                  textTransform:"uppercase" }}>Realty One Group Advantage</div>
+              </div>
+            </div>
+            <div style={{ display:"flex", alignItems:"center", gap:14 }}>
+              <Avatar name={contact.full_name} email={contact.email} size={48} />
+              <div>
+                <div style={{ fontSize:20, fontWeight:700, color:"#f1f5f9",
+                  fontFamily:SERIF, letterSpacing:"-0.02em" }}>
+                  Welcome back, {contact.full_name.split(" ")[0]}.
+                </div>
+                <div style={{ fontSize:12, color:"#94a3b8", marginTop:2 }}>
+                  {contact.email}
+                  {contact.phone ? ` · ${contact.phone}` : ""}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {loading ? (
+            <div style={{ padding:40, textAlign:"center", color:"#64748b", fontSize:13 }}>Loading…</div>
+          ) : (
+            <div style={{ padding:"24px 32px", display:"flex", flexDirection:"column", gap:20 }}>
+
+              {/* Stats strip */}
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:12 }}>
+                {[
+                  {label:"Active Deals", val:deals.filter(d=>!["Closed","Dead"].includes(d.status)).length, icon:"◈"},
+                  {label:"Closed Deals", val:deals.filter(d=>d.status==="Closed").length, icon:"✓"},
+                  {label:"Open Tasks",   val:tasks.length, icon:"◻"},
+                ].map(s=>(
+                  <div key={s.label} style={{ background:"rgba(255,255,255,0.04)",
+                    border:"1px solid rgba(255,255,255,0.08)", borderRadius:10,
+                    padding:"14px 16px" }}>
+                    <div style={{ fontSize:22, fontWeight:700, color:"#D4AF37",
+                      fontFamily:SERIF }}>{s.val}</div>
+                    <div style={{ fontSize:10, fontWeight:700, color:"#64748b",
+                      textTransform:"uppercase", letterSpacing:"0.07em", marginTop:2 }}>{s.label}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Deals */}
+              <div>
+                <div style={{ fontSize:11, fontWeight:700, color:"#64748b",
+                  textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:10 }}>
+                  My Deals
+                </div>
+                {deals.length===0 ? (
+                  <div style={{ padding:"24px 0", textAlign:"center",
+                    color:"#475569", fontSize:13 }}>No deals linked yet</div>
+                ) : deals.map(d=>(
+                  <div key={d.id} style={{ display:"flex", alignItems:"center", gap:12,
+                    padding:"12px 16px", background:"rgba(255,255,255,0.04)",
+                    border:"1px solid rgba(255,255,255,0.07)", borderRadius:10,
+                    marginBottom:8 }}>
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <div style={{ fontSize:13, fontWeight:600, color:"#f1f5f9" }}>
+                        {d.address||"Untitled"}
+                      </div>
+                      <div style={{ fontSize:11, color:"#64748b" }}>
+                        {[d.city,d.state].filter(Boolean).join(", ")}
+                        {d.mls_number ? ` · MLS ${d.mls_number}` : ""}
+                      </div>
+                    </div>
+                    <StatusBadge status={d.status} />
+                    {d.price && <span style={{ fontSize:12, fontWeight:700,
+                      color:"#D4AF37", fontFamily:MONO }}>{fmt(d.price)}</span>}
+                  </div>
+                ))}
+              </div>
+
+              {/* Tasks */}
+              {tasks.length>0 && (
+                <div>
+                  <div style={{ fontSize:11, fontWeight:700, color:"#64748b",
+                    textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:10 }}>
+                    My Tasks
+                  </div>
+                  {tasks.map(t=>(
+                    <div key={t.id} style={{ display:"flex", alignItems:"center", gap:12,
+                      padding:"10px 16px", background:"rgba(255,255,255,0.04)",
+                      border:"1px solid rgba(255,255,255,0.07)", borderRadius:10, marginBottom:6 }}>
+                      <div style={{ width:8, height:8, borderRadius:"50%", flexShrink:0,
+                        background:{high:"#ef4444",medium:"#f59e0b",low:"#64748b"}[t.priority]||"#64748b" }} />
+                      <div style={{ flex:1, fontSize:13, color:"#cbd5e1" }}>{t.title}</div>
+                      {t.due_date && <span style={{ fontSize:10, color:"#64748b", fontFamily:MONO }}>{t.due_date}</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Placeholder sections */}
+              <div style={{ borderTop:"1px solid rgba(255,255,255,0.06)",
+                paddingTop:20, display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+                {["Documents","Messages","Announcements","Commission Tracker"].map(label=>(
+                  <div key={label} style={{ padding:"16px 18px",
+                    background:"rgba(255,255,255,0.03)",
+                    border:"1px dashed rgba(255,255,255,0.08)", borderRadius:10,
+                    textAlign:"center" }}>
+                    <div style={{ fontSize:12, color:"#475569", fontFamily:FONT }}>
+                      {label}
+                    </div>
+                    <div style={{ fontSize:10, color:"#334155", marginTop:3 }}>Coming soon</div>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{ textAlign:"center", padding:"8px 0 4px",
+                fontSize:10, color:"#334155", letterSpacing:"0.06em" }}>
+                PRISM · REALTY ONE GROUP ADVANTAGE · AGENT PORTAL
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ContactDetail({ contact, user, onClose, onRefresh }) {
   const [editMode,setEditMode]   = useState(false);
   const [portalMode,setPortalMode] = useState(false);
@@ -1170,6 +1363,7 @@ function ContactDetail({ contact, user, onClose, onRefresh }) {
   const [portalEmail,setPortalEmail] = useState(contact.portal_email||contact.email||"");
   const [saving,setSaving]       = useState(false);
   const [toast,setToast]         = useState(null);
+  const [showPreview,setShowPreview] = useState(false);
   const setE = (k,v) => setEditForm(f=>({...f,[k]:v}));
 
   const fmtDate = iso => {
@@ -1321,9 +1515,12 @@ function ContactDetail({ contact, user, onClose, onRefresh }) {
               </div>
               <div>
                 {contact.portal_enabled ? (
-                  <GoldButton small danger onClick={disablePortal} disabled={saving}>
-                    {saving?"Revoking…":"Revoke access"}
-                  </GoldButton>
+                  <div style={{ display:"flex", gap:8 }}>
+                    <GoldButton small onClick={()=>setShowPreview(true)}>Preview portal</GoldButton>
+                    <GoldButton small danger onClick={disablePortal} disabled={saving}>
+                      {saving?"Revoking…":"Revoke"}
+                    </GoldButton>
+                  </div>
                 ) : (
                   <GoldButton small outline onClick={()=>setPortalMode(p=>!p)}>
                     {portalMode?"Cancel":"Enable portal"}
@@ -1351,6 +1548,10 @@ function ContactDetail({ contact, user, onClose, onRefresh }) {
           </div>
         </div>
       </div>
+
+      {showPreview&&(
+        <AgentPortalPreview contact={contact} onClose={()=>setShowPreview(false)} />
+      )}
 
       {/* Edit modal */}
       {editMode&&(
