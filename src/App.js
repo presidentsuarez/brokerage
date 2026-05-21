@@ -32,6 +32,26 @@ const FONT  = "'DM Sans', sans-serif";
 const SERIF = "'Playfair Display', serif";
 const MONO  = "'DM Mono', monospace";
 
+// Responsive breakpoints
+function useIsMobile() {
+  const [v, setV] = useState(typeof window!=="undefined"?window.innerWidth<768:false);
+  useEffect(()=>{
+    const h=()=>setV(window.innerWidth<768);
+    window.addEventListener("resize",h);
+    return ()=>window.removeEventListener("resize",h);
+  },[]);
+  return v;
+}
+function useIsTablet() {
+  const [v, setV] = useState(typeof window!=="undefined"?window.innerWidth<1024:false);
+  useEffect(()=>{
+    const h=()=>setV(window.innerWidth<1024);
+    window.addEventListener("resize",h);
+    return ()=>window.removeEventListener("resize",h);
+  },[]);
+  return v;
+}
+
 const STATUS_CONFIG = {
   "New":            { color:"#D4AF37", bg:"rgba(212,175,55,0.15)" },
   "Active":         { color:"#3b82f6", bg:"rgba(59,130,246,0.10)" },
@@ -172,6 +192,46 @@ function StatusBadge({ status }) {
 }
 
 // ── Auth screens ──────────────────────────────────────────────
+
+
+function BottomNavBar({ activeView, onNav, user }) {
+  const isAdmin = ["admin","owner"].includes(user?.role);
+  // Show top 5 most important items on bottom nav
+  const items = NAV.filter(n=>{
+    if(n.platformOnly) return user?.email===PLATFORM_ADMIN;
+    if(n.adminOnly)    return isAdmin;
+    return true;
+  }).slice(0, 5);
+
+  return (
+    <div style={{
+      position:"fixed", bottom:0, left:0, right:0, zIndex:90,
+      background:C.surface, borderTop:`1px solid ${C.border}`,
+      display:"flex", paddingBottom:"env(safe-area-inset-bottom,0px)",
+      backdropFilter:"blur(10px)",
+    }}>
+      {items.map(item=>{
+        const active = activeView===item.id;
+        return (
+          <button key={item.id} onClick={()=>onNav(item.id)} style={{
+            flex:1, display:"flex", flexDirection:"column", alignItems:"center",
+            justifyContent:"center", padding:"10px 4px 8px",
+            background:"transparent", border:"none", cursor:"pointer",
+            color:active?C.gold:C.text3, minHeight:56,
+            transition:"color 0.12s",
+          }}>
+            <span style={{ fontSize:20, lineHeight:1, marginBottom:3 }}>{item.icon}</span>
+            <span style={{ fontSize:9, fontWeight:active?700:400, fontFamily:FONT,
+              letterSpacing:"0.03em", textTransform:"uppercase" }}>{item.label}</span>
+            {active && <div style={{ position:"absolute", top:0, left:"50%",
+              transform:"translateX(-50%)", width:24, height:2,
+              background:C.gold, borderRadius:2 }} />}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 function LoadingScreen({ message="Loading\u2026" }) {
   return (
@@ -340,97 +400,144 @@ function SetPasswordScreen({ onDone }) {
 
 // ── Layout ────────────────────────────────────────────────────
 
-function Sidebar({ activeView, onNav, user, onSignOut, collapsed }) {
+function Sidebar({ activeView, onNav, user, onSignOut, collapsed, mobileOpen, onMobileClose }) {
+  const isMobile = useIsMobile();
   const isAdmin = ["admin","owner"].includes(user?.role);
+
+  const sidebarW = isMobile ? 272 : collapsed ? 56 : 220;
+  const isHidden = isMobile && !mobileOpen;
+
+  const handleNav = (id) => {
+    onNav(id);
+    if(isMobile) onMobileClose();
+  };
+
   return (
-    <div style={{ width:collapsed?56:220, minWidth:collapsed?56:220,
-      background:C.surface, borderRight:`1px solid ${C.border}`, height:"100vh",
-      display:"flex", flexDirection:"column", transition:"width 0.2s,min-width 0.2s",
-      overflow:"hidden", position:"fixed", top:0, left:0, zIndex:100 }}>
+    <>
+      {/* Mobile backdrop */}
+      {isMobile && mobileOpen && (
+        <div onClick={onMobileClose}
+          style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.6)",
+            zIndex:99, backdropFilter:"blur(2px)" }} />
+      )}
 
-      <div style={{ padding:collapsed?"16px 14px":"16px 18px", display:"flex",
-        alignItems:"center", gap:10, borderBottom:`1px solid ${C.border}`, minHeight:56 }}>
-        <PrismMark size={26} />
-        {!collapsed && (
-          <div style={{ overflow:"hidden" }}>
-            <div style={{ fontSize:15, fontWeight:700, color:C.text, fontFamily:SERIF,
-              letterSpacing:"-0.01em", whiteSpace:"nowrap" }}>{APP_NAME}</div>
-            <div style={{ fontSize:9, color:C.text3, fontFamily:FONT, whiteSpace:"nowrap",
-              letterSpacing:"0.04em", textTransform:"uppercase" }}>ROG Advantage</div>
-          </div>
-        )}
-      </div>
+      <div style={{
+        width:sidebarW, minWidth:sidebarW,
+        background:C.surface, borderRight:`1px solid ${C.border}`,
+        height:"100vh", display:"flex", flexDirection:"column",
+        overflow:"hidden", position:"fixed", top:0, left:0,
+        zIndex:100,
+        transition:"transform 0.25s ease, width 0.2s, min-width 0.2s",
+        transform:isHidden?"translateX(-100%)":"translateX(0)",
+        boxShadow:isMobile&&mobileOpen?"4px 0 24px rgba(0,0,0,0.4)":"none",
+      }}>
+        {/* Logo header */}
+        <div style={{ padding:collapsed&&!isMobile?"16px 14px":"16px 18px",
+          display:"flex", alignItems:"center", gap:10,
+          borderBottom:`1px solid ${C.border}`, minHeight:56 }}>
+          <PrismMark size={26} />
+          {(!collapsed||isMobile) && (
+            <div style={{ overflow:"hidden", flex:1 }}>
+              <div style={{ fontSize:15, fontWeight:700, color:C.text, fontFamily:SERIF,
+                letterSpacing:"-0.01em", whiteSpace:"nowrap" }}>Prism</div>
+              <div style={{ fontSize:9, color:C.text3, fontFamily:FONT, whiteSpace:"nowrap",
+                letterSpacing:"0.04em", textTransform:"uppercase" }}>ROG Advantage</div>
+            </div>
+          )}
+          {isMobile && (
+            <button onClick={onMobileClose} style={{ background:"none", border:"none",
+              color:C.text2, fontSize:20, cursor:"pointer", marginLeft:"auto",
+              padding:4, lineHeight:1 }}>✕</button>
+          )}
+        </div>
 
-      <nav style={{ flex:1, padding:"10px 6px", display:"flex", flexDirection:"column", gap:1 }}>
-        {NAV.filter(n=>{
-          if(n.platformOnly) return user?.email===PLATFORM_ADMIN;
-          if(n.adminOnly)    return isAdmin;
-          return true;
-        }).map(item=>{
-          const active = activeView===item.id;
-          return (
-            <button key={item.id} onClick={()=>onNav(item.id)} style={{
-              display:"flex", alignItems:"center", gap:10,
-              padding:collapsed?"10px 0":"9px 12px",
-              justifyContent:collapsed?"center":"flex-start",
-              borderRadius:8, border:"none", cursor:"pointer", width:"100%",
-              background:active?C.goldDim:"transparent",
-              color:active?C.gold:C.text2,
-              fontSize:13, fontWeight:active?600:400, fontFamily:FONT, transition:"all 0.1s" }}
-              onMouseEnter={e=>{ if(!active){e.currentTarget.style.background=C.surface2;e.currentTarget.style.color=C.text;}}}
-              onMouseLeave={e=>{ if(!active){e.currentTarget.style.background="transparent";e.currentTarget.style.color=C.text2;}}}>
-              <span style={{ fontSize:15, lineHeight:1, flexShrink:0 }}>{item.icon}</span>
-              {!collapsed && <span style={{ whiteSpace:"nowrap" }}>{item.label}</span>}
-              {active&&!collapsed && <div style={{ marginLeft:"auto", width:3, height:14, borderRadius:2, background:C.gold }} />}
-            </button>
-          );
-        })}
-      </nav>
+        {/* Nav items */}
+        <nav style={{ flex:1, padding:"10px 6px", display:"flex", flexDirection:"column", gap:1,
+          overflowY:"auto" }}>
+          {NAV.filter(n=>{
+            if(n.platformOnly) return user?.email===PLATFORM_ADMIN;
+            if(n.adminOnly)    return isAdmin;
+            return true;
+          }).map(item=>{
+            const active = activeView===item.id;
+            return (
+              <button key={item.id} onClick={()=>handleNav(item.id)} style={{
+                display:"flex", alignItems:"center", gap:12,
+                padding:(collapsed&&!isMobile)?"10px 0":"10px 14px",
+                justifyContent:(collapsed&&!isMobile)?"center":"flex-start",
+                borderRadius:10, border:"none", cursor:"pointer", width:"100%",
+                background:active?C.goldDim:"transparent",
+                color:active?C.gold:C.text2,
+                fontSize:isMobile?14:13, fontWeight:active?600:400, fontFamily:FONT,
+                minHeight:isMobile?48:36, transition:"all 0.1s" }}
+                onMouseEnter={e=>{if(!active){e.currentTarget.style.background=C.surface2;e.currentTarget.style.color=C.text;}}}
+                onMouseLeave={e=>{if(!active){e.currentTarget.style.background="transparent";e.currentTarget.style.color=C.text2;}}}>
+                <span style={{ fontSize:17, lineHeight:1, flexShrink:0 }}>{item.icon}</span>
+                {(!collapsed||isMobile)&&<span style={{ whiteSpace:"nowrap" }}>{item.label}</span>}
+                {active&&(!collapsed||isMobile)&&<div style={{ marginLeft:"auto", width:3,
+                  height:16, borderRadius:2, background:C.gold }} />}
+              </button>
+            );
+          })}
+        </nav>
 
-      <div style={{ padding:collapsed?"10px 6px":"10px 12px", borderTop:`1px solid ${C.border}` }}>
-        {!collapsed && (
-          <div style={{ display:"flex", alignItems:"center", gap:9, marginBottom:8, padding:"2px 4px" }}>
-            <Avatar name={user?.full_name} email={user?.email} size={28} />
-            <div style={{ flex:1, minWidth:0 }}>
-              <div style={{ fontSize:12, fontWeight:600, color:C.text, fontFamily:FONT,
-                whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
-                {user?.full_name||user?.email}
-              </div>
-              <div style={{ fontSize:10, color:C.text3, fontFamily:FONT, textTransform:"capitalize" }}>
-                {user?.role}
+        {/* User footer */}
+        <div style={{ padding:(collapsed&&!isMobile)?"10px 6px":"12px 14px",
+          borderTop:`1px solid ${C.border}` }}>
+          {(!collapsed||isMobile) && (
+            <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:10,
+              padding:"4px 6px" }}>
+              <Avatar name={user?.full_name} email={user?.email} size={32} />
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:FONT,
+                  whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
+                  {user?.full_name||user?.email}
+                </div>
+                <div style={{ fontSize:10, color:C.text3, fontFamily:FONT, textTransform:"capitalize" }}>
+                  {user?.brokerage_role||user?.role}
+                </div>
               </div>
             </div>
-          </div>
-        )}
-        {collapsed && <div style={{ display:"flex", justifyContent:"center", marginBottom:8 }}><Avatar name={user?.full_name} email={user?.email} size={28} /></div>}
-        <button onClick={onSignOut} style={{
-          width:"100%", padding:collapsed?"7px 0":"7px 10px",
-          background:C.surface2, border:`1px solid ${C.border}`, borderRadius:6,
-          color:C.text3, fontSize:11, fontFamily:FONT, cursor:"pointer",
-          display:"flex", alignItems:"center", justifyContent:collapsed?"center":"flex-start", gap:6,
-          transition:"color 0.12s" }}
-          onMouseEnter={e=>e.currentTarget.style.color=C.red}
-          onMouseLeave={e=>e.currentTarget.style.color=C.text3}>
-          <span style={{ fontSize:13 }}>\u238b</span>
-          {!collapsed && <span>Sign out</span>}
-        </button>
+          )}
+          {(collapsed&&!isMobile) && (
+            <div style={{ display:"flex", justifyContent:"center", marginBottom:8 }}>
+              <Avatar name={user?.full_name} email={user?.email} size={28} />
+            </div>
+          )}
+          <button onClick={onSignOut} style={{
+            width:"100%", padding:(collapsed&&!isMobile)?"8px 0":"9px 12px",
+            background:C.surface2, border:`1px solid ${C.border}`, borderRadius:8,
+            color:C.text3, fontSize:12, fontFamily:FONT, cursor:"pointer",
+            display:"flex", alignItems:"center",
+            justifyContent:(collapsed&&!isMobile)?"center":"flex-start", gap:8,
+            minHeight:isMobile?44:32, transition:"color 0.12s" }}
+            onMouseEnter={e=>e.currentTarget.style.color=C.red}
+            onMouseLeave={e=>e.currentTarget.style.color=C.text3}>
+            <span style={{ fontSize:14 }}>⎋</span>
+            {(!collapsed||isMobile)&&<span>Sign out</span>}
+          </button>
+        </div>
       </div>
-    </div>
+    </>
   );
 }
 
 function TopBar({ title, subtitle, onToggleSidebar, actions }) {
   return (
     <div style={{ height:56, background:C.surface, borderBottom:`1px solid ${C.border}`,
-      display:"flex", alignItems:"center", padding:"0 20px 0 16px", gap:14,
+      display:"flex", alignItems:"center", padding:"0 16px 0 12px", gap:12,
       position:"sticky", top:0, zIndex:50 }}>
-      <button onClick={onToggleSidebar} style={{ background:"none", border:"none",
-        color:C.text2, cursor:"pointer", fontSize:16, padding:"4px 6px", borderRadius:6, lineHeight:1 }}>☰</button>
+      <button onClick={onToggleSidebar} style={{
+        background:"none", border:"none", color:C.text2, cursor:"pointer",
+        fontSize:18, padding:"8px", borderRadius:8, lineHeight:1,
+        minWidth:40, minHeight:40, display:"flex", alignItems:"center", justifyContent:"center" }}>☰</button>
       <div style={{ flex:1, minWidth:0 }}>
-        <div style={{ fontSize:14, fontWeight:700, color:C.text, fontFamily:SERIF, letterSpacing:"-0.01em" }}>{title}</div>
-        {subtitle && <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>{subtitle}</div>}
+        <div style={{ fontSize:14, fontWeight:700, color:C.text, fontFamily:SERIF,
+          letterSpacing:"-0.01em", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{title}</div>
+        {subtitle && <div style={{ fontSize:11, color:C.text3, fontFamily:FONT,
+          whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{subtitle}</div>}
       </div>
-      {actions && <div style={{ display:"flex", gap:8, alignItems:"center" }}>{actions}</div>}
+      {actions && <div style={{ display:"flex", gap:8, alignItems:"center", flexShrink:0 }}>{actions}</div>}
     </div>
   );
 }
@@ -647,7 +754,7 @@ function DealDetail({ deal, user, onClose, onRefresh }) {
 
       <div style={{ width:"min(580px,100vw)", background:C.bg, height:"100vh",
         display:"flex", flexDirection:"column", borderLeft:`1px solid ${C.border}`,
-        animation:"slideIn 0.2s ease" }}>
+        animation:"slideIn 0.2s ease", overflowY:"hidden" }}>
         <style>{`@keyframes slideIn{from{transform:translateX(40px);opacity:0}to{transform:translateX(0);opacity:1}}`}</style>
 
         {/* Header */}
@@ -1030,6 +1137,72 @@ function DealDetail({ deal, user, onClose, onRefresh }) {
   );
 }
 
+
+function DealsTable({ deals, allDeals, onSelect, fmt }) {
+  const isMobile = useIsMobile();
+  if(deals.length===0) return (
+    <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12,
+      padding:"48px 18px", textAlign:"center", color:C.text3, fontSize:13, fontFamily:FONT }}>
+      {allDeals.length===0?"No deals yet — add your first one":"No results match your filter"}
+    </div>
+  );
+  if(isMobile) return (
+    <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+      {deals.map(d=>(
+        <div key={d.id} onClick={()=>onSelect(d)}
+          style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12,
+            padding:"14px 16px", cursor:"pointer", active:"none" }}
+          onMouseEnter={e=>e.currentTarget.style.borderColor=C.goldBorder}
+          onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}>
+          <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:10 }}>
+            <div style={{ minWidth:0 }}>
+              <div style={{ fontSize:14, fontWeight:700, color:C.text, fontFamily:FONT,
+                marginBottom:3 }}>{d.address||"Untitled"}</div>
+              <div style={{ fontSize:12, color:C.text3, fontFamily:FONT }}>
+                {[d.city,d.state].filter(Boolean).join(", ")}
+                {d.mls_number?` · ${d.mls_number}`:""}
+              </div>
+            </div>
+            <StatusBadge status={d.status} />
+          </div>
+          <div style={{ display:"flex", gap:12, marginTop:10, alignItems:"center" }}>
+            <span style={{ fontSize:12, color:C.text2, fontFamily:FONT }}>{d.deal_type||"—"}</span>
+            {d.price&&<span style={{ fontSize:13, fontWeight:700, color:C.gold,
+              fontFamily:MONO, marginLeft:"auto" }}>{fmt(d.price)}</span>}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+  return (
+    <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden" }}>
+      <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr 1fr 1fr",
+        padding:"9px 18px", borderBottom:`1px solid ${C.border}` }}>
+        {["Address","Type","Status","Price","MLS #"].map(h=>(
+          <span key={h} style={{ fontSize:10, fontWeight:700, color:C.text3,
+            fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.08em" }}>{h}</span>
+        ))}
+      </div>
+      {deals.map(d=>(
+        <div key={d.id} onClick={()=>onSelect(d)}
+          style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr 1fr 1fr",
+            padding:"13px 18px", borderBottom:`1px solid ${C.border}`, alignItems:"center", cursor:"pointer" }}
+          onMouseEnter={e=>e.currentTarget.style.background=C.surface2}
+          onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+          <div>
+            <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:FONT }}>{d.address||"—"}</div>
+            <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>{[d.city,d.state].filter(Boolean).join(", ")}</div>
+          </div>
+          <span style={{ fontSize:12, color:C.text2, fontFamily:FONT }}>{d.deal_type||"—"}</span>
+          <StatusBadge status={d.status} />
+          <span style={{ fontSize:12, fontWeight:600, color:C.gold, fontFamily:MONO }}>{d.price?fmt(d.price):"—"}</span>
+          <span style={{ fontSize:12, color:C.text3, fontFamily:MONO }}>{d.mls_number||"—"}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function DealsView({ user, deals, onRefresh }) {
   const [filter,setFilter]     = useState("all");
   const [search,setSearch]     = useState("");
@@ -1189,7 +1362,9 @@ function AgentPortalApp({ agentContact, session, onSignOut, isPreview=false }) {
   const [myTasks, setMyTasks] = useState([]);
   const [team, setTeam]       = useState([]);
   const [loading, setLoading] = useState(true);
+  const isMobile = useIsMobile();
   const [sidebarCollapsed, setSC] = useState(false);
+  const [mobileMenuOpen, setMobileMenu] = useState(false);
   const [chatMsgs, setChatMsgs]   = useState([]);
   const [chatInput, setChatInput] = useState("");
   const [chatSending, setChSend]  = useState(false);
@@ -1247,15 +1422,25 @@ function AgentPortalApp({ agentContact, session, onSignOut, isPreview=false }) {
   };
 
   const fmt = n=>n>=1e6?`$${(n/1e6).toFixed(1)}M`:n>=1e3?`$${(n/1e3).toFixed(0)}K`:`$${n}`;
-  const sw  = sidebarCollapsed ? 56 : 220;
+  const sw  = isMobile ? 0 : sidebarCollapsed ? 56 : 220;
 
   // ── Agent Sidebar ──
-  const AgentSidebar = () => (
-    <div style={{ width:sw, minWidth:sw, background:C.surface,
+  const AgentSidebar = () => {
+    const sW = sidebarCollapsed&&!isMobile ? 56 : 272;
+    const isHidden = isMobile && !mobileMenuOpen;
+    return (
+    <>
+      {isMobile && mobileMenuOpen && (
+        <div onClick={()=>setMobileMenu(false)}
+          style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.6)", zIndex:99 }} />
+      )}
+      <div style={{ width:sW, minWidth:sW, background:C.surface,
       borderRight:`1px solid ${C.border}`, height:"100vh",
       display:"flex", flexDirection:"column",
-      transition:"width 0.2s,min-width 0.2s", overflow:"hidden",
-      position:"fixed", top:0, left:0, zIndex:100 }}>
+      transition:"transform 0.25s ease, width 0.2s,min-width 0.2s", overflow:"hidden",
+      position:"fixed", top:0, left:0, zIndex:100,
+      transform:isHidden?"translateX(-100%)":"translateX(0)",
+      boxShadow:isMobile&&mobileMenuOpen?"4px 0 24px rgba(0,0,0,0.4)":"none" }}>
 
       <div style={{ padding:sidebarCollapsed?"16px 14px":"16px 18px",
         display:"flex", alignItems:"center", gap:10,
@@ -1275,7 +1460,7 @@ function AgentPortalApp({ agentContact, session, onSignOut, isPreview=false }) {
         {PORTAL_NAV.map(item=>{
           const active = view===item.id;
           return (
-            <button key={item.id} onClick={()=>setView(item.id)} style={{
+            <button key={item.id} onClick={()=>{setView(item.id);if(isMobile)setMobileMenu(false);}} style={{
               display:"flex", alignItems:"center", gap:10,
               padding:sidebarCollapsed?"10px 0":"9px 12px",
               justifyContent:sidebarCollapsed?"center":"flex-start",
@@ -1327,7 +1512,8 @@ function AgentPortalApp({ agentContact, session, onSignOut, isPreview=false }) {
         )}
       </div>
     </div>
-  );
+    </>
+  ); };
 
   // ── Portal Dashboard ──
   const PortalDashboard = () => {
@@ -1893,9 +2079,10 @@ function AgentPortalApp({ agentContact, session, onSignOut, isPreview=false }) {
     <div style={{ display:"flex", background:C.bg, minHeight:"100vh" }}>
       <AgentSidebar />
       <div style={{ marginLeft:sw, flex:1, transition:"margin-left 0.2s",
-        display:"flex", flexDirection:"column", minWidth:0 }}>
+        display:"flex", flexDirection:"column", minWidth:0,
+        paddingBottom:isMobile?56:0 }}>
         <TopBar title={ptitle} subtitle={psub}
-          onToggleSidebar={()=>setSC(c=>!c)} />
+          onToggleSidebar={()=>isMobile?setMobileMenu(o=>!o):setSC(c=>!c)} />
         {isPreview && (
           <div style={{ background:"rgba(212,175,55,0.08)", borderBottom:`1px solid ${C.goldBorder}`,
             padding:"8px 20px", fontSize:11, color:C.gold, fontFamily:FONT,
@@ -1957,6 +2144,86 @@ function AgentPortalPreview({ contact, onClose }) {
           isPreview={true}
         />
       </div>
+    </div>
+  );
+}
+
+
+function ContactsTable({ contacts, allContacts, onSelect, typeDot }) {
+  const isMobile = useIsMobile();
+  if(contacts.length===0) return (
+    <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12,
+      padding:"48px 18px", textAlign:"center", color:C.text3, fontSize:13, fontFamily:FONT }}>
+      {allContacts.length===0?"No contacts yet":"No results"}
+    </div>
+  );
+  if(isMobile) return (
+    <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+      {contacts.map(c=>(
+        <div key={c.id} onClick={()=>onSelect(c)}
+          style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12,
+            padding:"14px 16px", cursor:"pointer", display:"flex", alignItems:"center", gap:12 }}
+          onMouseEnter={e=>e.currentTarget.style.borderColor=C.goldBorder}
+          onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}>
+          <Avatar name={c.full_name} email={c.email} size={42} />
+          <div style={{ flex:1, minWidth:0 }}>
+            <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:3 }}>
+              <span style={{ fontSize:14, fontWeight:700, color:C.text, fontFamily:FONT }}>{c.full_name}</span>
+              {c.portal_enabled&&<span style={{ fontSize:9, fontWeight:700, color:C.green,
+                background:"rgba(34,197,94,0.12)", borderRadius:10, padding:"2px 6px" }}>Portal ON</span>}
+            </div>
+            <div style={{ fontSize:12, color:C.text2, fontFamily:FONT }}>
+              {c.contact_type}
+              {c.phone?` · ${c.phone}`:""}
+            </div>
+            {c.email&&<div style={{ fontSize:11, color:C.text3, fontFamily:FONT,
+              whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{c.email}</div>}
+          </div>
+          <span style={{ fontSize:16, color:C.text3 }}>›</span>
+        </div>
+      ))}
+    </div>
+  );
+  return (
+    <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden" }}>
+      <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1.5fr 1fr 80px",
+        padding:"9px 18px", borderBottom:`1px solid ${C.border}` }}>
+        {["Name","Type","Email","Phone","Portal"].map(h=>(
+          <span key={h} style={{ fontSize:10, fontWeight:700, color:C.text3,
+            fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.08em" }}>{h}</span>
+        ))}
+      </div>
+      {contacts.map(c=>(
+        <div key={c.id} onClick={()=>onSelect(c)}
+          style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1.5fr 1fr 80px",
+            padding:"12px 18px", borderBottom:`1px solid ${C.border}`,
+            alignItems:"center", cursor:"pointer" }}
+          onMouseEnter={e=>e.currentTarget.style.background=C.surface2}
+          onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+          <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+            <Avatar name={c.full_name} email={c.email} size={28} />
+            <div>
+              <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:FONT }}>{c.full_name}</div>
+              {c.notes&&<div style={{ fontSize:10, color:C.text3, fontFamily:FONT,
+                whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", maxWidth:150 }}>{c.notes}</div>}
+            </div>
+          </div>
+          <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+            <div style={{ width:6, height:6, borderRadius:"50%", background:typeDot[c.contact_type]||C.text3 }} />
+            <span style={{ fontSize:12, color:C.text2, fontFamily:FONT }}>{c.contact_type}</span>
+          </div>
+          <span style={{ fontSize:12, color:C.text2, fontFamily:FONT,
+            whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{c.email||"—"}</span>
+          <span style={{ fontSize:12, color:C.text2, fontFamily:MONO }}>{c.phone||"—"}</span>
+          <div style={{ display:"flex", justifyContent:"center" }}>
+            {c.portal_enabled
+              ? <span style={{ fontSize:10, fontWeight:700, color:C.green,
+                  background:"rgba(34,197,94,0.10)", borderRadius:20, padding:"3px 8px" }}>ON</span>
+              : <span style={{ fontSize:10, color:C.text3 }}>—</span>
+            }
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -2040,7 +2307,7 @@ function ContactDetail({ contact, user, onClose, onRefresh }) {
 
       <div style={{ width:"min(520px,100vw)", background:C.bg, height:"100vh",
         display:"flex", flexDirection:"column", borderLeft:`1px solid ${C.border}`,
-        animation:"slideIn 0.2s ease" }}>
+        animation:"slideIn 0.2s ease", overflowY:"hidden" }}>
         <style>{`@keyframes slideIn{from{transform:translateX(40px);opacity:0}to{transform:translateX(0);opacity:1}}`}</style>
 
         {/* Header */}
@@ -2230,12 +2497,16 @@ function ContactsView({ user, contacts, onRefresh }) {
       {toast&&<Toast message={toast.msg} type={toast.type} onDone={()=>setToast(null)} />}
 
       {/* Toolbar */}
-      <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:16, flexWrap:"wrap" }}>
-        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search contacts…"
-          style={{ padding:"8px 12px", background:C.surface2, border:`1px solid ${C.border2}`,
-            borderRadius:8, color:C.text, fontSize:13, fontFamily:FONT, outline:"none", width:240 }}
-          onFocus={e=>e.target.style.borderColor=C.gold} onBlur={e=>e.target.style.borderColor=C.border2} />
-        <div style={{ display:"flex", gap:5, flexWrap:"wrap" }}>
+      <div style={{ display:"flex", flexDirection:"column", gap:10, marginBottom:16 }}>
+        <div style={{ display:"flex", gap:10, alignItems:"center" }}>
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search contacts…"
+            style={{ flex:1, padding:"10px 13px", background:C.surface2, border:`1px solid ${C.border2}`,
+              borderRadius:10, color:C.text, fontSize:13, fontFamily:FONT, outline:"none", minWidth:0 }}
+            onFocus={e=>e.target.style.borderColor=C.gold} onBlur={e=>e.target.style.borderColor=C.border2} />
+          <GoldButton onClick={()=>setShowAdd(true)} small>+ Add</GoldButton>
+        </div>
+        <div style={{ display:"flex", gap:5, overflowX:"auto", paddingBottom:2,
+          WebkitOverflowScrolling:"touch" }}>
           {TYPES.map(t=>(
             <button key={t} onClick={()=>setTypeFilter(t)} style={{
               padding:"5px 12px", borderRadius:20,
@@ -2246,60 +2517,13 @@ function ContactsView({ user, contacts, onRefresh }) {
               {t==="all"?"All":t}
             </button>
           ))}
-        </div>
-        <div style={{ marginLeft:"auto", display:"flex", gap:8, alignItems:"center" }}>
-          <span style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>{filtered.length} contacts</span>
-          <GoldButton onClick={()=>setShowAdd(true)} small>+ Add Contact</GoldButton>
+          <span style={{ fontSize:10, color:C.text3, fontFamily:FONT,
+            paddingLeft:4, whiteSpace:"nowrap" }}>{filtered.length} total</span>
         </div>
       </div>
 
-      {/* Table */}
-      <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden" }}>
-        <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1.5fr 1fr 80px",
-          padding:"9px 18px", borderBottom:`1px solid ${C.border}` }}>
-          {["Name","Type","Email","Phone","Portal"].map(h=>(
-            <span key={h} style={{ fontSize:10, fontWeight:700, color:C.text3,
-              fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.08em" }}>{h}</span>
-          ))}
-        </div>
-        {filtered.length===0
-          ? <div style={{ padding:"48px 18px", textAlign:"center", color:C.text3, fontSize:13, fontFamily:FONT }}>
-              {contacts.length===0?"No contacts yet":"No results"}
-            </div>
-          : filtered.map(c=>(
-            <div key={c.id}
-              onClick={()=>setSelected(c)}
-              style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1.5fr 1fr 80px",
-                padding:"12px 18px", borderBottom:`1px solid ${C.border}`,
-                alignItems:"center", cursor:"pointer" }}
-              onMouseEnter={e=>e.currentTarget.style.background=C.surface2}
-              onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-              <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-                <Avatar name={c.full_name} email={c.email} size={28} />
-                <div>
-                  <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:FONT }}>{c.full_name}</div>
-                  {c.notes&&<div style={{ fontSize:10, color:C.text3, fontFamily:FONT,
-                    whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", maxWidth:150 }}>{c.notes}</div>}
-                </div>
-              </div>
-              <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-                <div style={{ width:6, height:6, borderRadius:"50%", background:TYPE_DOT[c.contact_type]||C.text3 }} />
-                <span style={{ fontSize:12, color:C.text2, fontFamily:FONT }}>{c.contact_type}</span>
-              </div>
-              <span style={{ fontSize:12, color:C.text2, fontFamily:FONT,
-                whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{c.email||"—"}</span>
-              <span style={{ fontSize:12, color:C.text2, fontFamily:MONO }}>{c.phone||"—"}</span>
-              <div style={{ display:"flex", justifyContent:"center" }}>
-                {c.portal_enabled
-                  ? <span style={{ fontSize:10, fontWeight:700, color:C.green,
-                      background:"rgba(34,197,94,0.10)", borderRadius:20, padding:"3px 8px" }}>ON</span>
-                  : <span style={{ fontSize:10, color:C.text3, fontFamily:FONT }}>—</span>
-                }
-              </div>
-            </div>
-          ))
-        }
-      </div>
+      {/* Table / Cards */}
+      <ContactsTable contacts={filtered} allContacts={contacts} onSelect={setSelected} typeDot={TYPE_DOT} />
 
       {/* Add modal */}
       {showAdd&&(
@@ -2806,7 +3030,8 @@ function CalendarView({ user, isPortal=false, agentContact=null }) {
         </div>
 
         {/* Right panel — selected day or upcoming */}
-        <div style={{ width:240, flexShrink:0 }}>
+        <div style={{ width:240, flexShrink:0, display:"none" }}
+          className="cal-right-panel">
           {selectedDay ? (
             <div style={{ background:C.surface, border:`1px solid ${C.goldBorder}`,
               borderRadius:12, padding:"16px 16px", overflow:"hidden" }}>
@@ -3363,7 +3588,10 @@ export default function App() {
   const [authScreen,setAuthScreen]       = useState("login");
   const [userProfile,setUserProfile]     = useState(null);
   const [view,setView]                   = useState("dashboard");
+  const isMobile = useIsMobile();
+  const isTablet = useIsTablet();
   const [sidebarCollapsed,setSC]         = useState(false);
+  const [mobileMenuOpen,setMobileMenu]   = useState(false);
   const [showTempBanner,setTempBanner]   = useState(false);
   const [deals,setDeals]                 = useState([]);
   const [contacts,setContacts]           = useState([]);
@@ -3448,6 +3676,17 @@ export default function App() {
 
   return (
     <div style={{ display:"flex", background:C.bg, minHeight:"100vh" }}>
+      <style>{`
+        * { -webkit-tap-highlight-color: transparent; box-sizing: border-box; }
+        input, textarea, select { font-size: 16px !important; }
+        .cal-right-panel { display: block !important; }
+        @media (max-width: 767px) {
+          .cal-right-panel { display: none !important; }
+        }
+        ::-webkit-scrollbar { width: 3px; height: 3px; }
+        ::-webkit-scrollbar-thumb { background: rgba(212,175,55,0.2); border-radius: 4px; }
+        button { touch-action: manipulation; }
+      `}</style>
       <Sidebar activeView={view} onNav={setView} user={cu} onSignOut={signOut} collapsed={sidebarCollapsed} />
       <div style={{ marginLeft:sw, flex:1, transition:"margin-left 0.2s", display:"flex", flexDirection:"column", minWidth:0 }}>
         <TopBar title={title} subtitle={subtitle} onToggleSidebar={()=>setSC(c=>!c)} />
@@ -3463,6 +3702,7 @@ export default function App() {
           {view==="calendar" &&<CalendarView   user={cu} />}
         </main>
       </div>
+      {isMobile && <BottomNavBar activeView={view} onNav={setView} user={cu} />}
     </div>
   );
 }
