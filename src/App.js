@@ -630,6 +630,519 @@ function DashboardView({ user, deals, contacts, tasks }) {
 
 
 
+// ════════════════════════════════════════════════════════════
+// DEAL FINANCIALS TAB
+// ════════════════════════════════════════════════════════════
+function DealFinancialsTab({ deal, dealContacts, user, onRecorded }) {
+  const isMobile  = useIsMobile();
+  const isAdmin   = ["admin","owner"].includes(user?.role);
+  const [confirmedRecs, setConfirmed]       = useState([]);
+  const [pkgMap,        setPkgMap]          = useState({});
+  const [loading,       setLoading]         = useState(true);
+  const [salePrice,     setSalePrice]       = useState(String(deal.price||""));
+  const [commRate,      setCommRate]        = useState(String(deal.commission_rate||"3"));
+  const [editInputs,    setEditInputs]      = useState(!deal.price);
+  const [savingFor,     setSavingFor]       = useState(null);
+  const [toast,         setToast]           = useState(null);
+  const [showExternal,  setShowExternal]    = useState(false);
+  const [extForm,       setExtForm]         = useState({name:"",amount:"",role:"Buyer Agent",notes:""});
+  const setExt = (k,v) => setExtForm(f=>({...f,[k]:v}));
+
+  const fmt = n => n>=1e6?`$${(n/1e6).toFixed(2)}M`:n>=1e3?`$${(n/1e3).toFixed(1)}K`:`$${Math.round(n||0).toLocaleString()}`;
+
+  const loadData = async () => {
+    setLoading(true);
+    const agentIds = dealContacts.map(dc=>dc.contact_id).filter(Boolean);
+    const [fins, pkgs] = await Promise.all([
+      supabase.from("deal_financials").select("*").eq("deal_id", deal.id),
+      agentIds.length > 0
+        ? supabase.from("agent_fee_packages").select("*").in("contact_id", agentIds).eq("is_active", true)
+        : Promise.resolve({data:[]}),
+    ]);
+    setConfirmed(fins.data||[]);
+    const map = {};
+    for(const p of (pkgs.data||[])) map[p.contact_id] = p;
+    setPkgMap(map);
+    setLoading(false);
+  };
+
+  useEffect(()=>{ loadData(); },[deal.id, dealContacts.length]);
+
+  const price     = parseFloat(String(salePrice).replace(/[^0-9.]/g,""))||0;
+  const rate      = parseFloat(commRate)||0;
+  const grossComm = price*rate/100;
+
+  const calcFor = (contactId) => {
+    const pkg      = pkgMap[contactId];
+    const agentPct = pkg?.split_agent_pct||80;
+    const agentGross = grossComm*agentPct/100;
+    const txFee    = pkg?.flat_transaction_fee||0;
+    const eoFee    = pkg?.e_and_o_fee||0;
+    const royalty  = pkg?.royalty_fee_pct ? agentGross*pkg.royalty_fee_pct/100 : 0;
+    const agentNet = agentGross - txFee - eoFee - royalty;
+    const brokerNet= grossComm - agentNet;
+    return { pkg, agentPct, agentGross, txFee, eoFee, royalty, agentNet, brokerNet };
+  };
+
+  const confirmedFor = (cid) => confirmedRecs.find(r=>r.contact_id===cid);
+
+  const confirm = async (cid) => {
+    const dc   = dealContacts.find(d=>d.contact_id===cid);
+    const calc = calcFor(cid);
+    setSavingFor(cid);
+    await supabase.from("deal_financials")
+      .delete().eq("deal_id",deal.id).eq("contact_id",cid).eq("status","projected");
+    const { error } = await supabase.from("deal_financials").insert({
+      org_id:ORG_ID, deal_id:deal.id, contact_id:cid,
+      package_id:calc.pkg?.id||null, sale_price:price,
+      commission_rate:rate, agent_split_pct:calc.agentPct,
+      co_op_split_pct:calc.pkg?.co_op_split_pct||null,
+      agent_gross:calc.agentGross, transaction_fee:calc.txFee,
+      e_and_o_fee:calc.eoFee, royalty_fee:calc.royalty,
+      brokerage_net:calc.brokerNet,
+      status:deal.status==="Closed"?"closed":"projected",
+      close_date:deal.close_date||null, created_by:user?.email,
+    });
+    setSavingFor(null);
+    if(!error){ await loadData(); setToast({msg:"Financials recorded ✓",type:"success"}); if(onRecorded) onRecorded(); }
+    else setToast({msg:"Error saving",type:"error"});
+  };
+
+  const rogaAgents   = dealContacts.filter(dc=>dc.contacts);
+  const extRecs      = confirmedRecs.filter(r=>!r.contact_id&&r.notes);
+  const totalBroker  = rogaAgents.reduce((s,dc)=>{ const c=calcFor(dc.contact_id); return s+c.brokerNet; },0);
+  const totalAgent   = rogaAgents.reduce((s,dc)=>{ const c=calcFor(dc.contact_id); return s+c.agentNet;  },0);
+
+  const CONF_LABEL = { "New":"Speculative","Active":"In Pipeline","Under Contract":"High Confidence","Closed":"Confirmed","On Hold":"On Hold","Dead":"Dead" };
+  const CONF_COLOR = { "New":C.text3,"Active":C.blue,"Under Contract":C.amber,"Closed":C.green,"On Hold":C.text3,"Dead":C.red };
+  const confColor  = CONF_COLOR[deal.status]||C.text3;
+  const confLabel  = CONF_LABEL[deal.status]||deal.status;
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+      {toast&&<Toast message={toast.msg} type={toast.type} onDone={()=>setToast(null)} />}
+
+      {/* ── Deal inputs ── */}
+      <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:"14px 16px" }}>
+        <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", marginBottom:12 }}>
+          <div>
+            <div style={{ fontSize:11, fontWeight:700, color:C.text3, fontFamily:FONT,
+              textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:6 }}>Deal Inputs</div>
+            <div style={{ display:"flex", gap:12, flexWrap:"wrap", alignItems:"center" }}>
+              <span style={{ fontSize:12, fontWeight:700, color:confColor, fontFamily:FONT }}>
+                ● {confLabel}
+              </span>
+              {deal.close_date && (
+                <span style={{ fontSize:12, color:C.text3, fontFamily:FONT }}>
+                  📅 Expected close: <strong style={{color:C.text}}>
+                    {new Date(deal.close_date+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}
+                  </strong>
+                </span>
+              )}
+            </div>
+          </div>
+          {isAdmin && (
+            <button onClick={()=>setEditInputs(e=>!e)}
+              style={{ background:"none", border:`1px solid ${C.border}`, borderRadius:7,
+                color:C.text2, fontSize:11, fontFamily:FONT, cursor:"pointer",
+                padding:"5px 11px", flexShrink:0 }}>
+              {editInputs?"Lock ✓":"Edit"}
+            </button>
+          )}
+        </div>
+
+        {editInputs && isAdmin ? (
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+            <Field label="Sale Price ($)" value={salePrice} onChange={setSalePrice} placeholder="500,000" />
+            <Field label="Commission %" value={commRate}   onChange={setCommRate}   placeholder="3.0" />
+          </div>
+        ) : (
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(120px,1fr))", gap:10 }}>
+            {[
+              {l:"Sale Price",       v:price>0?`$${price.toLocaleString()}`:"Not set", c:C.text},
+              {l:"Commission Rate",  v:rate>0?`${rate}%`:"Not set",                    c:C.text},
+              {l:"Gross Commission", v:grossComm>0?fmt(grossComm):"—",                 c:C.gold, big:true},
+            ].map(item=>(
+              <div key={item.l} style={{ background:C.surface2, borderRadius:8, padding:"10px 12px" }}>
+                <div style={{ fontSize:9, fontWeight:700, color:C.text3, fontFamily:FONT,
+                  textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:4 }}>{item.l}</div>
+                <div style={{ fontSize:item.big?18:14, fontWeight:700, color:item.c, fontFamily:SERIF }}>
+                  {item.v}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {loading ? (
+        <div style={{ padding:"24px 0", textAlign:"center", color:C.text3, fontSize:13, fontFamily:FONT }}>Loading…</div>
+      ) : (
+        <>
+          {/* ── ROGA Agents ── */}
+          {rogaAgents.length === 0 ? (
+            <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12,
+              padding:"24px 16px", textAlign:"center", color:C.text3, fontSize:12, fontFamily:FONT }}>
+              No ROGA agents linked yet.<br/>
+              <span style={{ fontSize:11, marginTop:3, display:"block" }}>Use the People tab to link agents to this deal.</span>
+            </div>
+          ) : rogaAgents.map(dc=>{
+            const contact   = dc.contacts;
+            if(!contact) return null;
+            const confirmed = confirmedFor(dc.contact_id);
+            const calc      = calcFor(dc.contact_id);
+            const isConf    = !!confirmed;
+            const isSaving  = savingFor===dc.contact_id;
+            const getVal = k => isConf&&confirmed[k]!=null ? confirmed[k] : calc[k];
+
+            return (
+              <div key={dc.id} style={{ background:C.surface,
+                border:`1px solid ${isConf?C.goldBorder:C.border}`, borderRadius:12, overflow:"hidden" }}>
+
+                {/* Agent header */}
+                <div style={{ padding:"11px 16px", borderBottom:`1px solid ${C.border}`,
+                  display:"flex", alignItems:"center", gap:10, background:C.surface2 }}>
+                  <Avatar name={contact.full_name} email={contact.email} size={30} />
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ fontSize:13, fontWeight:700, color:C.text, fontFamily:FONT }}>{contact.full_name}</div>
+                    <div style={{ fontSize:10, color:C.text3, fontFamily:FONT }}>
+                      {dc.role}
+                      {calc.pkg ? ` · ${calc.pkg.package_name}` : " · ⚠️ No package (using 80/20 default)"}
+                    </div>
+                  </div>
+                  <span style={{ fontSize:10, fontWeight:700, flexShrink:0,
+                    color:isConf?C.green:C.text3,
+                    background:isConf?"rgba(34,197,94,0.10)":C.surface3,
+                    borderRadius:20, padding:"3px 9px" }}>
+                    {isConf?"Confirmed ✓":"Projected"}
+                  </span>
+                </div>
+
+                {/* Breakdown grid */}
+                {grossComm > 0 ? (
+                  <div style={{ padding:"14px 16px" }}>
+                    <div style={{ display:"grid",
+                      gridTemplateColumns:isMobile?"1fr 1fr":"1fr 1fr 1fr 1fr", gap:10, marginBottom:12 }}>
+                      {[
+                        {l:"Gross GCI",      v:fmt(grossComm),                       c:C.text},
+                        {l:`Agent (${getVal("agentPct")||calc.agentPct}%)`, v:fmt(getVal("agentGross")||calc.agentGross), c:C.text},
+                        {l:"Agent Net",      v:fmt(isConf?confirmed.agent_net:calc.agentNet),    c:C.blue,  big:true},
+                        {l:"Brokerage Net",  v:fmt(getVal("brokerNet")||calc.brokerNet), c:C.gold, big:true},
+                      ].map(item=>(
+                        <div key={item.l} style={{ background:C.surface2, borderRadius:8, padding:"10px 12px" }}>
+                          <div style={{ fontSize:9, fontWeight:700, color:C.text3, fontFamily:FONT,
+                            textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:4 }}>{item.l}</div>
+                          <div style={{ fontSize:item.big?17:14, fontWeight:700, color:item.c,
+                            fontFamily:SERIF }}>{item.v}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Deductions line */}
+                    {(calc.txFee>0||calc.eoFee>0||calc.royalty>0) && (
+                      <div style={{ display:"flex", gap:14, flexWrap:"wrap", marginBottom:12 }}>
+                        {calc.txFee>0&&<span style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>
+                          Tx fee: <strong style={{color:C.red}}>−{fmt(calc.txFee)}</strong></span>}
+                        {calc.eoFee>0&&<span style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>
+                          E&O: <strong style={{color:C.red}}>−{fmt(calc.eoFee)}</strong></span>}
+                        {calc.royalty>0&&<span style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>
+                          Royalty: <strong style={{color:C.red}}>−{fmt(calc.royalty)}</strong></span>}
+                      </div>
+                    )}
+
+                    {!isConf && isAdmin && (
+                      <GoldButton small onClick={()=>confirm(dc.contact_id)} disabled={isSaving}>
+                        {isSaving?"Saving…":"Confirm & Record"}
+                      </GoldButton>
+                    )}
+                  </div>
+                ) : (
+                  <div style={{ padding:"12px 16px", color:C.text3, fontSize:12, fontFamily:FONT }}>
+                    Set sale price and commission rate above to see the breakdown.
+                  </div>
+                )}
+              </div>
+            );
+          })}
+
+          {/* ── Totals summary ── */}
+          {rogaAgents.length > 0 && grossComm > 0 && (
+            <div style={{ background:C.goldDim, border:`1px solid ${C.goldBorder}`,
+              borderRadius:12, padding:"14px 16px" }}>
+              <div style={{ fontSize:11, fontWeight:700, color:C.gold, fontFamily:FONT,
+                textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:10 }}>Deal Summary</div>
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(130px,1fr))", gap:10 }}>
+                {[
+                  {l:"Gross GCI",          v:fmt(grossComm)},
+                  {l:"Total Agent Payouts",v:fmt(totalAgent)},
+                  {l:"Brokerage Total",    v:fmt(totalBroker)},
+                ].map(item=>(
+                  <div key={item.l}>
+                    <div style={{ fontSize:9, fontWeight:700, color:C.gold, fontFamily:FONT,
+                      textTransform:"uppercase", letterSpacing:"0.07em" }}>{item.l}</div>
+                    <div style={{ fontSize:18, fontWeight:700, color:C.text,
+                      fontFamily:SERIF, marginTop:2 }}>{item.v}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* ── External parties ── */}
+          <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden" }}>
+            <div style={{ padding:"11px 16px", borderBottom:`1px solid ${C.border}`,
+              display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+              <span style={{ fontSize:11, fontWeight:700, color:C.text2, fontFamily:FONT,
+                textTransform:"uppercase", letterSpacing:"0.08em" }}>External Parties</span>
+              {!showExternal && isAdmin && (
+                <GoldButton small outline onClick={()=>setShowExternal(true)}>+ Log</GoldButton>
+              )}
+            </div>
+            {showExternal ? (
+              <div style={{ padding:"14px 16px", display:"flex", flexDirection:"column", gap:10 }}>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+                  <Field label="Name / Company"      value={extForm.name}   onChange={v=>setExt("name",v)}   placeholder="e.g. RE/MAX Agent" />
+                  <Field label="Their Commission ($)" value={extForm.amount} onChange={v=>setExt("amount",v)} placeholder="12750" />
+                </div>
+                <Sel label="Role" value={extForm.role} onChange={v=>setExt("role",v)}
+                  options={["Buyer Agent","Listing Agent","Co-op Agent","Referral","Other"]} />
+                <Field label="Notes" value={extForm.notes} onChange={v=>setExt("notes",v)} placeholder="Optional" />
+                <div style={{ display:"flex", gap:8 }}>
+                  <GoldButton small onClick={async()=>{
+                    const amt = parseFloat(extForm.amount)||0;
+                    await supabase.from("deal_financials").insert({
+                      org_id:ORG_ID, deal_id:deal.id,
+                      sale_price:price, commission_rate:rate,
+                      agent_gross:amt, brokerage_net:0,
+                      status:"projected",
+                      notes:`${extForm.role}: ${extForm.name}${extForm.notes?". "+extForm.notes:""}`,
+                      created_by:user?.email,
+                    });
+                    setShowExternal(false); setExtForm({name:"",amount:"",role:"Buyer Agent",notes:""});
+                    await loadData(); setToast({msg:"External party logged",type:"success"});
+                  }} disabled={!extForm.name}>Save</GoldButton>
+                  <GoldButton small outline onClick={()=>setShowExternal(false)}>Cancel</GoldButton>
+                </div>
+              </div>
+            ) : extRecs.length===0 ? (
+              <div style={{ padding:"14px 16px", fontSize:12, color:C.text3, fontFamily:FONT }}>
+                No external parties logged
+              </div>
+            ) : extRecs.map(r=>(
+              <div key={r.id} style={{ padding:"11px 16px", borderBottom:`1px solid ${C.border}`,
+                display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                <span style={{ fontSize:12, color:C.text2, fontFamily:FONT }}>{r.notes}</span>
+                <span style={{ fontSize:12, fontWeight:700, color:C.text, fontFamily:MONO }}>
+                  {fmt(r.agent_gross||0)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════
+// PIPELINE REVENUE WIDGET (admin dashboard)
+// ════════════════════════════════════════════════════════════
+function PipelineRevenueWidget({ deals }) {
+  const fmt = n => n>=1e6?`$${(n/1e6).toFixed(1)}M`:n>=1e3?`$${(n/1e3).toFixed(0)}K`:`$${Math.round(n||0)}`;
+  const STAGES = [
+    {s:"Under Contract",c:C.amber,  conf:"High confidence"},
+    {s:"Active",         c:C.blue,   conf:"In pipeline"},
+    {s:"New",            c:C.text3,  conf:"Speculative"},
+    {s:"Closed",         c:C.green,  conf:"Confirmed"},
+  ];
+  const byStage = {};
+  for(const d of deals.filter(d=>!["Dead","On Hold"].includes(d.status))) {
+    const gross  = (d.price||0)*(d.commission_rate||3)/100;
+    const broker = gross*0.20;
+    if(!byStage[d.status]) byStage[d.status]={count:0,gross:0,broker:0};
+    byStage[d.status].count++;
+    byStage[d.status].gross  += gross;
+    byStage[d.status].broker += broker;
+  }
+  const totalBroker = Object.values(byStage).reduce((s,v)=>s+v.broker,0);
+  const totalGross  = Object.values(byStage).reduce((s,v)=>s+v.gross,0);
+  const hasData     = Object.keys(byStage).length > 0;
+
+  return (
+    <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden" }}>
+      <div style={{ padding:"12px 18px", borderBottom:`1px solid ${C.border}`,
+        display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+        <div>
+          <span style={{ fontSize:11, fontWeight:700, color:C.text2, fontFamily:FONT,
+            textTransform:"uppercase", letterSpacing:"0.08em" }}>Pipeline Revenue</span>
+          <div style={{ fontSize:10, color:C.text3, fontFamily:FONT, marginTop:2 }}>Est. brokerage net at 20%</div>
+        </div>
+        <span style={{ fontSize:18, fontWeight:700, color:C.gold, fontFamily:SERIF }}>
+          {fmt(totalBroker)}
+        </span>
+      </div>
+      {!hasData ? (
+        <div style={{ padding:"18px", fontSize:12, color:C.text3, fontFamily:FONT }}>No active deals</div>
+      ) : STAGES.filter(({s})=>byStage[s]).map(({s,c,conf})=>{
+        const data = byStage[s];
+        const pct  = totalGross>0 ? data.gross/totalGross : 0;
+        return (
+          <div key={s} style={{ padding:"10px 18px", borderBottom:`1px solid ${C.border}` }}>
+            <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:6 }}>
+              <div style={{ width:8, height:8, borderRadius:"50%", background:c, flexShrink:0 }} />
+              <span style={{ fontSize:12, fontWeight:600, color:C.text, fontFamily:FONT, flex:1 }}>{s}</span>
+              <span style={{ fontSize:10, color:C.text3, fontFamily:FONT }}>{data.count} deal{data.count!==1?"s":""}</span>
+              <span style={{ fontSize:12, fontWeight:700, color:C.gold, fontFamily:MONO }}>{fmt(data.broker)}</span>
+            </div>
+            <div style={{ height:3, background:C.surface2, borderRadius:2 }}>
+              <div style={{ height:"100%", borderRadius:2, background:c, width:`${pct*100}%`, transition:"width 0.5s" }} />
+            </div>
+          </div>
+        );
+      })}
+      {totalGross>0 && (
+        <div style={{ padding:"10px 18px", display:"flex", justifyContent:"space-between" }}>
+          <span style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>Total GCI in pipeline</span>
+          <span style={{ fontSize:12, fontWeight:600, color:C.text2, fontFamily:MONO }}>{fmt(totalGross)}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════
+// PORTAL EARNINGS VIEW (module level — avoids re-render bug)
+// ════════════════════════════════════════════════════════════
+function PortalEarningsView({ myDeals, agentPackage, agentName }) {
+  const isMobile = useIsMobile();
+  const fmt = n => n>=1e6?`$${(n/1e6).toFixed(2)}M`:n>=1e3?`$${(n/1e3).toFixed(1)}K`:`$${Math.round(n||0).toLocaleString()}`;
+  const pkg = agentPackage;
+
+  const dealEarnings = myDeals.map(d=>{
+    const grossComm  = (d.price||0)*(d.commission_rate||0)/100;
+    const agentPct   = pkg?.split_agent_pct||80;
+    const agentGross = grossComm*agentPct/100;
+    const txFee      = pkg?.flat_transaction_fee||0;
+    const eoFee      = pkg?.e_and_o_fee||0;
+    const royalty    = pkg?.royalty_fee_pct ? agentGross*pkg.royalty_fee_pct/100 : 0;
+    const agentNet   = agentGross - txFee - eoFee - royalty;
+    const totalFees  = txFee+eoFee+royalty;
+    return {...d, grossComm, agentGross, agentNet, totalFees, agentPct};
+  });
+
+  const confirmed = dealEarnings.filter(d=>d.status==="Closed");
+  const pipeline  = dealEarnings.filter(d=>!["Closed","Dead"].includes(d.status));
+  const uc        = dealEarnings.filter(d=>d.status==="Under Contract");
+
+  const confirmedNet = confirmed.reduce((s,d)=>s+d.agentNet,0);
+  const pipelineNet  = pipeline.reduce((s,d)=>s+d.agentNet,0);
+  const ucNet        = uc.reduce((s,d)=>s+d.agentNet,0);
+
+  const STAGE_COLOR = {"New":C.text3,"Active":C.blue,"Under Contract":C.amber,"Closed":C.green,"On Hold":C.text3};
+
+  return (
+    <div style={{ padding:isMobile?"12px":"20px 24px" }}>
+      {/* Summary cards */}
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(130px,1fr))", gap:10, marginBottom:18 }}>
+        {[
+          {l:"Confirmed Earned",  v:fmt(confirmedNet), c:C.green},
+          {l:"Under Contract",   v:fmt(ucNet),         c:C.amber},
+          {l:"Full Pipeline",    v:fmt(pipelineNet),   c:C.gold},
+          {l:"Total Deals",      v:myDeals.length,     c:C.text2},
+        ].map(s=>(
+          <div key={s.l} style={{ background:C.surface, border:`1px solid ${C.border}`,
+            borderRadius:10, padding:"14px 14px" }}>
+            <div style={{ fontSize:20, fontWeight:700, color:s.c, fontFamily:SERIF }}>{s.v}</div>
+            <div style={{ fontSize:9, fontWeight:700, color:C.text2, fontFamily:FONT,
+              textTransform:"uppercase", letterSpacing:"0.07em", marginTop:2 }}>{s.l}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Package badge */}
+      {pkg ? (
+        <div style={{ marginBottom:12, padding:"9px 14px", background:C.goldDim,
+          border:`1px solid ${C.goldBorder}`, borderRadius:9,
+          fontSize:12, color:C.text2, fontFamily:FONT }}>
+          Your package: <strong style={{color:C.gold}}>{pkg.package_name}</strong>
+          {" · "}{pkg.split_agent_pct}% agent / {pkg.split_brokerage_pct}% brokerage
+          {pkg.flat_transaction_fee>0?` · $${pkg.flat_transaction_fee} tx fee`:""}
+          {pkg.e_and_o_fee>0?` · $${pkg.e_and_o_fee} E&O`:""}
+        </div>
+      ) : (
+        <div style={{ marginBottom:12, padding:"9px 14px", background:"rgba(245,158,11,0.08)",
+          border:`1px solid rgba(245,158,11,0.25)`, borderRadius:9,
+          fontSize:12, color:C.amber, fontFamily:FONT }}>
+          ⚠️ No package assigned yet. Projections use 80/20 default. Contact your broker.
+        </div>
+      )}
+
+      {/* Deal list */}
+      <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden" }}>
+        <div style={{ padding:"11px 16px", borderBottom:`1px solid ${C.border}` }}>
+          <span style={{ fontSize:11, fontWeight:700, color:C.text2, fontFamily:FONT,
+            textTransform:"uppercase", letterSpacing:"0.08em" }}>My Commission Pipeline</span>
+        </div>
+        {dealEarnings.length===0 ? (
+          <div style={{ padding:"32px 16px", textAlign:"center", color:C.text3, fontSize:13, fontFamily:FONT }}>
+            No deals in your pipeline yet
+          </div>
+        ) : dealEarnings.map(d=>{
+          const sc = STAGE_COLOR[d.status]||C.text3;
+          const isConf = d.status==="Closed";
+          return (
+            <div key={d.id} style={{ padding:"13px 16px", borderBottom:`1px solid ${C.border}`,
+              borderLeft:`3px solid ${sc}` }}>
+              <div style={{ display:"flex", alignItems:"flex-start",
+                justifyContent:"space-between", gap:10 }}>
+                <div style={{ minWidth:0, flex:1 }}>
+                  <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:FONT,
+                    whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
+                    {d.address||"Untitled"}
+                  </div>
+                  <div style={{ display:"flex", gap:8, marginTop:3, flexWrap:"wrap", alignItems:"center" }}>
+                    <span style={{ fontSize:10, fontWeight:700, color:sc, fontFamily:FONT }}>
+                      {d.status}
+                    </span>
+                    {d.agent_role&&<span style={{ fontSize:10, color:C.text3, fontFamily:FONT }}>{d.agent_role}</span>}
+                    {d.close_date&&<span style={{ fontSize:10, color:C.text3, fontFamily:FONT }}>
+                      📅 {new Date(d.close_date+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}
+                    </span>}
+                  </div>
+                </div>
+                <div style={{ textAlign:"right", flexShrink:0 }}>
+                  <div style={{ fontSize:16, fontWeight:700, fontFamily:SERIF,
+                    color:isConf?C.green:d.agentNet>0?C.text:C.text3 }}>
+                    {d.agentNet>0?fmt(d.agentNet):"—"}
+                  </div>
+                  <div style={{ fontSize:10, color:C.text3, fontFamily:FONT }}>
+                    {isConf?"✓ Confirmed":"Projected"}
+                  </div>
+                </div>
+              </div>
+              {d.grossComm>0&&(
+                <div style={{ display:"flex", gap:12, flexWrap:"wrap", marginTop:6 }}>
+                  {[
+                    {l:"GCI",      v:fmt(d.grossComm)},
+                    {l:"Your cut", v:fmt(d.agentGross)},
+                    d.totalFees>0&&{l:"Fees", v:`−${fmt(d.totalFees)}`},
+                    d.price&&{l:"Sale price",v:`$${(d.price||0).toLocaleString()}`},
+                  ].filter(Boolean).map(item=>(
+                    <span key={item.l} style={{ fontSize:10, color:C.text3, fontFamily:FONT }}>
+                      {item.l}: <strong style={{color:C.text}}>{item.v}</strong>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+
 function DealFinancialCalculator({ deal, linkedAgents, user, onClose, onSaved }) {
   const [agentIdx, setAgentIdx] = useState(0);
   const [salePrice, setSalePrice] = useState(String(deal.price||""));
@@ -921,11 +1434,12 @@ function DealDetail({ deal, user, onClose, onRefresh }) {
   };
 
   const TABS = [
-    {id:"overview",label:"Overview"},
-    {id:"people",  label:`People${dealContacts.length>0?" ("+dealContacts.length+")":""}`},
-    {id:"activity",label:`Activity${activities.length>0?" ("+activities.length+")":""}`},
-    {id:"tasks",   label:`Tasks${dealTasks.length>0?" ("+dealTasks.length+")":""}`},
-    {id:"documents",label:`Documents${documents.length>0?" ("+documents.length+")":""}`},
+    {id:"overview",   label:"Overview"},
+    {id:"financials", label:"Financials"},
+    {id:"people",     label:`People${dealContacts.length>0?" ("+dealContacts.length+")":""}`},
+    {id:"activity",   label:`Activity${activities.length>0?" ("+activities.length+")":""}`},
+    {id:"tasks",      label:`Tasks${dealTasks.length>0?" ("+dealTasks.length+")":""}`},
+    {id:"documents",  label:`Documents${documents.length>0?" ("+documents.length+")":""}`},
   ];
 
   return (
@@ -1274,12 +1788,19 @@ function DealDetail({ deal, user, onClose, onRefresh }) {
               )}
             </div>
 
+          ) : tab==="financials" ? (
+            <DealFinancialsTab
+              deal={deal}
+              dealContacts={dealContacts}
+              user={user}
+              onRecorded={onRefresh}
+            />
           ) : (
             /* Documents tab */
             <div>
               <div style={{ textAlign:"center", padding:"40px 0", color:C.text3, fontSize:13, fontFamily:FONT }}>
                 <div style={{ fontSize:28, marginBottom:10 }}>📁</div>
-                Document uploads coming in Phase 5.
+                Document uploads coming in a future phase.
               </div>
             </div>
           )}
@@ -1563,6 +2084,7 @@ const PORTAL_NAV = [
   { id:"portal_tasks",     label:"Tasks",      icon:"◻" },
   { id:"portal_team",      label:"Team",       icon:"◑" },
   { id:"portal_calendar",  label:"Calendar",   icon:"◷" },
+  { id:"portal_earnings",  label:"My Earnings", icon:"$" },
   { id:"portal_chat",      label:"Chat · Ari", icon:"✦" },
 ];
 
@@ -1800,6 +2322,7 @@ function AgentPortalApp(
   const [chatSending, setChSend]  = useState(false);
   const [chatConvId, setChatConvId] = useState(null);
   const chatBottomRef = useRef(null);
+  const [agentPackage, setAgentPackage] = useState(null);
 
   const agentName  = agentContact?.full_name || "Agent";
   const agentEmail = agentContact?.email || session?.user?.email || "";
@@ -1832,6 +2355,13 @@ function AgentPortalApp(
       setLoading(false);
     };
     load();
+
+    // Load agent's fee package for earnings calculations
+    if(agentContact?.id) {
+      supabase.from("agent_fee_packages").select("*")
+        .eq("contact_id", agentContact.id).eq("is_active", true)
+        .maybeSingle().then(({data})=>setAgentPackage(data||null));
+    }
 
     // Load Ari chat for this agent
     if(agentContact?.id) {
@@ -2289,6 +2819,7 @@ function AgentPortalApp(
     portal_tasks:     ["Tasks", `${myTasks.filter(t=>t.status!=="done").length} open`],
     portal_team:      ["Team Directory", "Realty One Group Advantage"],
     portal_calendar:  ["Calendar", "Realty One Group Advantage"],
+    portal_earnings:  ["My Earnings", "Commission Pipeline"],
     portal_chat:      ["Chat · Ari", "Your AI assistant"],
   };
   const [ptitle, psub] = PORTAL_TITLES[view]||["Portal",""];
@@ -2319,7 +2850,14 @@ function AgentPortalApp(
               {view==="portal_tasks"     && <PortalTasks />}
               {view==="portal_team"      && <PortalTeam />}
               {view==="portal_calendar"  && <CalendarView user={{email:agentEmail,role:"member"}} isPortal={true} agentContact={agentContact} />}
-              {view==="portal_chat" && (
+              {view==="portal_earnings" && (
+              <PortalEarningsView
+                myDeals={myDeals}
+                agentPackage={agentPackage}
+                agentName={agentName}
+              />
+            )}
+            {view==="portal_chat" && (
               <PortalChatPanel
                 chatMsgs={chatMsgs} setChatMsgs={setChatMsgs}
                 chatInput={chatInput} setChatInput={setChatInput}
