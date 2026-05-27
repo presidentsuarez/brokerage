@@ -67,7 +67,8 @@ const NAV = [
   { id:"contacts",  label:"Contacts",  icon:"◎" },
   { id:"tasks",     label:"Tasks",     icon:"◻" },
   { id:"calendar",  label:"Calendar",  icon:"◷" },
-  { id:"financials",label:"Financials",icon:"◑", adminOnly:true },
+  { id:"applications",label:"Applications",icon:"✦", adminOnly:true },
+  { id:"financials",  label:"Financials",  icon:"◑", adminOnly:true },
   { id:"robots",    label:"Ari",       icon:"✦", platformOnly:true },
   { id:"notepad",   label:"Notepad",   icon:"✎", platformOnly:true },
   { id:"settings",  label:"Settings",  icon:"⚙", platformOnly:true },
@@ -4213,6 +4214,434 @@ function RobotsView({ user, deals, contacts, tasks }) {
 // FINANCIALS VIEW — Phase 2 (Admin/Owner only)
 // ════════════════════════════════════════════════════════════
 
+
+// ════════════════════════════════════════════════════════════
+// APPLICATIONS VIEW — Admin only
+// ════════════════════════════════════════════════════════════
+function ApplicationsView({ user }) {
+  const isMobile             = useIsMobile();
+  const [apps, setApps]      = useState([]);
+  const [loading, setLoading]= useState(true);
+  const [selected, setSel]   = useState(null);
+  const [filter, setFilter]  = useState("pending");
+  const [toast, setToast]    = useState(null);
+
+  const loadApps = async () => {
+    setLoading(true);
+    const { data } = await supabase.from("agent_applications")
+      .select("*").eq("org_id", ORG_ID)
+      .order("created_at", { ascending: false });
+    setApps(data || []);
+    setLoading(false);
+  };
+
+  useEffect(() => { loadApps(); }, []);
+
+  const filtered = apps.filter(a =>
+    filter === "all" ? true : a.status === filter
+  );
+
+  const pendingCount = apps.filter(a => a.status === "pending").length;
+
+  const STATUS_COLOR = {
+    pending:  { color: C.amber,  bg: "rgba(245,158,11,0.10)" },
+    approved: { color: C.green,  bg: "rgba(34,197,94,0.10)"  },
+    declined: { color: C.red,    bg: "rgba(239,68,68,0.10)"  },
+    hold:     { color: C.text3,  bg: C.surface2               },
+  };
+
+  const fmtDate = iso => iso
+    ? new Date(iso).toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" })
+    : "";
+
+  return (
+    <div style={{ padding: isMobile ? "12px" : "20px 24px", maxWidth: 900 }}>
+      {toast && <Toast message={toast.msg} type={toast.type} onDone={() => setToast(null)} />}
+
+      {/* Stats */}
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(130px,1fr))", gap:10, marginBottom:20 }}>
+        {[
+          { l:"Pending Review", v:apps.filter(a=>a.status==="pending").length,  c:C.amber },
+          { l:"Approved",       v:apps.filter(a=>a.status==="approved").length, c:C.green },
+          { l:"Declined",       v:apps.filter(a=>a.status==="declined").length, c:C.red   },
+          { l:"Total",          v:apps.length,                                  c:C.text2 },
+        ].map(s => (
+          <div key={s.l} style={{ background:C.surface, border:`1px solid ${C.border}`,
+            borderRadius:10, padding:"13px 14px" }}>
+            <div style={{ fontSize:22, fontWeight:700, color:s.c, fontFamily:SERIF }}>{s.v}</div>
+            <div style={{ fontSize:10, fontWeight:700, color:C.text2, fontFamily:FONT,
+              textTransform:"uppercase", letterSpacing:"0.07em", marginTop:2 }}>{s.l}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Filter tabs */}
+      <div style={{ display:"flex", gap:5, marginBottom:16, overflowX:"auto",
+        WebkitOverflowScrolling:"touch" }}>
+        {[["pending","Pending"],["approved","Approved"],["declined","Declined"],["hold","On Hold"],["all","All"]].map(([v,l]) => (
+          <button key={v} onClick={() => setFilter(v)} style={{
+            padding:"6px 14px", borderRadius:20, whiteSpace:"nowrap",
+            border:`1.5px solid ${filter===v ? C.goldBorder : C.border}`,
+            background: filter===v ? C.goldDim : "transparent",
+            color: filter===v ? C.gold : C.text2,
+            fontSize:11, fontFamily:FONT, cursor:"pointer" }}>
+            {l}{v==="pending"&&pendingCount>0?` (${pendingCount})`:""}
+          </button>
+        ))}
+      </div>
+
+      {/* Application list */}
+      {loading ? (
+        <div style={{ padding:"40px 0", textAlign:"center", color:C.text3, fontSize:13, fontFamily:FONT }}>
+          Loading…
+        </div>
+      ) : filtered.length === 0 ? (
+        <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12,
+          padding:"40px 16px", textAlign:"center", color:C.text3, fontSize:13, fontFamily:FONT }}>
+          {filter === "pending" ? (
+            <>
+              <div style={{ fontSize:28, marginBottom:10 }}>✓</div>
+              All caught up — no pending applications
+            </>
+          ) : `No ${filter} applications`}
+        </div>
+      ) : (
+        <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+          {filtered.map(app => {
+            const cfg = STATUS_COLOR[app.status] || STATUS_COLOR.pending;
+            return (
+              <div key={app.id}
+                onClick={() => setSel(app)}
+                style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12,
+                  padding:"14px 16px", cursor:"pointer",
+                  display:"flex", alignItems:"center", gap:14 }}
+                onMouseEnter={e => e.currentTarget.style.borderColor = C.goldBorder}
+                onMouseLeave={e => e.currentTarget.style.borderColor = C.border}>
+                <Avatar name={app.full_name} email={app.email} size={40} />
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ fontSize:14, fontWeight:700, color:C.text,
+                    fontFamily:FONT, marginBottom:3 }}>{app.full_name}</div>
+                  <div style={{ fontSize:12, color:C.text2, fontFamily:FONT }}>
+                    {app.email}
+                    {app.phone ? ` · ${app.phone}` : ""}
+                  </div>
+                  {app.license_number && (
+                    <div style={{ fontSize:11, color:C.text3, fontFamily:FONT, marginTop:2 }}>
+                      License: {app.license_number}
+                    </div>
+                  )}
+                </div>
+                <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:5 }}>
+                  <span style={{ fontSize:11, fontWeight:700, color:cfg.color,
+                    background:cfg.bg, borderRadius:20, padding:"3px 10px",
+                    textTransform:"capitalize" }}>{app.status}</span>
+                  <span style={{ fontSize:10, color:C.text3, fontFamily:FONT }}>
+                    {fmtDate(app.created_at)}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Application detail panel */}
+      {selected && (
+        <ApplicationPanel
+          app={selected}
+          user={user}
+          onClose={() => setSel(null)}
+          onUpdated={() => { setSel(null); loadApps(); }}
+          toast={setToast}
+        />
+      )}
+    </div>
+  );
+}
+
+function ApplicationPanel({ app, user, onClose, onUpdated, toast }) {
+  const [notes, setNotes]   = useState(app.admin_notes || "");
+  const [saving, setSaving] = useState(false);
+  const [action, setAction] = useState(null);
+
+  const fmtDate = iso => iso
+    ? new Date(iso).toLocaleDateString("en-US", { month:"long", day:"numeric", year:"numeric",
+        hour:"numeric", minute:"2-digit" })
+    : "";
+
+  const updateStatus = async (newStatus) => {
+    setSaving(true);
+    setAction(newStatus);
+    await supabase.from("agent_applications").update({
+      status:      newStatus,
+      reviewed_by: user?.email,
+      reviewed_at: new Date().toISOString(),
+      admin_notes: notes,
+    }).eq("id", app.id);
+    setSaving(false);
+    toast({ msg: `Application ${newStatus}`, type: newStatus === "approved" ? "success" : "success" });
+    onUpdated();
+  };
+
+  const approve = async () => {
+    setSaving(true);
+    setAction("approving");
+
+    try {
+      // 1. Create or find contact
+      let contactId = app.contact_id;
+      if (!contactId) {
+        const { data: existingContact } = await supabase.from("contacts")
+          .select("id").eq("email", app.email).maybeSingle();
+
+        if (existingContact) {
+          contactId = existingContact.id;
+        } else {
+          const { data: newContact } = await supabase.from("contacts").insert({
+            org_id:       ORG_ID,
+            full_name:    app.full_name,
+            email:        app.email,
+            phone:        app.phone,
+            contact_type: "Agent",
+            status:       "Active",
+            source:       "Application",
+            notes:        app.biggest_goal || "",
+            created_by:   creatorLabel(user),
+          }).select().single();
+          contactId = newContact?.id;
+        }
+      }
+
+      // 2. Create default fee package
+      if (contactId) {
+        // Deactivate any existing active package
+        await supabase.from("agent_fee_packages")
+          .update({ is_active: false }).eq("contact_id", contactId).eq("is_active", true);
+
+        await supabase.from("agent_fee_packages").insert({
+          org_id:               ORG_ID,
+          contact_id:           contactId,
+          package_name:         "ROG Standard",
+          fee_structure:        "flat",
+          split_agent_pct:      100,
+          split_brokerage_pct:  0,
+          flat_transaction_fee: 1000,
+          monthly_fee:          100,
+          e_and_o_fee:          0,
+          is_active:            true,
+          effective_date:       new Date().toISOString().slice(0, 10),
+          created_by:           user?.email,
+        });
+
+        // 3. Enable portal access
+        await supabase.from("agent_portal_access").upsert({
+          contact_id:   contactId,
+          portal_email: app.email.toLowerCase(),
+          is_active:    true,
+          granted_by:   user?.email,
+          org_id:       ORG_ID,
+          updated_at:   new Date().toISOString(),
+        }, { onConflict: "portal_email" });
+
+        await supabase.from("contacts").update({
+          portal_enabled: true,
+          portal_email:   app.email.toLowerCase(),
+        }).eq("id", contactId);
+      }
+
+      // 4. Create auth user + send welcome/reset email
+      const SUPA_URL   = "https://rtgfnwktybkorqvlirtd.supabase.co";
+      const SERVICE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJ0Z2Zud2t0eWJrb3JxdmxpcnRkIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3ODQyMDU0NiwiZXhwIjoyMDkzOTk2NTQ2fQ.bmCIfRj1Ga3qndR7Va2ZuBPrOTy9BOCiRRfmESK9-EE";
+
+      // Try create auth user, ignore if already exists
+      await fetch(`${SUPA_URL}/auth/v1/admin/users`, {
+        method: "POST",
+        headers: {
+          "apikey": SERVICE_KEY,
+          "Authorization": `Bearer ${SERVICE_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          email:         app.email,
+          password:      "TempROGA2026!",
+          email_confirm: true,
+          user_metadata: { full_name: app.full_name },
+        }),
+      });
+
+      // Send password reset / welcome email
+      await supabase.auth.resetPasswordForEmail(app.email, {
+        redirectTo: "https://presidentsuarez.github.io/brokerage",
+      });
+
+      // 5. Mark application as approved
+      await supabase.from("agent_applications").update({
+        status:      "approved",
+        reviewed_by: user?.email,
+        reviewed_at: new Date().toISOString(),
+        admin_notes: notes,
+        contact_id:  contactId,
+      }).eq("id", app.id);
+
+      setSaving(false);
+      toast({ msg: `${app.full_name} approved — welcome email sent ✓`, type: "success" });
+      onUpdated();
+
+    } catch (err) {
+      setSaving(false);
+      toast({ msg: "Error during approval — check console", type: "error" });
+      console.error(err);
+    }
+  };
+
+  const isApproved = app.status === "approved";
+  const isDeclined = app.status === "declined";
+  const isPending  = app.status === "pending" || app.status === "hold";
+
+  return (
+    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.65)", zIndex:300,
+      display:"flex", justifyContent:"flex-end" }}
+      onClick={e => e.target === e.currentTarget && onClose()}>
+
+      <div style={{ width:"min(520px,100vw)", background:C.bg, height:"100vh",
+        display:"flex", flexDirection:"column", borderLeft:`1px solid ${C.border}`,
+        animation:"slideIn 0.2s ease" }}>
+
+        {/* Header */}
+        <div style={{ padding:"18px 22px", borderBottom:`1px solid ${C.border}`,
+          background:C.surface, display:"flex", alignItems:"center", gap:14 }}>
+          <Avatar name={app.full_name} email={app.email} size={44} />
+          <div style={{ flex:1 }}>
+            <div style={{ fontSize:16, fontWeight:700, color:C.text, fontFamily:SERIF }}>
+              {app.full_name}
+            </div>
+            <div style={{ fontSize:11, color:C.text3, fontFamily:FONT, marginTop:2 }}>
+              Applied {fmtDate(app.created_at)}
+            </div>
+          </div>
+          <button onClick={onClose} style={{ background:"none", border:"none",
+            color:C.text2, fontSize:20, cursor:"pointer", padding:4 }}>✕</button>
+        </div>
+
+        {/* Body */}
+        <div style={{ flex:1, overflowY:"auto", padding:"20px 22px",
+          display:"flex", flexDirection:"column", gap:12 }}>
+
+          {/* Info cards */}
+          {[
+            { l:"Email",          v: app.email },
+            { l:"Phone",          v: app.phone || "—" },
+            { l:"License #",      v: app.license_number || "—" },
+          ].map(item => (
+            <div key={item.l} style={{ display:"flex", justifyContent:"space-between",
+              padding:"11px 14px", background:C.surface, border:`1px solid ${C.border}`,
+              borderRadius:9, alignItems:"center" }}>
+              <span style={{ fontSize:11, fontWeight:700, color:C.text3, fontFamily:FONT,
+                textTransform:"uppercase", letterSpacing:"0.07em" }}>{item.l}</span>
+              <span style={{ fontSize:13, color:C.text, fontFamily:FONT }}>{item.v}</span>
+            </div>
+          ))}
+
+          {/* Biggest goal */}
+          {app.biggest_goal && (
+            <div style={{ background:C.surface, border:`1px solid ${C.border}`,
+              borderRadius:10, padding:"14px 16px" }}>
+              <div style={{ fontSize:10, fontWeight:700, color:C.text3, fontFamily:FONT,
+                textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:8 }}>
+                Biggest Goal
+              </div>
+              <div style={{ fontSize:13, color:C.text2, fontFamily:FONT, lineHeight:1.65 }}>
+                "{app.biggest_goal}"
+              </div>
+            </div>
+          )}
+
+          {/* Package that will be assigned */}
+          {isPending && (
+            <div style={{ background:C.goldDim, border:`1px solid ${C.goldBorder}`,
+              borderRadius:10, padding:"13px 16px" }}>
+              <div style={{ fontSize:10, fontWeight:700, color:C.gold, fontFamily:FONT,
+                textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:8 }}>
+                Package on Approval
+              </div>
+              <div style={{ fontSize:13, color:C.text2, fontFamily:FONT }}>
+                <strong style={{ color:C.gold }}>ROG Standard</strong>
+                {" · "}$100/month · $1,000/transaction · 100% commission kept
+              </div>
+              <div style={{ fontSize:11, color:C.text3, fontFamily:FONT, marginTop:4 }}>
+                Can be edited in Financials → Agent Packages after approval.
+              </div>
+            </div>
+          )}
+
+          {/* Admin notes */}
+          <div>
+            <label style={{ fontSize:11, fontWeight:700, color:C.text2, fontFamily:FONT,
+              letterSpacing:"0.08em", textTransform:"uppercase", display:"block", marginBottom:6 }}>
+              Admin Notes
+            </label>
+            <textarea value={notes} onChange={e => setNotes(e.target.value)}
+              placeholder="Internal notes…" rows={3}
+              style={{ width:"100%", padding:"10px 12px", background:C.surface2,
+                border:`1px solid ${C.border2}`, borderRadius:8, color:C.text,
+                fontSize:13, fontFamily:FONT, outline:"none", resize:"vertical",
+                boxSizing:"border-box" }} />
+          </div>
+
+          {/* Status if already actioned */}
+          {(isApproved || isDeclined) && (
+            <div style={{ padding:"11px 14px", background:C.surface, border:`1px solid ${C.border}`,
+              borderRadius:9 }}>
+              <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>
+                {isApproved ? "✓ Approved" : "✗ Declined"} by {app.reviewed_by} · {fmtDate(app.reviewed_at)}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Action buttons */}
+        <div style={{ padding:"16px 22px", borderTop:`1px solid ${C.border}`,
+          background:C.surface, display:"flex", gap:10, flexWrap:"wrap" }}>
+          {isPending && (
+            <>
+              <GoldButton onClick={approve} disabled={saving}>
+                {saving && action==="approving" ? "Approving…" : "✓ Approve & Onboard"}
+              </GoldButton>
+              <GoldButton outline onClick={()=>updateStatus("hold")} disabled={saving}>
+                Hold
+              </GoldButton>
+              <GoldButton danger onClick={()=>updateStatus("declined")} disabled={saving}>
+                Decline
+              </GoldButton>
+            </>
+          )}
+          {isApproved && (
+            <div style={{ fontSize:12, color:C.green, fontFamily:FONT, padding:"8px 0" }}>
+              ✓ Approved — agent is active in the system
+            </div>
+          )}
+          {isDeclined && (
+            <GoldButton outline onClick={()=>updateStatus("pending")} disabled={saving}>
+              Reopen
+            </GoldButton>
+          )}
+          {app.status === "hold" && (
+            <>
+              <GoldButton onClick={approve} disabled={saving}>
+                {saving ? "Approving…" : "✓ Approve & Onboard"}
+              </GoldButton>
+              <GoldButton danger onClick={()=>updateStatus("declined")} disabled={saving}>
+                Decline
+              </GoldButton>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 function FinancialsView({ user }) {
   const [tab, setTab]         = useState("packages");
   const [agents, setAgents]   = useState([]);
@@ -4417,8 +4846,9 @@ function PackagePanel({ agent, existingPkg, user, onClose, onSaved, fmt }) {
     fee_structure:        existingPkg?.fee_structure        || "split_plus_flat",
     split_agent_pct:      existingPkg?.split_agent_pct      ?? 80,
     split_brokerage_pct:  existingPkg?.split_brokerage_pct  ?? 20,
-    flat_transaction_fee: existingPkg?.flat_transaction_fee ?? 500,
-    e_and_o_fee:          existingPkg?.e_and_o_fee           ?? 150,
+    monthly_fee:          existingPkg?.monthly_fee           ?? 100,
+    flat_transaction_fee: existingPkg?.flat_transaction_fee ?? 1000,
+    e_and_o_fee:          existingPkg?.e_and_o_fee           ?? 0,
     royalty_fee_pct:      existingPkg?.royalty_fee_pct       || "",
     co_op_split_pct:      existingPkg?.co_op_split_pct       || "",
     notes:                existingPkg?.notes                 || "",
@@ -4455,6 +4885,7 @@ function PackagePanel({ agent, existingPkg, user, onClose, onSaved, fmt }) {
       fee_structure:        form.fee_structure,
       split_agent_pct:      Number(form.split_agent_pct),
       split_brokerage_pct:  Number(form.split_brokerage_pct),
+      monthly_fee:          Number(form.monthly_fee)||0,
       flat_transaction_fee: Number(form.flat_transaction_fee)||0,
       e_and_o_fee:          Number(form.e_and_o_fee)||0,
       royalty_fee_pct:      form.royalty_fee_pct !== "" ? Number(form.royalty_fee_pct) : null,
@@ -4550,10 +4981,12 @@ function PackagePanel({ agent, existingPkg, user, onClose, onSaved, fmt }) {
                 Per-Transaction Fees
               </div>
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+                <Field label="Monthly Fee ($)" value={String(form.monthly_fee||"")}
+                  onChange={v=>setF("monthly_fee",v)} placeholder="100" />
                 <Field label="Transaction Fee ($)" value={String(form.flat_transaction_fee)}
-                  onChange={v=>setF("flat_transaction_fee",v)} placeholder="500" />
+                  onChange={v=>setF("flat_transaction_fee",v)} placeholder="1000" />
                 <Field label="E&O Fee ($)" value={String(form.e_and_o_fee)}
-                  onChange={v=>setF("e_and_o_fee",v)} placeholder="150" />
+                  onChange={v=>setF("e_and_o_fee",v)} placeholder="0" />
               </div>
             </div>
           )}
@@ -5301,7 +5734,8 @@ export default function App() {
     settings:["Settings","Account & org"],
     robots:  ["Ari", "Business Unit Leader · ROGA"],
     calendar:   ["Calendar",   "Realty One Group Advantage"],
-    financials: ["Financials", "Agent Packages & Deal P&L"],
+    applications:["Applications", "Agent Onboarding Queue"],
+    financials:  ["Financials",   "Agent Packages & Deal P&L"],
   };
   const [title,subtitle] = TITLES[view]||["Prism",""];
   const cu = userProfile||{email:session.user.email,role:"member"};
@@ -5341,7 +5775,8 @@ export default function App() {
           {view==="notepad"  &&<NotesView     user={cu} />}
           {view==="robots"   &&<RobotsView    user={cu} deals={deals} contacts={contacts} tasks={tasks} />}
           {view==="calendar"   &&<CalendarView    user={cu} />}
-          {view==="financials" &&<FinancialsView  user={cu} />}
+          {view==="applications"&&<ApplicationsView user={cu} />}
+          {view==="financials"  &&<FinancialsView   user={cu} />}
         </main>
       </div>
       {isMobile && <BottomNavBar activeView={view} onNav={setView} user={cu} />}
