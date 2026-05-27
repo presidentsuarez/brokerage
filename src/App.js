@@ -1390,19 +1390,31 @@ function DealDetail({ deal, user, onClose, onRefresh }) {
 
   const saveEdit = async () => {
     setSavingEdit(true);
+    const num = (v) => { const n=parseFloat(String(v).replace(/[^0-9.]/g,"")); return isNaN(n)?null:n; };
+    const int = (v) => { const n=parseInt(v); return isNaN(n)?null:n; };
+    const str = (v) => v===""?null:v;
     const update = {
-      ...editForm,
-      price:editForm.price?parseFloat(String(editForm.price).replace(/[^0-9.]/g,"")):null,
-      bedrooms:editForm.bedrooms?parseInt(editForm.bedrooms):null,
-      bathrooms:editForm.bathrooms?parseFloat(editForm.bathrooms):null,
-      sqft:editForm.sqft?parseInt(editForm.sqft):null,
-      commission_rate:editForm.commission_rate?parseFloat(editForm.commission_rate):null,
-      updated_at:new Date().toISOString(),
+      address:       str(editForm.address),
+      city:          str(editForm.city),
+      state:         str(editForm.state),
+      zip:           str(editForm.zip),
+      status:        str(editForm.status),
+      deal_type:     str(editForm.deal_type),
+      mls_number:    str(editForm.mls_number),
+      notes:         str(editForm.notes),
+      close_date:    str(editForm.close_date),
+      price:         num(editForm.price),
+      commission_rate:num(editForm.commission_rate),
+      bedrooms:      int(editForm.bedrooms),
+      bathrooms:     num(editForm.bathrooms),
+      sqft:          int(editForm.sqft),
+      year_built:    int(editForm.year_built),
+      updated_at:    new Date().toISOString(),
     };
     const { error } = await supabase.from("deals").update(update).eq("id",deal.id);
     setSavingEdit(false);
-    if(!error){ setEditMode(false); onRefresh(); setToast({msg:"Deal updated",type:"success"}); }
-    else setToast({msg:"Error saving",type:"error"});
+    if(!error){ setEditMode(false); onRefresh(); setToast({msg:"Deal updated ✓",type:"success"}); }
+    else { console.error("Deal save error:", error); setToast({msg:`Error: ${error.message}`,type:"error"}); }
   };
 
   const updateStatus = async (newStatus) => {
