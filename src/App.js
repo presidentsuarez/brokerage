@@ -580,6 +580,16 @@ function DashboardView({ user, deals, contacts, tasks }) {
   const mine   = tasks.filter(t=>t.assigned_to===user?.email&&t.status!=="done");
   const vol    = closed.reduce((s,d)=>s+(d.price||0),0);
   const fmt    = n=>n>=1e6?`$${(n/1e6).toFixed(1)}M`:n>=1e3?`$${(n/1e3).toFixed(0)}K`:`$${n}`;
+  const isAdmin = ["admin","owner"].includes(user?.role);
+  const [bk, setBk] = useState(null);
+  useEffect(()=>{ if(!isAdmin) return; (async()=>{
+    const { data } = await supabase.from("brokerage_performance_yearly").select("*").eq("org_id",ORG_ID);
+    if(data && data.length) setBk({
+      deals: data.reduce((s,y)=>s+Number(y.deals||0),0),
+      vol:   data.reduce((s,y)=>s+Number(y.volume||0),0),
+      gci:   data.reduce((s,y)=>s+Number(y.gci||0),0),
+    });
+  })(); },[isAdmin]);
 
   return (
     <div style={{ padding:"16px", maxWidth:1100 }}>
@@ -593,11 +603,17 @@ function DashboardView({ user, deals, contacts, tasks }) {
         </p>
       </div>
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(165px,1fr))", gap:12, marginBottom:26 }}>
-        <StatCard label="Active Deals" value={open.length}                        icon="◈" />
-        <StatCard label="Contacts"     value={contacts.length}                    icon="◎" />
-        <StatCard label="Closed"       value={closed.length}  accent={C.green}    icon="✓" />
-        <StatCard label="Volume"       value={vol>0?fmt(vol):"—"}                 icon="$" />
-        <StatCard label="My Tasks"     value={mine.length}    accent={mine.length>3?C.amber:C.text2} icon="◻" />
+        <StatCard label="Active Deals" value={open.length} icon="◈" />
+        {isAdmin && bk ? (<>
+          <StatCard label="Closed · all-time" value={bk.deals.toLocaleString()} accent={C.green} icon="✓" />
+          <StatCard label="Volume · 7yr"      value={fmt(bk.vol)} icon="$" />
+          <StatCard label="GCI · 7yr"         value={fmt(bk.gci)} accent={C.gold} icon="◑" />
+        </>) : (<>
+          <StatCard label="Closed" value={closed.length} accent={C.green} icon="✓" />
+          <StatCard label="Volume" value={vol>0?fmt(vol):"—"} icon="$" />
+        </>)}
+        <StatCard label="Contacts"  value={contacts.length} icon="◎" />
+        <StatCard label="My Tasks"  value={mine.length} accent={mine.length>3?C.amber:C.text2} icon="◻" />
       </div>
       <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden" }}>
         <div style={{ padding:"12px 18px", borderBottom:`1px solid ${C.border}` }}>
