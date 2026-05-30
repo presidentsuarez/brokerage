@@ -1966,8 +1966,9 @@ function DealsTable({ deals, allDeals, onSelect, fmt }) {
 }
 
 function DealsView({ user, deals, onRefresh }) {
-  const [txns,setTxns]     = useState([]);
+  const [rows,setRows]     = useState([]);
   const [agents,setAgents] = useState([]);
+  const [myCid,setMyCid]   = useState(null);
   const [loading,setLoading] = useState(true);
   const [agentSel,setAgentSel] = useState("all");
   const [typeSel,setTypeSel]   = useState("all");
@@ -1977,52 +1978,63 @@ function DealsView({ user, deals, onRefresh }) {
   const [saving,setSaving]     = useState(false);
   const [toast,setToast]       = useState(null);
   const [form,setForm]         = useState({address:"",city:"",state:"FL",zip:"",price:"",
-    status:"New",deal_type:"Listing",mls_number:"",notes:""});
+    status:"Active",deal_type:"Listing",mls_number:"",notes:""});
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
   const fmt = n=>{ n=Number(n||0); return n>=1e6?`$${(n/1e6).toFixed(1)}M`:n>=1e3?`$${(n/1e3).toFixed(0)}K`:`$${Math.round(n)}`; };
 
-  useEffect(()=>{ (async()=>{
-    // agents (id -> name)
-    const { data:ag } = await supabase.from("agent_performance_lifetime")
-      .select("agent_contact_id,full_name").eq("org_id",ORG_ID).order("full_name");
+  const load = async () => {
+    const { data:ag } = await supabase.from("contacts")
+      .select("id,full_name").eq("org_id",ORG_ID).eq("contact_type","Agent").order("full_name");
     setAgents(ag||[]);
-    // all transactions, paged past the 1000-row cap
-    let all=[], from=0;
+    const me = (ag||[]).find(a=>false); // placeholder
+    const { data:meRow } = await supabase.from("contacts").select("id").eq("org_id",ORG_ID).ilike("email", user?.email||"").maybeSingle();
+    setMyCid(meRow?.id||null);
+    // closings (paged past 1000 cap)
+    let txns=[], from=0;
     while(true){
-      const { data, error } = await supabase.from("transactions")
+      const { data,error } = await supabase.from("transactions")
         .select("id,address,transaction_type,status,close_price,gross_commission,tax_year,agent_contact_id,is_referral,is_fee_only")
         .eq("org_id",ORG_ID).order("tax_year",{ascending:false}).range(from,from+999);
       if(error||!data||data.length===0) break;
-      all=all.concat(data); from+=1000;
-      if(data.length<1000) break;
+      txns=txns.concat(data); from+=1000; if(data.length<1000) break;
     }
-    setTxns(all); setLoading(false);
-  })(); },[]);
+    // active pipeline deals
+    const { data:dl } = await supabase.from("deals")
+      .select("id,address,city,price,status,deal_type,agent_contact_id").eq("org_id",ORG_ID);
+    const active = (dl||[]).map(d=>({ key:"d"+d.id, address:[d.address,d.city].filter(Boolean).join(", "),
+      agent_contact_id:d.agent_contact_id, type:d.deal_type||"Listing", year:null,
+      price:Number(d.price||0), gci:null, status:d.status||"Active", active:true }));
+    const closed = txns.map(t=>({ key:"t"+t.id, address:t.address, agent_contact_id:t.agent_contact_id,
+      type:t.transaction_type, year:t.tax_year, price:Number(t.close_price||0), gci:Number(t.gross_commission||0),
+      status:t.status, active:false, ref:t.is_referral, fee:t.is_fee_only }));
+    setRows([...active, ...closed]); setLoading(false);
+  };
+  useEffect(()=>{ load(); },[]);
 
-  const nameOf = {};
-  agents.forEach(a=>{ nameOf[a.agent_contact_id]=a.full_name; });
-  const years = Array.from(new Set(txns.map(t=>t.tax_year).filter(Boolean))).sort((a,b)=>b-a);
-  const types = ["Sale","Rental","Lease","Commercial","Referral"];
+  const nameOf = {}; agents.forEach(a=>{ nameOf[a.id]=a.full_name; });
+  const years = Array.from(new Set(rows.map(r=>r.year).filter(Boolean))).sort((a,b)=>b-a);
+  const types = ["Sale","Rental","Lease","Commercial","Referral","Listing"];
 
-  const filtered = txns.filter(t=>{
-    if(agentSel!=="all" && t.agent_contact_id!==agentSel) return false;
-    if(typeSel!=="all" && (t.transaction_type||"")!==typeSel) return false;
-    if(yearSel!=="all" && String(t.tax_year)!==yearSel) return false;
-    if(search){ const q=search.toLowerCase();
-      if(!`${t.address||""} ${nameOf[t.agent_contact_id]||""}`.toLowerCase().includes(q)) return false; }
+  const filtered = rows.filter(r=>{
+    if(agentSel!=="all" && r.agent_contact_id!==agentSel) return false;
+    if(typeSel!=="all" && (r.type||"")!==typeSel) return false;
+    if(yearSel!=="all" && String(r.year)!==yearSel) return false;
+    if(search){ const ql=search.toLowerCase();
+      if(!`${r.address||""} ${nameOf[r.agent_contact_id]||""}`.toLowerCase().includes(ql)) return false; }
     return true;
   });
-  const sumVol = filtered.reduce((s,t)=>s+Number(t.close_price||0),0);
-  const sumGci = filtered.reduce((s,t)=>s+Number(t.gross_commission||0),0);
+  const closings = filtered.filter(r=>!r.active && !r.fee);
+  const sumVol = closings.reduce((s,r)=>s+r.price,0);
+  const sumGci = closings.reduce((s,r)=>s+r.gci,0);
   const shown = filtered.slice(0,500);
 
   const handleAdd = async () => {
     if(!form.address.trim()) return; setSaving(true);
     const { error } = await supabase.from("deals").insert({ ...form,
       price:form.price?parseFloat(form.price.replace(/[^0-9.]/g,"")):null,
-      org_id:ORG_ID, created_by:creatorLabel(user) });
+      org_id:ORG_ID, created_by:creatorLabel(user), agent_contact_id:myCid });
     setSaving(false);
-    if(!error){ setShowAdd(false); setForm({address:"",city:"",state:"FL",zip:"",price:"",status:"New",deal_type:"Listing",mls_number:"",notes:""}); onRefresh&&onRefresh(); setToast({msg:"Pipeline deal added",type:"success"}); }
+    if(!error){ setShowAdd(false); setForm({address:"",city:"",state:"FL",zip:"",price:"",status:"Active",deal_type:"Listing",mls_number:"",notes:""}); onRefresh&&onRefresh(); load(); setToast({msg:"Deal added — assigned to you",type:"success"}); }
     else setToast({msg:"Error saving deal",type:"error"});
   };
 
@@ -2032,27 +2044,22 @@ function DealsView({ user, deals, onRefresh }) {
   return (
     <div style={{ padding:"20px clamp(14px,3vw,24px)" }}>
       {toast&&<Toast message={toast.msg} type={toast.type} onDone={()=>setToast(null)} />}
-
-      {/* filter bar */}
       <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:14, flexWrap:"wrap" }}>
         <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search address or agent…"
           style={{ ...selStyle, width:220 }} />
         <select value={agentSel} onChange={e=>setAgentSel(e.target.value)} style={selStyle}>
           <option value="all">All agents ({agents.length})</option>
-          {agents.map(a=><option key={a.agent_contact_id} value={a.agent_contact_id}>{a.full_name}</option>)}
+          {agents.map(a=><option key={a.id} value={a.id}>{a.full_name}</option>)}
         </select>
         <select value={typeSel} onChange={e=>setTypeSel(e.target.value)} style={selStyle}>
-          <option value="all">All types</option>
-          {types.map(t=><option key={t} value={t}>{t}</option>)}
+          <option value="all">All types</option>{types.map(t=><option key={t} value={t}>{t}</option>)}
         </select>
         <select value={yearSel} onChange={e=>setYearSel(e.target.value)} style={selStyle}>
-          <option value="all">All years</option>
-          {years.map(y=><option key={y} value={String(y)}>{y}</option>)}
+          <option value="all">All years</option>{years.map(y=><option key={y} value={String(y)}>{y}</option>)}
         </select>
-        <div style={{ marginLeft:"auto" }}><GoldButton onClick={()=>setShowAdd(true)} small>+ Add Pipeline Deal</GoldButton></div>
+        <div style={{ marginLeft:"auto" }}><GoldButton onClick={()=>setShowAdd(true)} small>+ Add Deal</GoldButton></div>
       </div>
 
-      {/* summary strip */}
       <div style={{ display:"flex", gap:18, flexWrap:"wrap", marginBottom:12, fontFamily:FONT }}>
         <span style={{ fontSize:12, color:C.text2 }}><b style={{color:C.text,fontFamily:MONO}}>{filtered.length.toLocaleString()}</b> deals</span>
         <span style={{ fontSize:12, color:C.text2 }}>Volume <b style={{color:C.text,fontFamily:MONO}}>{fmt(sumVol)}</b></span>
@@ -2069,19 +2076,22 @@ function DealsView({ user, deals, onRefresh }) {
           ? <div style={{ padding:"48px 18px", textAlign:"center", color:C.text3, fontSize:13, fontFamily:FONT }}>Loading deals…</div>
           : shown.length===0
             ? <div style={{ padding:"48px 18px", textAlign:"center", color:C.text3, fontSize:13, fontFamily:FONT }}>No deals match your filter</div>
-            : shown.map(t=>(
-              <div key={t.id} style={{ display:"grid", gridTemplateColumns:"2fr 1.3fr 0.8fr 0.5fr 1fr 1fr",
+            : shown.map(r=>(
+              <div key={r.key} style={{ display:"grid", gridTemplateColumns:"2fr 1.3fr 0.8fr 0.5fr 1fr 1fr",
                 padding:"12px 18px", borderBottom:`1px solid ${C.border}`, alignItems:"center" }}
                 onMouseEnter={e=>e.currentTarget.style.background=C.surface2}
                 onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
                 <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:FONT, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
-                  {t.address||"—"}{t.is_referral?<span style={{color:C.blue,fontSize:10,marginLeft:6}}>REF</span>:null}{t.is_fee_only?<span style={{color:C.text3,fontSize:10,marginLeft:6}}>FEE</span>:null}
+                  {r.address||"—"}
+                  {r.active?<span style={{color:C.blue,fontSize:10,marginLeft:6,fontWeight:700}}>● ACTIVE</span>:null}
+                  {r.ref?<span style={{color:C.blue,fontSize:10,marginLeft:6}}>REF</span>:null}
+                  {r.fee?<span style={{color:C.text3,fontSize:10,marginLeft:6}}>FEE</span>:null}
                 </div>
-                <span style={{ fontSize:12.5, color:C.text2, fontFamily:FONT, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{nameOf[t.agent_contact_id]||"—"}</span>
-                <span style={{ fontSize:12, color:C.text2, fontFamily:FONT }}>{t.transaction_type||"—"}</span>
-                <span style={{ fontSize:12, color:C.text3, fontFamily:MONO }}>{t.tax_year||"—"}</span>
-                <span style={{ fontSize:12, fontWeight:600, color:C.text, fontFamily:MONO }}>{t.close_price?fmt(t.close_price):"—"}</span>
-                <span style={{ fontSize:12, fontWeight:600, color:C.gold, fontFamily:MONO }}>{t.gross_commission?fmt(t.gross_commission):"—"}</span>
+                <span style={{ fontSize:12.5, color:C.text2, fontFamily:FONT, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{nameOf[r.agent_contact_id]||"—"}</span>
+                <span style={{ fontSize:12, color:C.text2, fontFamily:FONT }}>{r.type||"—"}</span>
+                <span style={{ fontSize:12, color:C.text3, fontFamily:MONO }}>{r.year||"—"}</span>
+                <span style={{ fontSize:12, fontWeight:600, color:C.text, fontFamily:MONO }}>{r.price?fmt(r.price):"—"}</span>
+                <span style={{ fontSize:12, fontWeight:600, color:C.gold, fontFamily:MONO }}>{r.gci?fmt(r.gci):"—"}</span>
               </div>
             ))
         }
@@ -2089,7 +2099,7 @@ function DealsView({ user, deals, onRefresh }) {
       </div>
 
       {showAdd&&(
-        <Modal title="New Pipeline Deal" onClose={()=>setShowAdd(false)}>
+        <Modal title="New Deal" onClose={()=>setShowAdd(false)}>
           <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
             <Field label="Address" value={form.address} onChange={v=>set("address",v)} placeholder="123 Main St" />
             <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr", gap:10 }}>
