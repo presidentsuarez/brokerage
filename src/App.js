@@ -69,6 +69,7 @@ const NAV = [
   { id:"calendar",  label:"Calendar",  icon:"◷" },
   { id:"applications",label:"Applications",icon:"✦", adminOnly:true },
   { id:"financials",  label:"Financials",  icon:"◑", adminOnly:true },
+  { id:"performance", label:"Performance", icon:"📈", adminOnly:true },
   { id:"robots",    label:"Ari",       icon:"✦", platformOnly:true },
   { id:"notepad",   label:"Notepad",   icon:"✎", platformOnly:true },
   { id:"settings",  label:"Settings",  icon:"⚙", platformOnly:true },
@@ -4449,24 +4450,16 @@ function ApplicationPanel({ app, user, onClose, onUpdated, toast }) {
         }).eq("id", contactId);
       }
 
-      // 4. Create auth user + send welcome/reset email
-      const SUPA_URL   = "https://rtgfnwktybkorqvlirtd.supabase.co";
-      const SERVICE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJ0Z2Zud2t0eWJrb3JxdmxpcnRkIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3ODQyMDU0NiwiZXhwIjoyMDkzOTk2NTQ2fQ.bmCIfRj1Ga3qndR7Va2ZuBPrOTy9BOCiRRfmESK9-EE";
-
-      // Try create auth user, ignore if already exists
-      await fetch(`${SUPA_URL}/auth/v1/admin/users`, {
+      // 4. Create auth user via secure edge function (service role lives server-side as a Supabase secret)
+      const { data: { session: _sess } } = await supabase.auth.getSession();
+      await fetch(`${process.env.REACT_APP_SUPABASE_URL}/functions/v1/admin-create-user`, {
         method: "POST",
         headers: {
-          "apikey": SERVICE_KEY,
-          "Authorization": `Bearer ${SERVICE_KEY}`,
           "Content-Type": "application/json",
+          "apikey": process.env.REACT_APP_SUPABASE_ANON_KEY,
+          "Authorization": `Bearer ${_sess?.access_token}`,
         },
-        body: JSON.stringify({
-          email:         app.email,
-          password:      "TempROGA2026!",
-          email_confirm: true,
-          user_metadata: { full_name: app.full_name },
-        }),
+        body: JSON.stringify({ email: app.email, full_name: app.full_name }),
       });
 
       // Send password reset / welcome email
@@ -5647,6 +5640,148 @@ function SettingsView({ user, onProfileSaved }) {
 
 // ── Root ──────────────────────────────────────────────────────
 
+// ============ Brokerage Performance (leadership) ============
+function PerformanceView({ user }) {
+  const [yrs, setYrs]   = useState([]);
+  const [life, setLife] = useState([]);
+  const [board, setBoard] = useState([]);
+  const [extra, setExtra] = useState({ ref: 0, fee: 0, agents: 0 });
+  const [sel, setSel]   = useState("all");
+  const [loading, setLoading] = useState(true);
+
+  const f = n => { n = Number(n||0); return n>=1e6?`$${(n/1e6).toFixed(1)}M`:n>=1e3?`$${Math.round(n/1e3)}K`:`$${Math.round(n)}`; };
+  const num = n => Number(n||0).toLocaleString("en-US");
+
+  useEffect(()=>{ (async()=>{
+    const [b,l,ref,fee,ag] = await Promise.all([
+      supabase.from("brokerage_performance_yearly").select("*").eq("org_id",ORG_ID).order("tax_year"),
+      supabase.from("agent_performance_lifetime").select("*").eq("org_id",ORG_ID).order("total_gci",{ascending:false}),
+      supabase.from("transactions").select("id",{count:"exact",head:true}).eq("org_id",ORG_ID).eq("is_referral",true),
+      supabase.from("transactions").select("id",{count:"exact",head:true}).eq("org_id",ORG_ID).eq("is_fee_only",true),
+      supabase.from("agent_performance_lifetime").select("agent_contact_id",{count:"exact",head:true}).eq("org_id",ORG_ID),
+    ]);
+    setYrs(b.data||[]); setLife(l.data||[]);
+    setExtra({ ref: ref.count||0, fee: fee.count||0, agents: ag.count||0 });
+    setLoading(false);
+  })(); },[]);
+
+  useEffect(()=>{ (async()=>{
+    if(sel==="all"){ setBoard([]); return; }
+    const { data } = await supabase.from("agent_performance_yearly").select("*")
+      .eq("org_id",ORG_ID).eq("tax_year",Number(sel)).order("gci",{ascending:false}).limit(12);
+    setBoard(data||[]);
+  })(); },[sel]);
+
+  if(loading) return <div style={{padding:40,color:C.text2,fontFamily:FONT}}>Loading brokerage performance…</div>;
+
+  const scope = sel==="all" ? null : yrs.find(y=>String(y.tax_year)===sel);
+  const tot = {
+    gci:   sel==="all" ? yrs.reduce((s,y)=>s+Number(y.gci||0),0)        : Number(scope?.gci||0),
+    vol:   sel==="all" ? yrs.reduce((s,y)=>s+Number(y.volume||0),0)     : Number(scope?.volume||0),
+    deals: sel==="all" ? yrs.reduce((s,y)=>s+Number(y.deals||0),0)      : Number(scope?.deals||0),
+    net:   sel==="all" ? yrs.reduce((s,y)=>s+Number(y.net_office||0),0) : Number(scope?.net_office||0),
+  };
+  const maxG = Math.max(1, ...yrs.map(y=>Number(y.gci||0)));
+  const rows = sel==="all"
+    ? life.slice(0,12).map(r=>({name:r.full_name, gci:Number(r.total_gci||0), deals:r.total_deals, trend:r.trend_flag}))
+    : board.map(r=>({name:r.full_name, gci:Number(r.gci||0), deals:r.deals, trend:null}));
+
+  const card  = { background:C.surface, border:`1px solid ${C.border}`, borderRadius:16, padding:18 };
+  const kpiV  = { fontFamily:MONO, fontSize:26, color:C.text, fontWeight:500, marginTop:6 };
+  const kpiL  = { fontFamily:FONT, fontSize:11, color:C.text3, textTransform:"uppercase", letterSpacing:1 };
+  const trendColor = t => t==="growing"?C.green : t==="declining"?C.red : t==="dormant"?C.text3 : C.gold;
+
+  return (
+    <div style={{ padding:"22px clamp(14px,3vw,30px)", maxWidth:1180, margin:"0 auto", fontFamily:FONT }}>
+      {/* header + year selector */}
+      <div style={{ display:"flex", flexWrap:"wrap", gap:12, alignItems:"center", justifyContent:"space-between", marginBottom:18 }}>
+        <div>
+          <div style={{ fontFamily:SERIF, fontSize:"clamp(22px,4vw,30px)", color:C.text }}>Brokerage Performance</div>
+          <div style={{ fontFamily:FONT, fontSize:13, color:C.text2, marginTop:2 }}>
+            {ORG_NAME} · 7-year history · {num(extra.agents)} agents
+          </div>
+        </div>
+        <div style={{ display:"flex", flexWrap:"wrap", gap:6, background:C.surface2, border:`1px solid ${C.border}`, borderRadius:12, padding:5 }}>
+          {["all",...yrs.map(y=>String(y.tax_year))].map(y=>(
+            <button key={y} onClick={()=>setSel(y)} style={{
+              fontFamily:MONO, fontSize:13, padding:"7px 11px", borderRadius:8, cursor:"pointer", border:"none",
+              background: sel===y ? C.gold : "transparent", color: sel===y ? "#0a0a0a" : C.text2, fontWeight: sel===y?700:400 }}>
+              {y==="all" ? "All Years" : "’"+y.slice(2)}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* KPIs */}
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))", gap:12, marginBottom:14 }}>
+        <div style={card}><div style={kpiL}>Gross Commission</div><div style={kpiV}>{f(tot.gci)}</div></div>
+        <div style={card}><div style={kpiL}>Volume</div><div style={kpiV}>{f(tot.vol)}</div></div>
+        <div style={card}><div style={kpiL}>Closed Deals</div><div style={kpiV}>{num(tot.deals)}</div></div>
+        <div style={card}><div style={kpiL}>Net Office</div><div style={{...kpiV,color:C.gold}}>{f(tot.net)}</div></div>
+      </div>
+
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(290px,1fr))", gap:14 }}>
+        {/* GCI chart */}
+        <div style={card}>
+          <div style={{ fontFamily:FONT, fontWeight:700, fontSize:14, color:C.text, marginBottom:16 }}>Gross commission by year</div>
+          <div style={{ display:"flex", alignItems:"flex-end", gap:8, height:170 }}>
+            {yrs.map(y=>{
+              const h = Math.max(3, Math.round(Number(y.gci||0)/maxG*100));
+              const on = String(y.tax_year)===sel;
+              return (
+                <div key={y.tax_year} onClick={()=>setSel(String(y.tax_year))}
+                  style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", gap:7, height:"100%", justifyContent:"flex-end", cursor:"pointer" }}>
+                  <div style={{ width:"100%", height:h+"%", borderRadius:"6px 6px 2px 2px",
+                    background: on ? C.goldLight : `linear-gradient(180deg, ${C.gold}, rgba(212,175,55,0.45))` }} />
+                  <div style={{ fontFamily:MONO, fontSize:11, color: on?C.gold:C.text3 }}>’{String(y.tax_year).slice(2)}</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* leaderboard */}
+        <div style={card}>
+          <div style={{ fontFamily:FONT, fontWeight:700, fontSize:14, color:C.text, marginBottom:10 }}>
+            {sel==="all" ? "Top producers · lifetime" : `Top producers · ${sel}`}
+          </div>
+          {rows.length===0 && <div style={{color:C.text3,fontSize:13,padding:"10px 0"}}>No data for this year.</div>}
+          {rows.map((r,i)=>(
+            <div key={i} style={{ display:"flex", alignItems:"center", gap:11, padding:"9px 0", borderBottom:`1px solid ${C.border}` }}>
+              <div style={{ width:22,height:22,borderRadius:6,background:C.goldDim,color:C.gold,fontFamily:MONO,fontSize:12,
+                display:"flex",alignItems:"center",justifyContent:"center",flex:"none" }}>{i+1}</div>
+              <div style={{ minWidth:0 }}>
+                <div style={{ fontSize:13.5, fontWeight:600, color:C.text, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{r.name||"—"}</div>
+                <div style={{ fontSize:11, color:C.text3 }}>{num(r.deals)} deals{r.trend?` · ${r.trend}`:""}</div>
+              </div>
+              <div style={{ marginLeft:"auto", display:"flex", alignItems:"center", gap:8 }}>
+                {r.trend && <span style={{ width:7,height:7,borderRadius:"50%",background:trendColor(r.trend) }} />}
+                <span style={{ fontFamily:MONO, fontSize:13, color:C.text }}>{f(r.gci)}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* referrals + fee-only callouts */}
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:12, marginTop:14 }}>
+        <div style={{...card, display:"flex", justifyContent:"space-between", alignItems:"center"}}>
+          <div><div style={kpiL}>Referrals</div><div style={{fontFamily:FONT,fontSize:12,color:C.text3,marginTop:4}}>counted as deal + income</div></div>
+          <div style={{fontFamily:MONO,fontSize:24,color:C.text}}>{num(extra.ref)}</div>
+        </div>
+        <div style={{...card, display:"flex", justifyContent:"space-between", alignItems:"center"}}>
+          <div><div style={kpiL}>Fee-only items</div><div style={{fontFamily:FONT,fontSize:12,color:C.text3,marginTop:4}}>separate ledger page</div></div>
+          <div style={{fontFamily:MONO,fontSize:24,color:C.text}}>{num(extra.fee)}</div>
+        </div>
+      </div>
+      <div style={{ fontFamily:FONT, fontSize:11.5, color:C.text3, marginTop:16 }}>
+        Org-wide view · visible to owners &amp; admins · reconciled to the GOLD 7-year history.
+      </div>
+    </div>
+  );
+}
+
+
 export default function App() {
   const [session,setSession]             = useState(null);
   const [authLoading,setAuthLoading]     = useState(true);
@@ -5736,6 +5871,7 @@ export default function App() {
     calendar:   ["Calendar",   "Realty One Group Advantage"],
     applications:["Applications", "Agent Onboarding Queue"],
     financials:  ["Financials",   "Agent Packages & Deal P&L"],
+    performance:["Brokerage Performance", ORG_NAME],
   };
   const [title,subtitle] = TITLES[view]||["Prism",""];
   const cu = userProfile||{email:session.user.email,role:"member"};
@@ -5777,6 +5913,7 @@ export default function App() {
           {view==="calendar"   &&<CalendarView    user={cu} />}
           {view==="applications"&&<ApplicationsView user={cu} />}
           {view==="financials"  &&<FinancialsView   user={cu} />}
+          {view==="performance" &&<PerformanceView  user={cu} />}
         </main>
       </div>
       {isMobile && <BottomNavBar activeView={view} onNav={setView} user={cu} />}
