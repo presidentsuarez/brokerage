@@ -1,13 +1,11 @@
 {
   "files": {
-    "main.css": "/brokerage/static/css/main.880db668.css",
-    "main.js": "/brokerage/static/js/main.f930a5bb.js",
-    "index.html": "/brokerage/index.html",
-    "main.880db668.css.map": "/brokerage/static/css/main.880db668.css.map",
-    "main.f930a5bb.js.map": "/brokerage/static/js/main.f930a5bb.js.map"
+    "main.css": "/brokerage/static/css/main.ddd570db.css",
+    "main.js": "/brokerage/static/js/main.cb98cabb.js",
+    "index.html": "/brokerage/index.html"
   },
   "entrypoints": [
-    "static/css/main.880db668.css",
-    "static/js/main.f930a5bb.js"
+    "static/css/main.ddd570db.css",
+    "static/js/main.cb98cabb.js"
   ]
 }
