@@ -1966,99 +1966,130 @@ function DealsTable({ deals, allDeals, onSelect, fmt }) {
 }
 
 function DealsView({ user, deals, onRefresh }) {
-  const [filter,setFilter]     = useState("all");
+  const [txns,setTxns]     = useState([]);
+  const [agents,setAgents] = useState([]);
+  const [loading,setLoading] = useState(true);
+  const [agentSel,setAgentSel] = useState("all");
+  const [typeSel,setTypeSel]   = useState("all");
+  const [yearSel,setYearSel]   = useState("all");
   const [search,setSearch]     = useState("");
   const [showAdd,setShowAdd]   = useState(false);
-  const [selectedDeal,setSelectedDeal] = useState(null);
   const [saving,setSaving]     = useState(false);
   const [toast,setToast]       = useState(null);
   const [form,setForm]         = useState({address:"",city:"",state:"FL",zip:"",price:"",
     status:"New",deal_type:"Listing",mls_number:"",notes:""});
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
-  const fmt = n=>n>=1e6?`$${(n/1e6).toFixed(1)}M`:n>=1e3?`$${(n/1e3).toFixed(0)}K`:`$${n}`;
+  const fmt = n=>{ n=Number(n||0); return n>=1e6?`$${(n/1e6).toFixed(1)}M`:n>=1e3?`$${(n/1e3).toFixed(0)}K`:`$${Math.round(n)}`; };
 
-  // Keep selected deal in sync after refresh
-  useEffect(()=>{
-    if(selectedDeal) {
-      const updated = deals.find(d=>d.id===selectedDeal.id);
-      if(updated) setSelectedDeal(updated);
+  useEffect(()=>{ (async()=>{
+    // agents (id -> name)
+    const { data:ag } = await supabase.from("agent_performance_lifetime")
+      .select("agent_contact_id,full_name").eq("org_id",ORG_ID).order("full_name");
+    setAgents(ag||[]);
+    // all transactions, paged past the 1000-row cap
+    let all=[], from=0;
+    while(true){
+      const { data, error } = await supabase.from("transactions")
+        .select("id,address,transaction_type,status,close_price,gross_commission,tax_year,agent_contact_id,is_referral,is_fee_only")
+        .eq("org_id",ORG_ID).order("tax_year",{ascending:false}).range(from,from+999);
+      if(error||!data||data.length===0) break;
+      all=all.concat(data); from+=1000;
+      if(data.length<1000) break;
     }
-  },[deals]);
+    setTxns(all); setLoading(false);
+  })(); },[]);
 
-  const filtered = deals.filter(d=>{
-    if(filter!=="all"&&d.status!==filter) return false;
-    if(search&&!`${d.address} ${d.city} ${d.mls_number}`.toLowerCase().includes(search.toLowerCase())) return false;
+  const nameOf = {};
+  agents.forEach(a=>{ nameOf[a.agent_contact_id]=a.full_name; });
+  const years = Array.from(new Set(txns.map(t=>t.tax_year).filter(Boolean))).sort((a,b)=>b-a);
+  const types = ["Sale","Rental","Lease","Commercial","Referral"];
+
+  const filtered = txns.filter(t=>{
+    if(agentSel!=="all" && t.agent_contact_id!==agentSel) return false;
+    if(typeSel!=="all" && (t.transaction_type||"")!==typeSel) return false;
+    if(yearSel!=="all" && String(t.tax_year)!==yearSel) return false;
+    if(search){ const q=search.toLowerCase();
+      if(!`${t.address||""} ${nameOf[t.agent_contact_id]||""}`.toLowerCase().includes(q)) return false; }
     return true;
   });
+  const sumVol = filtered.reduce((s,t)=>s+Number(t.close_price||0),0);
+  const sumGci = filtered.reduce((s,t)=>s+Number(t.gross_commission||0),0);
+  const shown = filtered.slice(0,500);
 
   const handleAdd = async () => {
-    if(!form.address.trim()) return;
-    setSaving(true);
-    const { error } = await supabase.from("deals").insert({
-      ...form,
+    if(!form.address.trim()) return; setSaving(true);
+    const { error } = await supabase.from("deals").insert({ ...form,
       price:form.price?parseFloat(form.price.replace(/[^0-9.]/g,"")):null,
-      org_id:ORG_ID, created_by:creatorLabel(user),
-    });
+      org_id:ORG_ID, created_by:creatorLabel(user) });
     setSaving(false);
-    if(!error){ setShowAdd(false); setForm({address:"",city:"",state:"FL",zip:"",price:"",status:"New",deal_type:"Listing",mls_number:"",notes:""}); onRefresh(); setToast({msg:"Deal added",type:"success"}); }
+    if(!error){ setShowAdd(false); setForm({address:"",city:"",state:"FL",zip:"",price:"",status:"New",deal_type:"Listing",mls_number:"",notes:""}); onRefresh&&onRefresh(); setToast({msg:"Pipeline deal added",type:"success"}); }
     else setToast({msg:"Error saving deal",type:"error"});
   };
 
+  const selStyle = { padding:"7px 10px", background:C.surface2, border:`1px solid ${C.border2}`,
+    borderRadius:8, color:C.text, fontSize:13, fontFamily:FONT, outline:"none" };
+
   return (
-    <div style={{ padding:"20px 24px" }}>
+    <div style={{ padding:"20px clamp(14px,3vw,24px)" }}>
       {toast&&<Toast message={toast.msg} type={toast.type} onDone={()=>setToast(null)} />}
-      <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:16, flexWrap:"wrap" }}>
-        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search address, MLS#\u2026"
-          style={{ padding:"8px 12px", background:C.surface2, border:`1px solid ${C.border2}`,
-            borderRadius:8, color:C.text, fontSize:13, fontFamily:FONT, outline:"none", width:240 }}
-          onFocus={e=>e.target.style.borderColor=C.gold} onBlur={e=>e.target.style.borderColor=C.border2} />
-        <div style={{ display:"flex", gap:5, flexWrap:"wrap" }}>
-          {["all",...Object.keys(STATUS_CONFIG)].map(s=>(
-            <button key={s} onClick={()=>setFilter(s)} style={{
-              padding:"5px 12px", borderRadius:20,
-              border:`1.5px solid ${filter===s?"rgba(212,175,55,0.30)":C.border}`,
-              background:filter===s?"rgba(212,175,55,0.15)":"transparent",
-              color:filter===s?C.gold:C.text2, fontSize:11, fontFamily:FONT, cursor:"pointer" }}>
-              {s==="all"?"All":s}
-            </button>
-          ))}
-        </div>
-        <div style={{ marginLeft:"auto" }}><GoldButton onClick={()=>setShowAdd(true)} small>+ Add Deal</GoldButton></div>
+
+      {/* filter bar */}
+      <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:14, flexWrap:"wrap" }}>
+        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search address or agent…"
+          style={{ ...selStyle, width:220 }} />
+        <select value={agentSel} onChange={e=>setAgentSel(e.target.value)} style={selStyle}>
+          <option value="all">All agents ({agents.length})</option>
+          {agents.map(a=><option key={a.agent_contact_id} value={a.agent_contact_id}>{a.full_name}</option>)}
+        </select>
+        <select value={typeSel} onChange={e=>setTypeSel(e.target.value)} style={selStyle}>
+          <option value="all">All types</option>
+          {types.map(t=><option key={t} value={t}>{t}</option>)}
+        </select>
+        <select value={yearSel} onChange={e=>setYearSel(e.target.value)} style={selStyle}>
+          <option value="all">All years</option>
+          {years.map(y=><option key={y} value={String(y)}>{y}</option>)}
+        </select>
+        <div style={{ marginLeft:"auto" }}><GoldButton onClick={()=>setShowAdd(true)} small>+ Add Pipeline Deal</GoldButton></div>
+      </div>
+
+      {/* summary strip */}
+      <div style={{ display:"flex", gap:18, flexWrap:"wrap", marginBottom:12, fontFamily:FONT }}>
+        <span style={{ fontSize:12, color:C.text2 }}><b style={{color:C.text,fontFamily:MONO}}>{filtered.length.toLocaleString()}</b> deals</span>
+        <span style={{ fontSize:12, color:C.text2 }}>Volume <b style={{color:C.text,fontFamily:MONO}}>{fmt(sumVol)}</b></span>
+        <span style={{ fontSize:12, color:C.text2 }}>GCI <b style={{color:C.gold,fontFamily:MONO}}>{fmt(sumGci)}</b></span>
       </div>
 
       <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden" }}>
-        <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr 1fr 1fr", padding:"9px 18px", borderBottom:`1px solid ${C.border}` }}>
-          {["Address","Type","Status","Price","MLS #"].map(h=>(
+        <div style={{ display:"grid", gridTemplateColumns:"2fr 1.3fr 0.8fr 0.5fr 1fr 1fr", padding:"9px 18px", borderBottom:`1px solid ${C.border}` }}>
+          {["Address","Agent","Type","Year","Price","GCI"].map(h=>(
             <span key={h} style={{ fontSize:10, fontWeight:700, color:C.text3, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.08em" }}>{h}</span>
           ))}
         </div>
-        {filtered.length===0
-          ? <div style={{ padding:"48px 18px", textAlign:"center", color:C.text3, fontSize:13, fontFamily:FONT }}>
-              {deals.length===0?"No deals yet \u2014 add your first one":"No results match your filter"}
-            </div>
-          : filtered.map(d=>(
-            <div key={d.id}
-              onClick={()=>setSelectedDeal(d)}
-              style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr 1fr 1fr",
-                padding:"13px 18px", borderBottom:`1px solid ${C.border}`, alignItems:"center",
-                cursor:"pointer" }}
-              onMouseEnter={e=>e.currentTarget.style.background=C.surface2}
-              onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-              <div>
-                <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:FONT }}>{d.address||"\u2014"}</div>
-                <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>{[d.city,d.state].filter(Boolean).join(", ")}</div>
+        {loading
+          ? <div style={{ padding:"48px 18px", textAlign:"center", color:C.text3, fontSize:13, fontFamily:FONT }}>Loading deals…</div>
+          : shown.length===0
+            ? <div style={{ padding:"48px 18px", textAlign:"center", color:C.text3, fontSize:13, fontFamily:FONT }}>No deals match your filter</div>
+            : shown.map(t=>(
+              <div key={t.id} style={{ display:"grid", gridTemplateColumns:"2fr 1.3fr 0.8fr 0.5fr 1fr 1fr",
+                padding:"12px 18px", borderBottom:`1px solid ${C.border}`, alignItems:"center" }}
+                onMouseEnter={e=>e.currentTarget.style.background=C.surface2}
+                onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:FONT, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
+                  {t.address||"—"}{t.is_referral?<span style={{color:C.blue,fontSize:10,marginLeft:6}}>REF</span>:null}{t.is_fee_only?<span style={{color:C.text3,fontSize:10,marginLeft:6}}>FEE</span>:null}
+                </div>
+                <span style={{ fontSize:12.5, color:C.text2, fontFamily:FONT, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{nameOf[t.agent_contact_id]||"—"}</span>
+                <span style={{ fontSize:12, color:C.text2, fontFamily:FONT }}>{t.transaction_type||"—"}</span>
+                <span style={{ fontSize:12, color:C.text3, fontFamily:MONO }}>{t.tax_year||"—"}</span>
+                <span style={{ fontSize:12, fontWeight:600, color:C.text, fontFamily:MONO }}>{t.close_price?fmt(t.close_price):"—"}</span>
+                <span style={{ fontSize:12, fontWeight:600, color:C.gold, fontFamily:MONO }}>{t.gross_commission?fmt(t.gross_commission):"—"}</span>
               </div>
-              <span style={{ fontSize:12, color:C.text2, fontFamily:FONT }}>{d.deal_type||"\u2014"}</span>
-              <StatusBadge status={d.status} />
-              <span style={{ fontSize:12, fontWeight:600, color:C.gold, fontFamily:MONO }}>{d.price?fmt(d.price):"\u2014"}</span>
-              <span style={{ fontSize:12, color:C.text3, fontFamily:MONO }}>{d.mls_number||"\u2014"}</span>
-            </div>
-          ))
+            ))
         }
+        {filtered.length>500 && <div style={{ padding:"12px 18px", color:C.text3, fontSize:12, fontFamily:FONT, textAlign:"center" }}>Showing first 500 of {filtered.length.toLocaleString()} — narrow with a filter.</div>}
       </div>
 
       {showAdd&&(
-        <Modal title="New Deal" onClose={()=>setShowAdd(false)}>
+        <Modal title="New Pipeline Deal" onClose={()=>setShowAdd(false)}>
           <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
             <Field label="Address" value={form.address} onChange={v=>set("address",v)} placeholder="123 Main St" />
             <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr", gap:10 }}>
@@ -2074,28 +2105,12 @@ function DealsView({ user, deals, onRefresh }) {
               <Sel label="Status" value={form.status}    onChange={v=>set("status",v)}    options={Object.keys(STATUS_CONFIG)} />
               <Sel label="Type"   value={form.deal_type} onChange={v=>set("deal_type",v)} options={["Listing","Buyer","Referral","Rental"]} />
             </div>
-            <div>
-              <label style={{ fontSize:11, fontWeight:700, color:C.text2, fontFamily:FONT,
-                letterSpacing:"0.08em", textTransform:"uppercase", display:"block", marginBottom:5 }}>Notes</label>
-              <textarea value={form.notes} onChange={e=>set("notes",e.target.value)} placeholder="Any notes\u2026" rows={3}
-                style={{ width:"100%", padding:"9px 12px", background:C.surface2, border:`1px solid ${C.border2}`,
-                  borderRadius:7, color:C.text, fontSize:13, fontFamily:FONT, outline:"none", resize:"vertical", boxSizing:"border-box" }} />
-            </div>
             <div style={{ display:"flex", gap:10, paddingTop:4 }}>
-              <GoldButton onClick={handleAdd} disabled={saving||!form.address.trim()}>{saving?"Saving\u2026":"Add Deal"}</GoldButton>
+              <GoldButton onClick={handleAdd} disabled={saving||!form.address.trim()}>{saving?"Saving…":"Add Deal"}</GoldButton>
               <GoldButton onClick={()=>setShowAdd(false)} outline>Cancel</GoldButton>
             </div>
           </div>
         </Modal>
-      )}
-
-      {selectedDeal&&(
-        <DealDetail
-          deal={selectedDeal}
-          user={user}
-          onClose={()=>setSelectedDeal(null)}
-          onRefresh={onRefresh}
-        />
       )}
     </div>
   );
