@@ -20,7 +20,7 @@ const creatorLabel = (user) => {
   return name;
 };
 
-const C = {
+const C_DARK = {
   gold:"#D4AF37", goldLight:"#E8C84A", goldDim:"rgba(212,175,55,0.15)",
   goldBorder:"rgba(212,175,55,0.30)", bg:"#0a0a0a", surface:"#111111",
   surface2:"#1a1a1a", surface3:"#222222", border:"rgba(255,255,255,0.08)",
@@ -28,6 +28,17 @@ const C = {
   text3:"#64748b", green:"#22c55e", red:"#ef4444", blue:"#3b82f6",
   amber:"#f59e0b", purple:"#a855f7",
 };
+const C_LIGHT = {
+  gold:"#B7892B", goldLight:"#D4AF37", goldDim:"rgba(212,175,55,0.16)",
+  goldBorder:"rgba(183,137,43,0.45)", bg:"#f4f5f7", surface:"#ffffff",
+  surface2:"#eef0f3", surface3:"#e3e6ea", border:"rgba(15,23,42,0.10)",
+  border2:"rgba(15,23,42,0.16)", text:"#0f172a", text2:"#475569",
+  text3:"#7c8a9a", green:"#16a34a", red:"#dc2626", blue:"#2563eb",
+  amber:"#d97706", purple:"#9333ea",
+};
+const C = { ...C_DARK };
+function applyPalette(mode){ Object.assign(C, mode==="light" ? C_LIGHT : C_DARK); }
+try { if (typeof localStorage!=="undefined" && localStorage.getItem("prism-theme")==="light") applyPalette("light"); } catch(e){}
 const FONT  = "'DM Sans', sans-serif";
 const SERIF = "'Playfair Display', serif";
 const MONO  = "'DM Mono', monospace";
@@ -524,7 +535,7 @@ function Sidebar({ activeView, onNav, user, onSignOut, collapsed, mobileOpen, on
   );
 }
 
-function TopBar({ title, subtitle, onToggleSidebar, actions }) {
+function TopBar({ title, subtitle, onToggleSidebar, actions, theme, onToggleTheme }) {
   return (
     <div style={{ height:56, background:C.surface, borderBottom:`1px solid ${C.border}`,
       display:"flex", alignItems:"center", padding:"0 16px 0 12px", gap:12,
@@ -539,6 +550,14 @@ function TopBar({ title, subtitle, onToggleSidebar, actions }) {
         {subtitle && <div style={{ fontSize:11, color:C.text3, fontFamily:FONT,
           whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{subtitle}</div>}
       </div>
+      {onToggleTheme && (
+        <button onClick={onToggleTheme} title="Toggle light / dark" style={{
+          background:"none", border:`1px solid ${C.border2}`, color:C.text2, cursor:"pointer",
+          fontSize:15, padding:"7px", borderRadius:8, lineHeight:1, minWidth:38, minHeight:38,
+          display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+          {theme==="light" ? "\u{1F319}" : "\u2600\uFE0F"}
+        </button>
+      )}
       {actions && <div style={{ display:"flex", gap:8, alignItems:"center", flexShrink:0 }}>{actions}</div>}
     </div>
   );
@@ -2363,6 +2382,8 @@ function PortalChatPanel({
 function AgentPortalApp(
 { agentContact, session, onSignOut, isPreview=false }) {
   const [view, setView]       = useState("portal_dashboard");
+  const [theme,setTheme] = useState(()=>{ try{ return (typeof localStorage!=="undefined" && localStorage.getItem("prism-theme"))||"dark"; }catch(e){ return "dark"; } });
+  const toggleTheme = ()=>{ const nx=theme==="dark"?"light":"dark"; applyPalette(nx); try{ localStorage.setItem("prism-theme",nx); }catch(e){} setTheme(nx); };
   const [myDeals, setMyDeals] = useState([]);
   const [myContacts, setMyCon] = useState([]);
   const [myTasks, setMyTasks] = useState([]);
@@ -2884,7 +2905,7 @@ function AgentPortalApp(
       <div style={{ marginLeft:sw, flex:1, transition:"margin-left 0.2s",
         display:"flex", flexDirection:"column", minWidth:0,
         paddingBottom:isMobile?56:0 }}>
-        <TopBar title={ptitle} subtitle={psub}
+        <TopBar title={ptitle} subtitle={psub} theme={theme} onToggleTheme={toggleTheme}
           onToggleSidebar={()=>isMobile?setMobileMenu(o=>!o):setSC(c=>!c)} />
         {isPreview && (
           <div style={{ background:"rgba(212,175,55,0.08)", borderBottom:`1px solid ${C.goldBorder}`,
@@ -5570,7 +5591,7 @@ function OrgMembersCard() {
   );
 }
 
-function SettingsView({ user, onProfileSaved }) {
+function SettingsView({ user, onProfileSaved, theme, onToggleTheme }) {
   const [showEdit,setShowEdit] = useState(false);
   const [showPw,setShowPw]     = useState(false);
   const [editForm,setEditForm] = useState({full_name:user?.full_name||"",phone:user?.phone||"",title:user?.title||""});
@@ -5636,6 +5657,25 @@ function SettingsView({ user, onProfileSaved }) {
       </div>
 
       <OrgMembersCard />
+
+      <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:"20px 22px", marginTop:12 }}>
+        <div style={{ fontSize:11, fontWeight:700, color:C.text3, fontFamily:FONT, letterSpacing:"0.08em", textTransform:"uppercase", marginBottom:14 }}>Appearance</div>
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:12 }}>
+          <div>
+            <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:FONT }}>Theme</div>
+            <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>Switch between dark and light</div>
+          </div>
+          <div style={{ display:"flex", gap:6, background:C.surface2, border:`1px solid ${C.border}`, borderRadius:10, padding:4 }}>
+            {["dark","light"].map(m=>(
+              <button key={m} onClick={()=>{ if(theme!==m && onToggleTheme) onToggleTheme(); }} style={{
+                padding:"7px 14px", borderRadius:7, border:"none", cursor:"pointer", fontFamily:FONT, fontSize:13, fontWeight:600,
+                background: theme===m ? C.gold : "transparent", color: theme===m ? "#0a0a0a" : C.text2 }}>
+                {m==="dark"?"\u{1F319} Dark":"\u2600\uFE0F Light"}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
 
       <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:"20px 22px", marginTop:12 }}>
         <div style={{ fontSize:11, fontWeight:700, color:C.text3, fontFamily:FONT, letterSpacing:"0.08em", textTransform:"uppercase", marginBottom:14 }}>Security</div>
@@ -5886,6 +5926,8 @@ export default function App() {
 
   useEffect(()=>{ if(session) loadData(); },[session,loadData]);
 
+  const [theme,setTheme] = useState(()=>{ try{ return (typeof localStorage!=="undefined" && localStorage.getItem("prism-theme"))||"dark"; }catch(e){ return "dark"; } });
+  const toggleTheme = ()=>{ const nx=theme==="dark"?"light":"dark"; applyPalette(nx); try{ localStorage.setItem("prism-theme",nx); }catch(e){} setTheme(nx); };
   const signOut = ()=>supabase.auth.signOut();
   const onProfileSaved = updates => setUserProfile(p=>({...p,...updates}));
 
@@ -5939,7 +5981,7 @@ export default function App() {
       <div style={{ marginLeft:sw, flex:1, transition:"margin-left 0.2s",
         display:"flex", flexDirection:"column", minWidth:0,
         paddingBottom:isMobile?60:0 }}>
-        <TopBar title={title} subtitle={subtitle}
+        <TopBar title={title} subtitle={subtitle} theme={theme} onToggleTheme={toggleTheme}
           onToggleSidebar={()=>isMobile ? setMobileMenu(o=>!o) : setSC(c=>!c)} />
         {showTempBanner&&<TempPasswordBanner onAction={()=>{ setTempBanner(false); setAuthScreen("setpassword"); }} />}
         <main style={{ flex:1, overflowY:"auto" }}>
@@ -5947,7 +5989,7 @@ export default function App() {
           {view==="deals"    &&<DealsView     user={cu} deals={deals}    onRefresh={loadData} />}
           {view==="contacts" &&<ContactsView  user={cu} contacts={contacts} onRefresh={loadData} />}
           {view==="tasks"    &&<TasksView     user={cu} tasks={tasks}    onRefresh={loadData} />}
-          {view==="settings" &&<SettingsView  user={cu} onProfileSaved={onProfileSaved} />}
+          {view==="settings" &&<SettingsView  user={cu} onProfileSaved={onProfileSaved} theme={theme} onToggleTheme={toggleTheme} />}
           {view==="notepad"  &&<NotesView     user={cu} />}
           {view==="robots"   &&<RobotsView    user={cu} deals={deals} contacts={contacts} tasks={tasks} />}
           {view==="calendar"   &&<CalendarView    user={cu} />}
