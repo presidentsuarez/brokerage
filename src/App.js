@@ -1978,7 +1978,7 @@ function DealsView({ user, deals, onRefresh }) {
   const [saving,setSaving]     = useState(false);
   const [toast,setToast]       = useState(null);
   const [form,setForm]         = useState({address:"",city:"",state:"FL",zip:"",price:"",
-    status:"Active",deal_type:"Listing",mls_number:"",notes:""});
+    status:"New",deal_type:"Listing",mls_number:"",notes:""});
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
   const fmt = n=>{ n=Number(n||0); return n>=1e6?`$${(n/1e6).toFixed(1)}M`:n>=1e3?`$${(n/1e3).toFixed(0)}K`:`$${Math.round(n)}`; };
 
@@ -2034,7 +2034,7 @@ function DealsView({ user, deals, onRefresh }) {
       price:form.price?parseFloat(form.price.replace(/[^0-9.]/g,"")):null,
       org_id:ORG_ID, created_by:creatorLabel(user), agent_contact_id:myCid });
     setSaving(false);
-    if(!error){ setShowAdd(false); setForm({address:"",city:"",state:"FL",zip:"",price:"",status:"Active",deal_type:"Listing",mls_number:"",notes:""}); onRefresh&&onRefresh(); load(); setToast({msg:"Deal added — assigned to you",type:"success"}); }
+    if(!error){ setShowAdd(false); setForm({address:"",city:"",state:"FL",zip:"",price:"",status:"New",deal_type:"Listing",mls_number:"",notes:""}); onRefresh&&onRefresh(); load(); setToast({msg:"Deal added — assigned to you",type:"success"}); }
     else setToast({msg:"Error saving deal",type:"error"});
   };
 
