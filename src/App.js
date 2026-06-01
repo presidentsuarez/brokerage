@@ -79,9 +79,19 @@ const NAV = [
 
 function PrismMark({ size=32 }) {
   return (
-    <div style={{ width:size, height:size, flexShrink:0,
-      background:"linear-gradient(135deg,#D4AF37,#E8C84A)",
-      clipPath:"polygon(50% 0%,100% 75%,50% 100%,0% 75%)" }} />
+    <svg width={size} height={size} viewBox="0 0 64 64" style={{ flexShrink:0, display:"block" }} xmlns="http://www.w3.org/2000/svg">
+      <rect x="2.5" y="2.5" width="59" height="59" rx="15" fill="#0a0a0c" stroke="#3a3a42" strokeWidth="2.5"/>
+      <rect x="6" y="30.5" width="22" height="2.2" fill="#ffffff"/>
+      <polygon points="33,15 18,47 48,47" fill="#17171c" stroke="#7a7a86" strokeWidth="1.4"/>
+      <line x1="33" y1="15" x2="18" y2="47" stroke="#c2c5cf" strokeWidth="1.2"/>
+      <g strokeWidth="2">
+        <line x1="39" y1="38" x2="58" y2="30" stroke="#ff3b3b"/>
+        <line x1="39" y1="38" x2="58" y2="35" stroke="#ffe23d"/>
+        <line x1="39" y1="38" x2="58" y2="40" stroke="#3ddc6b"/>
+        <line x1="39" y1="38" x2="58" y2="45" stroke="#2fa8ff"/>
+        <line x1="39" y1="38" x2="58" y2="50" stroke="#b14aff"/>
+      </g>
+    </svg>
   );
 }
 

@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- rim + body (solid fills for reliable rasterizing) -->
+  <rect x="18" y="18" width="476" height="476" rx="116" fill="#3a3a42"/>
+  <rect x="30" y="30" width="452" height="452" rx="106" fill="#0a0a0c"/>
+  <rect x="40" y="40" width="432" height="432" rx="98" fill="none" stroke="#1c1c22" stroke-width="2"/>
+
+  <!-- incoming white beam -->
+  <rect x="44" y="250" width="214" height="6" fill="#ffffff"/>
+  <circle cx="256" cy="253" r="8" fill="#ffffff"/>
+
+  <!-- glass prism (solid dark) -->
+  <polygon points="256,132 150,374 362,374" fill="#17171c" stroke="#6f6f7a" stroke-width="3"/>
+  <polyline points="256,132 150,374" fill="none" stroke="#b9bcc6" stroke-width="2.6"/>
+
+  <!-- refracted spectrum (solid strokes) -->
+  <g stroke-width="7">
+    <line x1="300" y1="300" x2="488" y2="250" stroke="#ff3b3b"/>
+    <line x1="300" y1="300" x2="488" y2="278" stroke="#ff8a1e"/>
+    <line x1="300" y1="300" x2="488" y2="306" stroke="#ffe23d"/>
+    <line x1="300" y1="300" x2="488" y2="334" stroke="#3ddc6b"/>
+    <line x1="300" y1="300" x2="488" y2="362" stroke="#2fa8ff"/>
+    <line x1="300" y1="300" x2="488" y2="390" stroke="#5566ff"/>
+    <line x1="300" y1="300" x2="488" y2="418" stroke="#b14aff"/>
+  </g>
+</svg>
