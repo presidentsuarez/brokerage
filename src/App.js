@@ -5872,6 +5872,8 @@ function IntelligenceView({ user }) {
   const [cats,setCats]     = useState([]);
   const [acts,setActs]     = useState([]);
   const [counts,setCounts] = useState({posted:0,review:0});
+  const [allExp,setAllExp] = useState([]);
+  const [pickCat,setPickCat] = useState({});
   const [loading,setLoading] = useState(true);
   const [mq,setMq]         = useState("");
   const [editSoul,setEditSoul] = useState(false);
@@ -5882,15 +5884,17 @@ function IntelligenceView({ user }) {
   const [saving,setSaving] = useState(false);
 
   const load = async () => {
-    const [s,m,c,a,posted,review] = await Promise.all([
+    const [s,m,c,a,posted,review,ex] = await Promise.all([
       supabase.from("org_soul").select("*").eq("org_id",ORG_ID).maybeSingle(),
       supabase.from("bookkeeping_memories").select("*").eq("org_id",ORG_ID).order("times_applied",{ascending:false}).order("created_at",{ascending:false}),
       supabase.from("expense_categories").select("*").eq("org_id",ORG_ID).order("sort"),
       supabase.from("intelligence_activity_log").select("*").eq("org_id",ORG_ID).order("created_at",{ascending:false}).limit(80),
       supabase.from("expenses").select("id",{count:"exact",head:true}).eq("org_id",ORG_ID).eq("status","posted"),
       supabase.from("expenses").select("id",{count:"exact",head:true}).eq("org_id",ORG_ID).eq("status","review"),
+      supabase.from("expenses").select("id,txn_date,vendor,description,amount,category_name,confidence,status").eq("org_id",ORG_ID).order("amount",{ascending:false}).limit(1000),
     ]);
     setSoul(s.data||null); setMems(m.data||[]); setCats(c.data||[]); setActs(a.data||[]);
+    setAllExp(ex.data||[]);
     setCounts({posted:posted.count||0, review:review.count||0}); setLoading(false);
   };
   useEffect(()=>{ load(); },[]);
@@ -5898,6 +5902,7 @@ function IntelligenceView({ user }) {
   const fmtTime = t => { try{ return new Date(t).toLocaleString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}); }catch(e){ return ""; } };
   const card = { background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:18 };
   const lbl  = { fontSize:11, fontWeight:700, color:C.text3, fontFamily:FONT, letterSpacing:"0.08em", textTransform:"uppercase" };
+  const money = x => "$"+Math.round(Number(x||0)).toLocaleString();
 
   const saveSoul = async () => {
     setSaving(true);
@@ -5924,10 +5929,24 @@ function IntelligenceView({ user }) {
     await supabase.from("bookkeeping_memories").update({active:!m.active}).eq("id",m.id); load();
   };
 
+  const postExpense = async (row) => {
+    const catName = pickCat[row.id] || row.category_name;
+    if(!catName){ setToast({msg:"Pick a category first",type:"error"}); return; }
+    const cat = cats.find(c=>c.name===catName);
+    await supabase.from("expenses").update({ category_id:cat?.id, category_name:catName, status:"posted", confidence:1.0, created_by:user?.email }).eq("id",row.id);
+    const v=(row.vendor||"").trim();
+    const junk = !v || v.length>40 || /^name:|check payment|cc payment|payment out/i.test(v);
+    if(!junk && !mems.find(m=>m.pattern && v.toLowerCase().includes(m.pattern))){
+      await supabase.from("bookkeeping_memories").insert({ org_id:ORG_ID, kind:"vendor", pattern:v.toLowerCase(), category_id:cat?.id, category_name:catName, confidence:0.92, source:"correction", created_by:user?.email });
+    }
+    await supabase.from("intelligence_activity_log").insert({ org_id:ORG_ID, actor:"user", action:`Posted ${v||"expense"} \u2192 ${catName}`, entity_type:"expense", entity_id:String(row.id), detail:{ amount:row.amount } });
+    setToast({msg:`Posted \u2192 ${catName}${junk?"":" \u00b7 learned"}`,type:"success"}); load();
+  };
+
   if(loading) return <div style={{padding:40,color:C.text2,fontFamily:FONT}}>Loading intelligence…</div>;
 
   const memsF = mems.filter(m=>!mq || `${m.pattern} ${m.category_name} ${m.kind}`.toLowerCase().includes(mq.toLowerCase()));
-  const TABS = [["soul","🫀 Soul"],["memories","🧠 Memories"],["activity","📜 Activity Log"]];
+  const TABS = [["soul","🫀 Soul"],["memories","🧠 Memories"],["expenses","💵 Expenses"],["activity","📜 Activity Log"]];
 
   return (
     <div style={{ padding:"20px clamp(14px,3vw,26px)", maxWidth:1080, margin:"0 auto", fontFamily:FONT }}>
@@ -6015,6 +6034,56 @@ function IntelligenceView({ user }) {
           ))}
         </div>
       )}
+
+      {tab==="expenses" && (() => {
+        const review = allExp.filter(e=>e.status==="review");
+        const posted = allExp.filter(e=>e.status==="posted");
+        const byCat = {}; posted.forEach(e=>{ const k=e.category_name||"—"; byCat[k]=byCat[k]||{n:0,sum:0}; byCat[k].n++; byCat[k].sum+=Number(e.amount||0); });
+        const ledger = Object.entries(byCat).sort((a,b)=>b[1].sum-a[1].sum);
+        const postedTotal = posted.reduce((s2,e)=>s2+Number(e.amount||0),0);
+        const reviewTotal = review.reduce((s2,e)=>s2+Number(e.amount||0),0);
+        return (
+          <div>
+            <div style={{...card, marginBottom:14}}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+                <div style={lbl}>Posted ledger · {posted.length} txns</div>
+                <div style={{ fontFamily:MONO, fontSize:18, color:C.text }}>{money(postedTotal)}</div>
+              </div>
+              {ledger.map(([cat,v])=>(
+                <div key={cat} style={{ display:"flex", justifyContent:"space-between", padding:"7px 0", borderBottom:`1px solid ${C.border}` }}>
+                  <span style={{ fontSize:13, color:C.text2 }}>{cat}</span>
+                  <span style={{ fontSize:12.5, color:C.text3 }}><span style={{fontFamily:MONO}}>{v.n}</span> · <span style={{fontFamily:MONO,color:C.text}}>{money(v.sum)}</span></span>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ ...card, padding:"4px 0" }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"12px 18px" }}>
+                <div style={{...lbl, color:review.length?C.amber:C.text3}}>🕯️ Purgatory · {review.length} need your call · {money(reviewTotal)}</div>
+              </div>
+              {review.length===0 && <div style={{padding:"24px 18px",color:C.text3,fontSize:13,textAlign:"center"}}>Purgatory is empty — every expense is filed.</div>}
+              {review.slice(0,250).map(r=>(
+                <div key={r.id} style={{ display:"grid", gridTemplateColumns:"1.6fr 0.6fr 1.3fr 0.6fr", gap:10, padding:"10px 18px", borderTop:`1px solid ${C.border}`, alignItems:"center" }}>
+                  <div style={{ minWidth:0 }}>
+                    <div style={{ fontSize:12.5, fontWeight:600, color:C.text, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{r.vendor||"—"}</div>
+                    <div style={{ fontSize:10.5, color:C.text3, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{(r.description||"").slice(0,52)}</div>
+                  </div>
+                  <span style={{ fontSize:12.5, fontFamily:MONO, color:C.text }}>{money(r.amount)}</span>
+                  <select value={pickCat[r.id] ?? (r.category_name||"")} onChange={e=>setPickCat(p=>({...p,[r.id]:e.target.value}))}
+                    style={{ padding:"6px 8px", background:C.surface2, border:`1px solid ${C.border2}`, borderRadius:7, color:C.text, fontSize:12, fontFamily:FONT, outline:"none" }}>
+                    <option value="">— pick category —</option>
+                    {cats.map(c=><option key={c.id} value={c.name}>{c.name}</option>)}
+                  </select>
+                  {isLeader
+                    ? <button onClick={()=>postExpense(r)} style={{ padding:"7px 10px", borderRadius:7, border:"none", cursor:"pointer", background:C.gold, color:"#0a0a0a", fontFamily:FONT, fontSize:12, fontWeight:700 }}>Post</button>
+                    : <span/>}
+                </div>
+              ))}
+              {review.length>250 && <div style={{padding:"12px 18px",color:C.text3,fontSize:12,textAlign:"center"}}>Showing first 250 of {review.length}.</div>}
+            </div>
+          </div>
+        );
+      })()}
 
       {editSoul && (
         <Modal title="Edit the Soul" onClose={()=>setEditSoul(false)} maxWidth={560}>
