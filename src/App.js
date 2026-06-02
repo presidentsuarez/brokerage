@@ -81,7 +81,6 @@ const NAV = [
   { id:"applications",label:"Applications",icon:"✦", adminOnly:true },
   { id:"financials",  label:"Financials",  icon:"◑", adminOnly:true },
   { id:"performance", label:"Performance", icon:"📈", adminOnly:true },
-  { id:"intelligence", label:"Intelligence", icon:"🧠", adminOnly:true },
   { id:"robots",    label:"Ari",       icon:"✦", platformOnly:true },
   { id:"notepad",   label:"Notepad",   icon:"✎", platformOnly:true },
   { id:"settings",  label:"Settings",  icon:"⚙", platformOnly:true },
@@ -4697,8 +4696,141 @@ function ApplicationPanel({ app, user, onClose, onUpdated, toast }) {
 }
 
 
+// ── P&L Tab (revenue vs expenses → net) ─────────────────────
+function PnLTab({ user }) {
+  const [yrs,setYrs]=useState([]); const [exp,setExp]=useState([]); const [sel,setSel]=useState("2025"); const [loading,setLoading]=useState(true);
+  const money=x=>{x=Number(x||0);const s=x<0?"-":"";x=Math.abs(x);return s+(x>=1e6?"$"+(x/1e6).toFixed(2)+"M":x>=1e3?"$"+Math.round(x/1e3)+"K":"$"+Math.round(x));};
+  useEffect(()=>{(async()=>{
+    const [b,e]=await Promise.all([
+      supabase.from("brokerage_performance_yearly").select("*").eq("org_id",ORG_ID).order("tax_year"),
+      supabase.from("expenses").select("txn_date,amount,category_name,status").eq("org_id",ORG_ID).eq("status","posted").limit(2000),
+    ]);
+    setYrs(b.data||[]); setExp(e.data||[]); setLoading(false);
+  })();},[]);
+  if(loading) return <div style={{padding:30,color:C.text3,fontFamily:FONT}}>Loading P&L…</div>;
+  const years=Array.from(new Set([...yrs.map(y=>String(y.tax_year)),"2025"])).sort();
+  const yr=Number(sel); const perf=yrs.find(y=>y.tax_year===yr)||{};
+  const expYear=exp.filter(e=>String(e.txn_date||"").slice(0,4)===String(yr));
+  const expTotal=expYear.reduce((s,e)=>s+Number(e.amount||0),0);
+  const office=Number(perf.net_office||0), gci=Number(perf.gci||0), volume=Number(perf.volume||0), deals=perf.deals||0;
+  const net=office-expTotal;
+  const byCat={}; expYear.forEach(e=>{const k=e.category_name||"—";byCat[k]=(byCat[k]||0)+Number(e.amount||0);});
+  const cats=Object.entries(byCat).sort((a,b)=>b[1]-a[1]); const maxC=Math.max(1,...cats.map(c=>c[1]));
+  const card={background:C.surface,border:`1px solid ${C.border}`,borderRadius:14,padding:18};
+  const lbl={fontSize:11,fontWeight:700,color:C.text3,fontFamily:FONT,letterSpacing:"0.08em",textTransform:"uppercase"};
+  return (
+    <div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,flexWrap:"wrap",gap:10}}>
+        <div style={{fontFamily:SERIF,fontSize:20,color:C.text}}>Profit &amp; Loss · {yr}</div>
+        <div style={{display:"flex",gap:5,background:C.surface2,border:`1px solid ${C.border}`,borderRadius:10,padding:4,flexWrap:"wrap"}}>
+          {years.map(y=><button key={y} onClick={()=>setSel(y)} style={{padding:"6px 11px",borderRadius:7,border:"none",cursor:"pointer",fontFamily:MONO,fontSize:13,background:sel===y?C.gold:"transparent",color:sel===y?"#0a0a0a":C.text2,fontWeight:sel===y?700:400}}>{y}</button>)}
+        </div>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:12,marginBottom:8}}>
+        <div style={card}><div style={lbl}>Office Income (revenue)</div><div style={{fontFamily:MONO,fontSize:26,color:C.text,marginTop:6}}>{money(office)}</div></div>
+        <div style={card}><div style={lbl}>Operating Expenses</div><div style={{fontFamily:MONO,fontSize:26,color:C.amber,marginTop:6}}>{money(expTotal)}</div></div>
+        <div style={{...card,border:`1px solid ${net>=0?C.green:C.red}`}}><div style={lbl}>Net {net>=0?"Profit":"Loss"}</div><div style={{fontFamily:MONO,fontSize:26,color:net>=0?C.green:C.red,marginTop:6}}>{money(net)}</div></div>
+        <div style={card}><div style={lbl}>Net Margin</div><div style={{fontFamily:MONO,fontSize:26,color:C.text2,marginTop:6}}>{office?Math.round(net/office*100)+"%":"—"}</div></div>
+      </div>
+      <div style={{fontSize:11.5,color:C.text3,fontFamily:FONT,margin:"4px 2px 18px"}}>Revenue = office income retained by the brokerage. Agent production (GCI) for {yr}: <b style={{color:C.text2,fontFamily:MONO}}>{money(gci)}</b> across <b style={{color:C.text2,fontFamily:MONO}}>{deals}</b> deals · volume <b style={{color:C.text2,fontFamily:MONO}}>{money(volume)}</b> — mostly paid out to agents, shown for reference.</div>
+      <div style={card}>
+        <div style={{...lbl,marginBottom:14}}>Expenses by category · {yr}</div>
+        {cats.length===0 && <div style={{color:C.text3,fontSize:13}}>No expenses recorded for {yr}.</div>}
+        {cats.map(([c,v])=>(
+          <div key={c} style={{marginBottom:9}}>
+            <div style={{display:"flex",justifyContent:"space-between",fontSize:12.5,marginBottom:3}}><span style={{color:C.text2}}>{c}</span><span style={{fontFamily:MONO,color:C.text}}>{money(v)}</span></div>
+            <div style={{height:6,background:C.surface2,borderRadius:4,overflow:"hidden"}}><div style={{height:"100%",width:Math.round(v/maxC*100)+"%",background:`linear-gradient(90deg,${C.gold},${C.goldLight})`}}/></div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Transactions Tab (all expenses, interactive) ────────────
+function TransactionsTab({ user }) {
+  const [rows,setRows]=useState([]); const [cats,setCats]=useState([]); const [loading,setLoading]=useState(true);
+  const [stat,setStat]=useState("all"); const [cat,setCat]=useState("all"); const [mon,setMon]=useState("all"); const [search,setSearch]=useState("");
+  const [sel,setSel]=useState(null); const [editCat,setEditCat]=useState(""); const [editStat,setEditStat]=useState(""); const [saving,setSaving]=useState(false); const [toast,setToast]=useState(null);
+  const isLeader=["admin","owner"].includes(user?.role);
+  const money=x=>{x=Number(x||0);return "$"+Math.round(x).toLocaleString();};
+  const load=async()=>{ const [e,c]=await Promise.all([
+    supabase.from("expenses").select("*").eq("org_id",ORG_ID).order("txn_date",{ascending:false}).limit(2000),
+    supabase.from("expense_categories").select("id,name").eq("org_id",ORG_ID).order("sort")]);
+    setRows(e.data||[]); setCats(c.data||[]); setLoading(false); };
+  useEffect(()=>{load();},[]);
+  if(loading) return <div style={{padding:30,color:C.text3,fontFamily:FONT}}>Loading transactions…</div>;
+  const months=Array.from(new Set(rows.map(r=>String(r.txn_date||"").slice(0,7)).filter(Boolean))).sort().reverse();
+  const f=rows.filter(r=>{
+    if(stat!=="all"&&r.status!==stat) return false;
+    if(cat!=="all"&&r.category_name!==cat) return false;
+    if(mon!=="all"&&String(r.txn_date||"").slice(0,7)!==mon) return false;
+    if(search&&!`${r.vendor||""} ${r.description||""} ${r.category_name||""}`.toLowerCase().includes(search.toLowerCase())) return false;
+    return true;
+  });
+  const total=f.reduce((s,r)=>s+(r.status==="void"?0:Number(r.amount||0)),0);
+  const selStyle={padding:"7px 10px",background:C.surface2,border:`1px solid ${C.border2}`,borderRadius:8,color:C.text,fontSize:13,fontFamily:FONT,outline:"none"};
+  const open=r=>{setSel(r);setEditCat(r.category_name||"");setEditStat(r.status||"posted");};
+  const save=async()=>{ setSaving(true); const c=cats.find(x=>x.name===editCat);
+    await supabase.from("expenses").update({category_id:c?.id,category_name:editCat,status:editStat,created_by:user?.email}).eq("id",sel.id);
+    await supabase.from("intelligence_activity_log").insert({org_id:ORG_ID,actor:"user",action:`Edited ${sel.vendor||"txn"} → ${editCat} (${editStat})`,entity_type:"expense",entity_id:String(sel.id),detail:{amount:sel.amount}});
+    setSaving(false); setSel(null); setToast({msg:"Updated",type:"success"}); load(); };
+  const badge=s=>({posted:C.green,void:C.text3,review:C.amber}[s]||C.text2);
+  return (
+    <div>
+      {toast&&<Toast message={toast.msg} type={toast.type} onDone={()=>setToast(null)} />}
+      <div style={{display:"flex",gap:10,marginBottom:12,flexWrap:"wrap",alignItems:"center"}}>
+        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search vendor / description…" style={{...selStyle,width:220}} />
+        <select value={cat} onChange={e=>setCat(e.target.value)} style={selStyle}><option value="all">All categories</option>{cats.map(c=><option key={c.id} value={c.name}>{c.name}</option>)}</select>
+        <select value={mon} onChange={e=>setMon(e.target.value)} style={selStyle}><option value="all">All months</option>{months.map(m=><option key={m} value={m}>{m}</option>)}</select>
+        <select value={stat} onChange={e=>setStat(e.target.value)} style={selStyle}><option value="all">All statuses</option><option value="posted">Posted</option><option value="void">Void (non-P&L)</option><option value="review">Purgatory</option></select>
+      </div>
+      <div style={{display:"flex",gap:18,marginBottom:12,fontFamily:FONT,fontSize:12,color:C.text2}}>
+        <span><b style={{color:C.text,fontFamily:MONO}}>{f.length}</b> transactions</span>
+        <span>P&amp;L total <b style={{color:C.text,fontFamily:MONO}}>{money(total)}</b></span>
+      </div>
+      <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden"}}>
+        <div style={{display:"grid",gridTemplateColumns:"0.7fr 1.5fr 1.3fr 0.7fr 0.5fr",padding:"9px 16px",borderBottom:`1px solid ${C.border}`}}>
+          {["Date","Vendor","Category","Amount","Status"].map(h=><span key={h} style={{fontSize:10,fontWeight:700,color:C.text3,fontFamily:FONT,textTransform:"uppercase",letterSpacing:"0.06em"}}>{h}</span>)}
+        </div>
+        {f.slice(0,400).map(r=>(
+          <div key={r.id} onClick={()=>open(r)} style={{display:"grid",gridTemplateColumns:"0.7fr 1.5fr 1.3fr 0.7fr 0.5fr",padding:"11px 16px",borderBottom:`1px solid ${C.border}`,alignItems:"center",cursor:"pointer"}}
+            onMouseEnter={e=>e.currentTarget.style.background=C.surface2} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+            <span style={{fontSize:12,color:C.text3,fontFamily:MONO}}>{String(r.txn_date||"").slice(5)}</span>
+            <span style={{fontSize:12.5,fontWeight:600,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{r.vendor||"—"}</span>
+            <span style={{fontSize:12,color:C.text2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{r.category_name||"—"}</span>
+            <span style={{fontSize:12,fontFamily:MONO,color:C.text}}>{money(r.amount)}</span>
+            <span style={{fontSize:10.5,fontFamily:MONO,color:badge(r.status)}}>{r.status}</span>
+          </div>
+        ))}
+        {f.length>400 && <div style={{padding:"12px",textAlign:"center",color:C.text3,fontSize:12}}>Showing first 400 of {f.length} — narrow with a filter.</div>}
+      </div>
+      {sel&&(
+        <Modal title="Transaction" onClose={()=>setSel(null)} maxWidth={520}>
+          <div style={{display:"flex",flexDirection:"column",gap:10}}>
+            <div style={{fontSize:16,fontWeight:700,color:C.text,fontFamily:SERIF}}>{sel.vendor||"—"}</div>
+            <div style={{display:"flex",gap:18,flexWrap:"wrap",fontSize:12.5,color:C.text2,fontFamily:MONO}}>
+              <span>{sel.txn_date}</span><span style={{color:C.text}}>{money(sel.amount)}</span>
+            </div>
+            <div style={{fontSize:12.5,color:C.text3,fontFamily:FONT,lineHeight:1.5,background:C.surface2,padding:"10px 12px",borderRadius:8}}>{sel.description||"No description"}</div>
+            {sel.raw && <div style={{fontSize:11,color:C.text3,fontFamily:MONO}}>{Object.entries(sel.raw).filter(([k])=>["acct_type","account","vendor_id","src_tab"].includes(k)).map(([k,v])=>`${k}: ${v}`).join(" · ")}</div>}
+            {isLeader ? (<>
+              <Sel label="Category" value={editCat} onChange={setEditCat} options={cats.map(c=>c.name)} />
+              <Sel label="Status" value={editStat} onChange={setEditStat} options={["posted","void","review"]} />
+              <div style={{display:"flex",gap:10,paddingTop:4}}>
+                <GoldButton onClick={save} disabled={saving}>{saving?"Saving…":"Save"}</GoldButton>
+                <GoldButton outline onClick={()=>setSel(null)}>Close</GoldButton>
+              </div>
+            </>) : <div style={{fontSize:12,color:C.text3}}>Category: {sel.category_name} · {sel.status}</div>}
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
 function FinancialsView({ user }) {
-  const [tab, setTab]         = useState("packages");
+  const [tab, setTab]         = useState("pnl");
   const [agents, setAgents]   = useState([]);
   const [packages, setPkgs]   = useState([]);
   const [financials, setFins] = useState([]);
@@ -4727,6 +4859,9 @@ function FinancialsView({ user }) {
   const pkgForAgent = (id) => packages.find(p => p.contact_id === id);
 
   const TABS = [
+    { id:"pnl",         label:"P&L",              icon:"◑" },
+    { id:"transactions",label:"Transactions",     icon:"≡" },
+    { id:"books",       label:"Bookkeeping",      icon:"🧠" },
     { id:"packages",   label:"Agent Packages",   icon:"◈" },
     { id:"deals",      label:"Deal P&L",          icon:"$" },
     { id:"projection", label:"Monthly Projection",icon:"◷" },
@@ -4756,6 +4891,12 @@ function FinancialsView({ user }) {
         <div style={{ padding:40, textAlign:"center", color:C.text3, fontSize:13, fontFamily:FONT }}>
           Loading financials…
         </div>
+      ) : tab === "pnl" ? (
+        <PnLTab user={user} />
+      ) : tab === "transactions" ? (
+        <TransactionsTab user={user} />
+      ) : tab === "books" ? (
+        <IntelligenceView user={user} />
       ) : tab === "packages" ? (
         <PackagesTab agents={agents} packages={packages} pkgForAgent={pkgForAgent}
           onRefresh={loadAll} user={user} toast={setToast} fmt={fmt} isMobile={isMobile} />
@@ -6217,7 +6358,6 @@ export default function App() {
     applications:["Applications", "Agent Onboarding Queue"],
     financials:  ["Financials",   "Agent Packages & Deal P&L"],
     performance:["Brokerage Performance", ORG_NAME],
-    intelligence:["Intelligence", "Bookkeeping \u00b7 Soul \u00b7 Memories"],
   };
   const [title,subtitle] = TITLES[view]||["Prism",""];
   const cu = userProfile||{email:session.user.email,role:"member"};
@@ -6260,7 +6400,6 @@ export default function App() {
           {view==="applications"&&<ApplicationsView user={cu} />}
           {view==="financials"  &&<FinancialsView   user={cu} />}
           {view==="performance" &&<PerformanceView  user={cu} />}
-          {view==="intelligence"&&<IntelligenceView user={cu} />}
         </main>
       </div>
       {isMobile && <BottomNavBar activeView={view} onNav={setView} user={cu} />}
