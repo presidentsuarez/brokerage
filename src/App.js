@@ -4829,6 +4829,118 @@ function TransactionsTab({ user }) {
   );
 }
 
+// ── Banking Tab (accounts / vendors / statements / transfers) ──
+function BankingTab({ user }) {
+  const [sub,setSub]=useState("accounts");
+  const [acc,setAcc]=useState([]); const [ven,setVen]=useState([]); const [stm,setStm]=useState([]); const [trf,setTrf]=useState([]);
+  const [loading,setLoading]=useState(true); const [vq,setVq]=useState(""); const [tdir,setTdir]=useState("all");
+  const money=x=>{x=Number(x||0);const s=x<0?"-":"";x=Math.abs(x);return s+(x>=1e6?"$"+(x/1e6).toFixed(2)+"M":x>=1e3?"$"+Math.round(x/1e3)+"K":"$"+Math.round(x));};
+  useEffect(()=>{(async()=>{
+    const [a,v,s,t]=await Promise.all([
+      supabase.from("roga_accounts").select("*").eq("org_id",ORG_ID),
+      supabase.from("roga_vendors").select("*").eq("org_id",ORG_ID).order("ytd_total"),
+      supabase.from("roga_statements").select("*").eq("org_id",ORG_ID).order("period_end"),
+      supabase.from("roga_transfers").select("*").eq("org_id",ORG_ID).order("txn_date",{ascending:false}).limit(1000),
+    ]);
+    setAcc(a.data||[]);setVen(v.data||[]);setStm(s.data||[]);setTrf(t.data||[]);setLoading(false);
+  })();},[]);
+  if(loading) return <div style={{padding:30,color:C.text3,fontFamily:FONT}}>Loading banking…</div>;
+  const card={background:C.surface,border:`1px solid ${C.border}`,borderRadius:13,padding:16};
+  const lbl={fontSize:10,fontWeight:700,color:C.text3,fontFamily:FONT,letterSpacing:"0.07em",textTransform:"uppercase"};
+  const SUB=[["accounts","Accounts"],["vendors","Vendors"],["statements","Statements"],["transfers","Transfers"]];
+  const venF=ven.filter(v=>!vq||`${v.vendor_name} ${v.subcategory}`.toLowerCase().includes(vq.toLowerCase()));
+  const trfF=trf.filter(t=>tdir==="all"||t.direction===tdir);
+  return (
+    <div>
+      <div style={{display:"flex",gap:6,marginBottom:16,flexWrap:"wrap"}}>
+        {SUB.map(([id,l])=><button key={id} onClick={()=>setSub(id)} style={{padding:"7px 13px",borderRadius:8,border:`1px solid ${sub===id?C.goldBorder:C.border}`,background:sub===id?C.goldDim:"transparent",color:sub===id?C.gold:C.text2,fontFamily:FONT,fontSize:13,fontWeight:600,cursor:"pointer"}}>{l}</button>)}
+      </div>
+      {sub==="accounts" && (
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))",gap:12}}>
+          {acc.map(a=><div key={a.account_id} style={card}><div style={lbl}>{a.type}</div><div style={{fontFamily:SERIF,fontSize:17,color:C.text,marginTop:6}}>{a.name}</div><div style={{fontFamily:MONO,fontSize:13,color:C.text2,marginTop:4}}>{a.institution} ····{a.last4}</div>{a.notes&&<div style={{fontSize:11,color:C.text3,marginTop:8}}>{a.notes}</div>}</div>)}
+        </div>
+      )}
+      {sub==="vendors" && (<div>
+        <input value={vq} onChange={e=>setVq(e.target.value)} placeholder="Search vendors…" style={{padding:"8px 12px",background:C.surface2,border:`1px solid ${C.border2}`,borderRadius:8,color:C.text,fontSize:13,fontFamily:FONT,outline:"none",width:240,marginBottom:12}} />
+        <div style={{...card,padding:"4px 0"}}>
+          <div style={{display:"grid",gridTemplateColumns:"1.8fr 1fr 0.5fr 0.8fr",padding:"8px 16px",borderBottom:`1px solid ${C.border}`}}>{["Vendor","Subcategory","Txns","YTD"].map(h=><span key={h} style={lbl}>{h}</span>)}</div>
+          {venF.slice(0,250).map(v=><div key={v.vendor_id} style={{display:"grid",gridTemplateColumns:"1.8fr 1fr 0.5fr 0.8fr",padding:"9px 16px",borderBottom:`1px solid ${C.border}`,alignItems:"center"}}><span style={{fontSize:12.5,color:C.text,fontWeight:600,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{v.vendor_name}</span><span style={{fontSize:11.5,color:C.text3}}>{v.subcategory}</span><span style={{fontSize:12,fontFamily:MONO,color:C.text3}}>{v.txn_count}</span><span style={{fontSize:12,fontFamily:MONO,color:v.ytd_total<0?C.text:C.green}}>{money(v.ytd_total)}</span></div>)}
+          {venF.length>250 && <div style={{padding:10,textAlign:"center",color:C.text3,fontSize:12}}>Showing 250 of {venF.length}</div>}
+        </div></div>
+      )}
+      {sub==="statements" && (
+        <div style={{...card,padding:"4px 0"}}>
+          <div style={{display:"grid",gridTemplateColumns:"0.6fr 1fr 1fr 1fr 1fr",padding:"8px 16px",borderBottom:`1px solid ${C.border}`}}>{["Acct","Period","Begin","End","Net flow"].map(h=><span key={h} style={lbl}>{h}</span>)}</div>
+          {stm.map((s,i)=><div key={i} style={{display:"grid",gridTemplateColumns:"0.6fr 1fr 1fr 1fr 1fr",padding:"9px 16px",borderBottom:`1px solid ${C.border}`,alignItems:"center"}}><span style={{fontSize:12,fontFamily:MONO,color:C.text2}}>····{s.account_last4}</span><span style={{fontSize:11.5,fontFamily:MONO,color:C.text3}}>{s.period_start} → {s.period_end}</span><span style={{fontSize:12,fontFamily:MONO,color:C.text2}}>{money(s.begin_balance)}</span><span style={{fontSize:12,fontFamily:MONO,color:C.text}}>{money(s.end_balance)}</span><span style={{fontSize:12,fontFamily:MONO,color:(s.end_balance-s.begin_balance)>=0?C.green:C.red}}>{money(s.end_balance-s.begin_balance)}</span></div>)}
+        </div>
+      )}
+      {sub==="transfers" && (<div>
+        <div style={{display:"flex",gap:6,marginBottom:10}}>{["all","IN","OUT"].map(d=><button key={d} onClick={()=>setTdir(d)} style={{padding:"5px 11px",borderRadius:7,border:`1px solid ${tdir===d?C.goldBorder:C.border}`,background:tdir===d?C.goldDim:"transparent",color:tdir===d?C.gold:C.text2,fontSize:12,cursor:"pointer",fontFamily:FONT}}>{d==="all"?"All":d}</button>)}</div>
+        <div style={{...card,padding:"4px 0"}}>
+          <div style={{display:"grid",gridTemplateColumns:"0.7fr 0.5fr 1.4fr 0.8fr 0.6fr",padding:"8px 16px",borderBottom:`1px solid ${C.border}`}}>{["Date","Acct","Counterparty","Amount","Type"].map(h=><span key={h} style={lbl}>{h}</span>)}</div>
+          {trfF.slice(0,250).map(t=><div key={t.id} style={{display:"grid",gridTemplateColumns:"0.7fr 0.5fr 1.4fr 0.8fr 0.6fr",padding:"9px 16px",borderBottom:`1px solid ${C.border}`,alignItems:"center"}}><span style={{fontSize:11.5,fontFamily:MONO,color:C.text3}}>{t.txn_date}</span><span style={{fontSize:11.5,fontFamily:MONO,color:C.text3}}>····{t.account_last4}</span><span style={{fontSize:12,color:C.text2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{t.counterparty}</span><span style={{fontSize:12,fontFamily:MONO,color:t.direction==="IN"?C.green:C.text}}>{money(t.amount)}</span><span style={{fontSize:10.5,color:C.text3}}>{t.type}</span></div>)}
+          {trfF.length>250 && <div style={{padding:10,textAlign:"center",color:C.text3,fontSize:12}}>Showing 250 of {trfF.length}</div>}
+        </div></div>
+      )}
+    </div>
+  );
+}
+
+// ── Insights Tab (reconciliation / cashflow / recs / flags / DQ) ──
+function InsightsTab({ user }) {
+  const [sub,setSub]=useState("recon");
+  const [rec,setRec]=useState([]); const [cf,setCf]=useState([]); const [cuts,setCuts]=useState([]); const [flags,setFlags]=useState([]); const [dq,setDq]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const money=x=>{x=Number(x||0);const s=x<0?"-":"";x=Math.abs(x);return s+(x>=1e6?"$"+(x/1e6).toFixed(2)+"M":x>=1e3?"$"+Math.round(x/1e3)+"K":"$"+Math.round(x));};
+  useEffect(()=>{(async()=>{
+    const [r,c,k,f,d]=await Promise.all([
+      supabase.from("bank_deal_reconciliation").select("*").eq("org_id",ORG_ID),
+      supabase.from("monthly_cashflow_trends").select("*").eq("org_id",ORG_ID),
+      supabase.from("expense_reduction_recommendations").select("*").eq("org_id",ORG_ID).order("est_savings",{ascending:false}),
+      supabase.from("finance_flags").select("*").eq("org_id",ORG_ID),
+      supabase.from("data_quality_log").select("*").eq("org_id",ORG_ID),
+    ]);
+    setRec(r.data||[]);setCf(c.data||[]);setCuts(k.data||[]);setFlags(f.data||[]);setDq(d.data||[]);setLoading(false);
+  })();},[]);
+  if(loading) return <div style={{padding:30,color:C.text3,fontFamily:FONT}}>Loading insights…</div>;
+  const card={background:C.surface,border:`1px solid ${C.border}`,borderRadius:13,padding:16};
+  const lbl={fontSize:10,fontWeight:700,color:C.text3,fontFamily:FONT,letterSpacing:"0.07em",textTransform:"uppercase"};
+  const MON=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const cfo=MON.map(m=>cf.find(x=>x.month===m)).filter(Boolean);
+  const maxAbs=Math.max(1,...cfo.map(x=>Math.abs(Number(x.net||0))));
+  const sev=s=>({High:C.red,Med:C.amber,Low:C.text3}[s]||C.text2);
+  const SUB=[["recon","Reconciliation"],["cashflow","Cashflow"],["cuts","Cost Cuts"],["flags","Red Flags"],["dq","Data Quality"]];
+  const savings=cuts.reduce((s,c)=>s+Number(c.est_savings||0),0);
+  return (
+    <div>
+      <div style={{display:"flex",gap:6,marginBottom:16,flexWrap:"wrap"}}>
+        {SUB.map(([id,l])=><button key={id} onClick={()=>setSub(id)} style={{padding:"7px 13px",borderRadius:8,border:`1px solid ${sub===id?C.goldBorder:C.border}`,background:sub===id?C.goldDim:"transparent",color:sub===id?C.gold:C.text2,fontFamily:FONT,fontSize:13,fontWeight:600,cursor:"pointer"}}>{l}</button>)}
+      </div>
+      {sub==="recon" && (<div style={{...card,padding:"4px 0"}}>
+        <div style={{display:"grid",gridTemplateColumns:"1.6fr 1fr 1fr 1fr",padding:"8px 16px",borderBottom:`1px solid ${C.border}`}}>{["Measure","Deal side","Bank side","Variance"].map(h=><span key={h} style={lbl}>{h}</span>)}</div>
+        {rec.map((r,i)=><div key={i} style={{padding:"10px 16px",borderBottom:`1px solid ${C.border}`}}><div style={{display:"grid",gridTemplateColumns:"1.6fr 1fr 1fr 1fr",alignItems:"center"}}><span style={{fontSize:12.5,color:C.text,fontWeight:600}}>{r.measure}</span><span style={{fontSize:12,fontFamily:MONO,color:C.text2}}>{money(r.deal_side)}</span><span style={{fontSize:12,fontFamily:MONO,color:C.text2}}>{money(r.bank_side)}</span><span style={{fontSize:12,fontFamily:MONO,color:C.gold}}>{money(r.variance)}</span></div>{r.note&&<div style={{fontSize:11,color:C.text3,marginTop:4}}>{r.note}</div>}</div>)}
+      </div>)}
+      {sub==="cashflow" && (<div style={card}>
+        <div style={{...lbl,marginBottom:14}}>2025 monthly net</div>
+        <div style={{display:"flex",alignItems:"flex-end",gap:6,height:160}}>
+          {cfo.map(x=>{const n=Number(x.net||0);const h=Math.max(2,Math.round(Math.abs(n)/maxAbs*70));return <div key={x.month} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"flex-end",height:"100%"}}><div style={{flex:1,display:"flex",flexDirection:"column",justifyContent:"flex-end"}}><div style={{height:h+"px",background:n>=0?C.green:C.red,borderRadius:"4px 4px 0 0",minWidth:14}}/></div><div style={{fontSize:9.5,fontFamily:MONO,color:C.text3,marginTop:4}}>{x.month}</div></div>;})}
+        </div>
+        <div style={{marginTop:14,fontSize:12,color:C.text2,fontFamily:FONT}}>Year net: <b style={{fontFamily:MONO,color:cf.reduce((s,x)=>s+Number(x.net||0),0)>=0?C.green:C.red}}>{money(cf.reduce((s,x)=>s+Number(x.net||0),0))}</b> · income <b style={{fontFamily:MONO,color:C.text}}>{money(cf.reduce((s,x)=>s+Number(x.income||0),0))}</b></div>
+      </div>)}
+      {sub==="cuts" && (<div>
+        <div style={{fontSize:12.5,color:C.text2,marginBottom:10}}>Estimated annual savings if actioned: <b style={{color:C.green,fontFamily:MONO}}>{money(savings)}</b></div>
+        <div style={{...card,padding:"4px 0"}}>{cuts.map((c,i)=><div key={i} style={{padding:"11px 16px",borderBottom:`1px solid ${C.border}`}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}><span style={{fontSize:13,color:C.text,fontWeight:600}}>{c.vendor_item}</span><span style={{fontSize:10,fontFamily:MONO,padding:"2px 7px",borderRadius:6,background:sev(c.priority)+"22",color:sev(c.priority)}}>{c.priority}</span></div><div style={{fontSize:11.5,color:C.text3,marginTop:3}}>{c.reason} → <span style={{color:C.text2}}>{c.action}</span></div><div style={{fontSize:11.5,fontFamily:MONO,color:C.text3,marginTop:3}}>spend {money(c.annual_spend)} · save <span style={{color:C.green}}>{money(c.est_savings)}</span></div></div>)}</div>
+      </div>)}
+      {sub==="flags" && (<div style={{...card,padding:"4px 0"}}>
+        {flags.map((f,i)=><div key={i} style={{display:"flex",gap:10,padding:"10px 16px",borderBottom:`1px solid ${C.border}`,alignItems:"flex-start"}}><span style={{width:8,height:8,borderRadius:"50%",background:sev(f.severity),marginTop:5,flexShrink:0}}/><div style={{flex:1,minWidth:0}}><div style={{fontSize:12.5,color:C.text}}>{f.issue}</div><div style={{fontSize:11,color:C.text3,fontFamily:MONO}}>{f.flag_date} · {f.account} · {money(f.amount)}{f.vendor?` · ${f.vendor}`:""}</div></div><span style={{fontSize:10,color:sev(f.severity),fontFamily:MONO}}>{f.severity}</span></div>)}
+      </div>)}
+      {sub==="dq" && (<div style={{...card,padding:"4px 0"}}>
+        {dq.map((d,i)=><div key={i} style={{padding:"10px 16px",borderBottom:`1px solid ${C.border}`}}><div style={{fontSize:12.5,color:C.text,fontWeight:600}}>{d.source} · {d.location}</div><div style={{fontSize:11.5,color:C.text2,marginTop:2}}>{d.issue}{d.detail?` — ${d.detail}`:""}</div><div style={{fontSize:11,color:C.text3,marginTop:2}}>✓ {d.action_taken}</div></div>)}
+      </div>)}
+    </div>
+  );
+}
+
 function FinancialsView({ user }) {
   const [tab, setTab]         = useState("pnl");
   const [agents, setAgents]   = useState([]);
@@ -4862,6 +4974,8 @@ function FinancialsView({ user }) {
     { id:"pnl",         label:"P&L",              icon:"◑" },
     { id:"transactions",label:"Transactions",     icon:"≡" },
     { id:"books",       label:"Bookkeeping",      icon:"🧠" },
+    { id:"banking",     label:"Banking",          icon:"🏦" },
+    { id:"insights",    label:"Insights",         icon:"🔎" },
     { id:"packages",   label:"Agent Packages",   icon:"◈" },
     { id:"deals",      label:"Deal P&L",          icon:"$" },
     { id:"projection", label:"Monthly Projection",icon:"◷" },
@@ -4897,6 +5011,10 @@ function FinancialsView({ user }) {
         <TransactionsTab user={user} />
       ) : tab === "books" ? (
         <IntelligenceView user={user} />
+      ) : tab === "banking" ? (
+        <BankingTab user={user} />
+      ) : tab === "insights" ? (
+        <InsightsTab user={user} />
       ) : tab === "packages" ? (
         <PackagesTab agents={agents} packages={packages} pkgForAgent={pkgForAgent}
           onRefresh={loadAll} user={user} toast={setToast} fmt={fmt} isMobile={isMobile} />
