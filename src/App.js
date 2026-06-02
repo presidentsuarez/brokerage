@@ -81,6 +81,7 @@ const NAV = [
   { id:"applications",label:"Applications",icon:"✦", adminOnly:true },
   { id:"financials",  label:"Financials",  icon:"◑", adminOnly:true },
   { id:"performance", label:"Performance", icon:"📈", adminOnly:true },
+  { id:"intelligence", label:"Intelligence", icon:"🧠", adminOnly:true },
   { id:"robots",    label:"Ari",       icon:"✦", platformOnly:true },
   { id:"notepad",   label:"Notepad",   icon:"✎", platformOnly:true },
   { id:"settings",  label:"Settings",  icon:"⚙", platformOnly:true },
@@ -5862,6 +5863,199 @@ function PerformanceView({ user }) {
 }
 
 
+// ================= Intelligence (AI bookkeeping) =================
+function IntelligenceView({ user }) {
+  const isLeader = ["admin","owner"].includes(user?.role);
+  const [tab,setTab]       = useState("soul");
+  const [soul,setSoul]     = useState(null);
+  const [mems,setMems]     = useState([]);
+  const [cats,setCats]     = useState([]);
+  const [acts,setActs]     = useState([]);
+  const [counts,setCounts] = useState({posted:0,review:0});
+  const [loading,setLoading] = useState(true);
+  const [mq,setMq]         = useState("");
+  const [editSoul,setEditSoul] = useState(false);
+  const [soulForm,setSoulForm] = useState({});
+  const [addMem,setAddMem] = useState(false);
+  const [memForm,setMemForm] = useState({kind:"vendor",pattern:"",category:"",confidence:"0.9"});
+  const [toast,setToast]   = useState(null);
+  const [saving,setSaving] = useState(false);
+
+  const load = async () => {
+    const [s,m,c,a,posted,review] = await Promise.all([
+      supabase.from("org_soul").select("*").eq("org_id",ORG_ID).maybeSingle(),
+      supabase.from("bookkeeping_memories").select("*").eq("org_id",ORG_ID).order("times_applied",{ascending:false}).order("created_at",{ascending:false}),
+      supabase.from("expense_categories").select("*").eq("org_id",ORG_ID).order("sort"),
+      supabase.from("intelligence_activity_log").select("*").eq("org_id",ORG_ID).order("created_at",{ascending:false}).limit(80),
+      supabase.from("expenses").select("id",{count:"exact",head:true}).eq("org_id",ORG_ID).eq("status","posted"),
+      supabase.from("expenses").select("id",{count:"exact",head:true}).eq("org_id",ORG_ID).eq("status","review"),
+    ]);
+    setSoul(s.data||null); setMems(m.data||[]); setCats(c.data||[]); setActs(a.data||[]);
+    setCounts({posted:posted.count||0, review:review.count||0}); setLoading(false);
+  };
+  useEffect(()=>{ load(); },[]);
+
+  const fmtTime = t => { try{ return new Date(t).toLocaleString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}); }catch(e){ return ""; } };
+  const card = { background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:18 };
+  const lbl  = { fontSize:11, fontWeight:700, color:C.text3, fontFamily:FONT, letterSpacing:"0.08em", textTransform:"uppercase" };
+
+  const saveSoul = async () => {
+    setSaving(true);
+    const { error } = await supabase.from("org_soul").update({
+      persona:soulForm.persona, principles:soulForm.principles,
+      categorization_guidelines:soulForm.categorization_guidelines,
+      confidence_threshold:Number(soulForm.confidence_threshold)||0.8,
+      updated_by:user?.email, updated_at:new Date().toISOString() }).eq("org_id",ORG_ID);
+    if(!error){ await supabase.from("intelligence_activity_log").insert({org_id:ORG_ID,actor:"user",action:"Updated the soul",entity_type:"soul",detail:{by:user?.email}}); }
+    setSaving(false); setEditSoul(false); if(!error){ setToast({msg:"Soul updated",type:"success"}); load(); } else setToast({msg:"Error",type:"error"});
+  };
+  const saveMem = async () => {
+    if(!memForm.pattern.trim()||!memForm.category) return; setSaving(true);
+    const cat = cats.find(c=>c.name===memForm.category);
+    const { error } = await supabase.from("bookkeeping_memories").insert({
+      org_id:ORG_ID, kind:memForm.kind, pattern:memForm.pattern.trim().toLowerCase(),
+      category_id:cat?.id, category_name:memForm.category, confidence:Number(memForm.confidence)||0.9,
+      source:"learned", created_by:user?.email });
+    if(!error){ await supabase.from("intelligence_activity_log").insert({org_id:ORG_ID,actor:"user",action:`Added memory: "${memForm.pattern}" → ${memForm.category}`,entity_type:"memory",detail:{by:user?.email}}); }
+    setSaving(false); setAddMem(false); setMemForm({kind:"vendor",pattern:"",category:"",confidence:"0.9"});
+    if(!error){ setToast({msg:"Memory saved — it'll auto-apply next time",type:"success"}); load(); } else setToast({msg:"Error",type:"error"});
+  };
+  const toggleMem = async (m) => {
+    await supabase.from("bookkeeping_memories").update({active:!m.active}).eq("id",m.id); load();
+  };
+
+  if(loading) return <div style={{padding:40,color:C.text2,fontFamily:FONT}}>Loading intelligence…</div>;
+
+  const memsF = mems.filter(m=>!mq || `${m.pattern} ${m.category_name} ${m.kind}`.toLowerCase().includes(mq.toLowerCase()));
+  const TABS = [["soul","🫀 Soul"],["memories","🧠 Memories"],["activity","📜 Activity Log"]];
+
+  return (
+    <div style={{ padding:"20px clamp(14px,3vw,26px)", maxWidth:1080, margin:"0 auto", fontFamily:FONT }}>
+      {toast&&<Toast message={toast.msg} type={toast.type} onDone={()=>setToast(null)} />}
+
+      {/* summary */}
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", gap:12, marginBottom:16 }}>
+        <div style={card}><div style={lbl}>Categories</div><div style={{fontFamily:MONO,fontSize:24,color:C.text,marginTop:6}}>{cats.length}</div></div>
+        <div style={card}><div style={lbl}>Memories</div><div style={{fontFamily:MONO,fontSize:24,color:C.text,marginTop:6}}>{mems.length}</div></div>
+        <div style={card}><div style={lbl}>Posted</div><div style={{fontFamily:MONO,fontSize:24,color:C.green,marginTop:6}}>{counts.posted}</div></div>
+        <div style={card}><div style={lbl}>Purgatory</div><div style={{fontFamily:MONO,fontSize:24,color:counts.review>0?C.amber:C.text,marginTop:6}}>{counts.review}</div></div>
+      </div>
+
+      {/* sub-nav */}
+      <div style={{ display:"flex", gap:6, marginBottom:16, flexWrap:"wrap" }}>
+        {TABS.map(([id,label])=>(
+          <button key={id} onClick={()=>setTab(id)} style={{
+            padding:"8px 14px", borderRadius:9, border:`1px solid ${tab===id?C.goldBorder:C.border}`,
+            background:tab===id?C.goldDim:"transparent", color:tab===id?C.gold:C.text2,
+            fontFamily:FONT, fontSize:13, fontWeight:600, cursor:"pointer" }}>{label}</button>
+        ))}
+      </div>
+
+      {/* SOUL */}
+      {tab==="soul" && (
+        <div style={card}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
+            <div style={lbl}>The Soul · how this org keeps its books</div>
+            {isLeader && <GoldButton small outline onClick={()=>{ setSoulForm(soul||{}); setEditSoul(true); }}>Edit</GoldButton>}
+          </div>
+          <div style={{ fontSize:14, color:C.text, fontStyle:"italic", marginBottom:16, lineHeight:1.6 }}>“{soul?.persona||"—"}”</div>
+          <div style={{ ...lbl, marginBottom:8 }}>Principles</div>
+          <div style={{ fontSize:13.5, color:C.text2, whiteSpace:"pre-wrap", marginBottom:16, lineHeight:1.7 }}>{soul?.principles||"—"}</div>
+          <div style={{ ...lbl, marginBottom:8 }}>Categorization guidelines</div>
+          <div style={{ fontSize:13.5, color:C.text2, whiteSpace:"pre-wrap", marginBottom:16, lineHeight:1.7 }}>{soul?.categorization_guidelines||"—"}</div>
+          <div style={{ display:"flex", gap:22, flexWrap:"wrap", fontSize:12.5, color:C.text3 }}>
+            <span>Fiscal year start: <b style={{color:C.text2,fontFamily:MONO}}>{soul?.fiscal_year_start||"01-01"}</b></span>
+            <span>Currency: <b style={{color:C.text2,fontFamily:MONO}}>{soul?.default_currency||"USD"}</b></span>
+            <span>Auto-post threshold: <b style={{color:C.gold,fontFamily:MONO}}>{Math.round((soul?.confidence_threshold||0.8)*100)}%</b></span>
+          </div>
+        </div>
+      )}
+
+      {/* MEMORIES */}
+      {tab==="memories" && (
+        <div>
+          <div style={{ display:"flex", gap:10, marginBottom:12, alignItems:"center", flexWrap:"wrap" }}>
+            <input value={mq} onChange={e=>setMq(e.target.value)} placeholder="Search memories…"
+              style={{ padding:"8px 12px", background:C.surface2, border:`1px solid ${C.border2}`, borderRadius:8, color:C.text, fontSize:13, fontFamily:FONT, outline:"none", width:240 }} />
+            <span style={{ fontSize:12, color:C.text3 }}>{memsF.length} of {mems.length}</span>
+            {isLeader && <div style={{ marginLeft:"auto" }}><GoldButton small onClick={()=>setAddMem(true)}>+ Add memory</GoldButton></div>}
+          </div>
+          <div style={{ ...card, padding:"4px 0" }}>
+            <div style={{ display:"grid", gridTemplateColumns:"1.4fr 1.4fr 0.7fr 0.7fr 0.6fr 0.5fr", padding:"9px 18px", borderBottom:`1px solid ${C.border}` }}>
+              {["Pattern","Category","Kind","Confidence","Used","On"].map(h=><span key={h} style={{fontSize:10,fontWeight:700,color:C.text3,fontFamily:FONT,textTransform:"uppercase",letterSpacing:"0.06em"}}>{h}</span>)}
+            </div>
+            {memsF.slice(0,300).map(m=>(
+              <div key={m.id} style={{ display:"grid", gridTemplateColumns:"1.4fr 1.4fr 0.7fr 0.7fr 0.6fr 0.5fr", padding:"10px 18px", borderBottom:`1px solid ${C.border}`, alignItems:"center", opacity:m.active?1:0.45 }}>
+                <span style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:MONO }}>{m.pattern}</span>
+                <span style={{ fontSize:12.5, color:C.text2 }}>{m.category_name}</span>
+                <span style={{ fontSize:11, color:C.text3 }}>{m.kind}</span>
+                <span style={{ fontSize:12, color:m.confidence>=0.8?C.green:C.amber, fontFamily:MONO }}>{Math.round(m.confidence*100)}%</span>
+                <span style={{ fontSize:12, color:C.text3, fontFamily:MONO }}>{m.times_applied}</span>
+                <span style={{ fontSize:10, color:m.source==="seed"?C.text3:C.blue, fontFamily:MONO, cursor:isLeader?"pointer":"default" }}
+                  onClick={()=>isLeader&&toggleMem(m)} title={isLeader?"Toggle active":""}>{m.active?m.source:"off"}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ACTIVITY */}
+      {tab==="activity" && (
+        <div style={{ ...card, padding:"4px 0" }}>
+          {acts.length===0 && <div style={{padding:"30px",textAlign:"center",color:C.text3,fontSize:13}}>No activity yet.</div>}
+          {acts.map(a=>(
+            <div key={a.id} style={{ display:"flex", gap:12, padding:"11px 18px", borderBottom:`1px solid ${C.border}`, alignItems:"flex-start" }}>
+              <span style={{ fontSize:14, flexShrink:0, width:22, textAlign:"center" }}>{a.actor==="ai"?"✦":a.actor==="user"?"👤":"⚙️"}</span>
+              <div style={{ minWidth:0, flex:1 }}>
+                <div style={{ fontSize:13, color:C.text, fontFamily:FONT }}>{a.action}</div>
+                {a.detail && Object.keys(a.detail||{}).length>0 && <div style={{ fontSize:11, color:C.text3, fontFamily:MONO, marginTop:2 }}>{Object.entries(a.detail).map(([k,v])=>`${k}: ${v}`).join(" · ")}</div>}
+              </div>
+              <span style={{ fontSize:11, color:C.text3, fontFamily:MONO, flexShrink:0 }}>{fmtTime(a.created_at)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {editSoul && (
+        <Modal title="Edit the Soul" onClose={()=>setEditSoul(false)} maxWidth={560}>
+          <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+            <Field label="Persona" value={soulForm.persona||""} onChange={v=>setSoulForm(f=>({...f,persona:v}))} />
+            <div><label style={{...lbl,display:"block",marginBottom:5}}>Principles</label>
+              <textarea rows={5} value={soulForm.principles||""} onChange={e=>setSoulForm(f=>({...f,principles:e.target.value}))}
+                style={{ width:"100%", padding:"9px 12px", background:C.surface2, border:`1px solid ${C.border2}`, borderRadius:7, color:C.text, fontSize:13, fontFamily:FONT, outline:"none", resize:"vertical", boxSizing:"border-box" }} /></div>
+            <div><label style={{...lbl,display:"block",marginBottom:5}}>Categorization guidelines</label>
+              <textarea rows={4} value={soulForm.categorization_guidelines||""} onChange={e=>setSoulForm(f=>({...f,categorization_guidelines:e.target.value}))}
+                style={{ width:"100%", padding:"9px 12px", background:C.surface2, border:`1px solid ${C.border2}`, borderRadius:7, color:C.text, fontSize:13, fontFamily:FONT, outline:"none", resize:"vertical", boxSizing:"border-box" }} /></div>
+            <Field label="Auto-post threshold (0–1)" value={String(soulForm.confidence_threshold??0.8)} onChange={v=>setSoulForm(f=>({...f,confidence_threshold:v}))} />
+            <div style={{ display:"flex", gap:10 }}>
+              <GoldButton onClick={saveSoul} disabled={saving}>{saving?"Saving…":"Save"}</GoldButton>
+              <GoldButton outline onClick={()=>setEditSoul(false)}>Cancel</GoldButton>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {addMem && (
+        <Modal title="New memory" onClose={()=>setAddMem(false)} maxWidth={440}>
+          <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+            <Field label="Pattern (vendor or keyword)" value={memForm.pattern} onChange={v=>setMemForm(f=>({...f,pattern:v}))} placeholder="e.g. adobe" />
+            <Sel label="Category" value={memForm.category} onChange={v=>setMemForm(f=>({...f,category:v}))} options={cats.map(c=>c.name)} />
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+              <Sel label="Kind" value={memForm.kind} onChange={v=>setMemForm(f=>({...f,kind:v}))} options={["vendor","keyword","rule"]} />
+              <Field label="Confidence (0–1)" value={memForm.confidence} onChange={v=>setMemForm(f=>({...f,confidence:v}))} />
+            </div>
+            <div style={{ display:"flex", gap:10 }}>
+              <GoldButton onClick={saveMem} disabled={saving||!memForm.pattern.trim()||!memForm.category}>{saving?"Saving…":"Save memory"}</GoldButton>
+              <GoldButton outline onClick={()=>setAddMem(false)}>Cancel</GoldButton>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+
 export default function App() {
   const [session,setSession]             = useState(null);
   const [authLoading,setAuthLoading]     = useState(true);
@@ -5954,6 +6148,7 @@ export default function App() {
     applications:["Applications", "Agent Onboarding Queue"],
     financials:  ["Financials",   "Agent Packages & Deal P&L"],
     performance:["Brokerage Performance", ORG_NAME],
+    intelligence:["Intelligence", "Bookkeeping \u00b7 Soul \u00b7 Memories"],
   };
   const [title,subtitle] = TITLES[view]||["Prism",""];
   const cu = userProfile||{email:session.user.email,role:"member"};
@@ -5996,6 +6191,7 @@ export default function App() {
           {view==="applications"&&<ApplicationsView user={cu} />}
           {view==="financials"  &&<FinancialsView   user={cu} />}
           {view==="performance" &&<PerformanceView  user={cu} />}
+          {view==="intelligence"&&<IntelligenceView user={cu} />}
         </main>
       </div>
       {isMobile && <BottomNavBar activeView={view} onNav={setView} user={cu} />}
