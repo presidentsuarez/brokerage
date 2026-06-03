@@ -1995,6 +1995,7 @@ function DealsView({ user, deals, onRefresh }) {
   const [showAdd,setShowAdd]   = useState(false);
   const [saving,setSaving]     = useState(false);
   const [toast,setToast]       = useState(null);
+  const [sel,setSel]           = useState(null);
   const [form,setForm]         = useState({address:"",city:"",state:"FL",zip:"",price:"",
     status:"New",deal_type:"Listing",mls_number:"",notes:""});
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
@@ -2095,8 +2096,8 @@ function DealsView({ user, deals, onRefresh }) {
           : shown.length===0
             ? <div style={{ padding:"48px 18px", textAlign:"center", color:C.text3, fontSize:13, fontFamily:FONT }}>No deals match your filter</div>
             : shown.map(r=>(
-              <div key={r.key} style={{ display:"grid", gridTemplateColumns:"2fr 1.3fr 0.8fr 0.5fr 1fr 1fr",
-                padding:"12px 18px", borderBottom:`1px solid ${C.border}`, alignItems:"center" }}
+              <div key={r.key} onClick={()=>setSel(r)} style={{ display:"grid", gridTemplateColumns:"2fr 1.3fr 0.8fr 0.5fr 1fr 1fr",
+                padding:"12px 18px", borderBottom:`1px solid ${C.border}`, alignItems:"center", cursor:"pointer" }}
                 onMouseEnter={e=>e.currentTarget.style.background=C.surface2}
                 onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
                 <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:FONT, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
@@ -2115,6 +2116,31 @@ function DealsView({ user, deals, onRefresh }) {
         }
         {filtered.length>500 && <div style={{ padding:"12px 18px", color:C.text3, fontSize:12, fontFamily:FONT, textAlign:"center" }}>Showing first 500 of {filtered.length.toLocaleString()} — narrow with a filter.</div>}
       </div>
+
+      {sel&&(
+        <Modal title={sel.active?"Active Listing":"Deal"} onClose={()=>setSel(null)} maxWidth={500}>
+          <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+            <div style={{ fontSize:16, fontWeight:700, color:C.text, fontFamily:SERIF }}>{sel.address||"\u2014"}</div>
+            <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+              {sel.active&&<span style={{fontSize:10,fontWeight:700,color:C.blue,border:`1px solid ${C.blue}`,borderRadius:6,padding:"2px 7px"}}>● ACTIVE</span>}
+              {sel.ref&&<span style={{fontSize:10,color:C.blue,border:`1px solid ${C.border2}`,borderRadius:6,padding:"2px 7px"}}>REFERRAL</span>}
+              {sel.fee&&<span style={{fontSize:10,color:C.text3,border:`1px solid ${C.border2}`,borderRadius:6,padding:"2px 7px"}}>FEE</span>}
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginTop:4 }}>
+              {[["Agent",nameOf[sel.agent_contact_id]||"\u2014"],["Type",sel.type||"\u2014"],["Year",sel.year||"\u2014"],["Price",sel.price?fmt(sel.price):"\u2014"],["GCI",sel.gci?fmt(sel.gci):"\u2014"],["Status",sel.active?"Active pipeline":"Closed"]].map(([k,v])=>(
+                <div key={k} style={{ background:C.surface2, border:`1px solid ${C.border}`, borderRadius:8, padding:"9px 11px" }}>
+                  <div style={{ fontSize:10, color:C.text3, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.06em" }}>{k}</div>
+                  <div style={{ fontSize:13.5, color:C.text, fontFamily:k==="Agent"||k==="Type"||k==="Status"?FONT:MONO, marginTop:3 }}>{v}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{ fontSize:11, color:C.text3, fontFamily:MONO, marginTop:2 }}>{sel.active?"Pipeline listing":"Source: GOLD ledger"}{sel.gold_txn_id?` \u00b7 ${sel.gold_txn_id}`:""}</div>
+            <div style={{ display:"flex", gap:10, paddingTop:4 }}>
+              <GoldButton outline onClick={()=>setSel(null)}>Close</GoldButton>
+            </div>
+          </div>
+        </Modal>
+      )}
 
       {showAdd&&(
         <Modal title="New Deal" onClose={()=>setShowAdd(false)}>
