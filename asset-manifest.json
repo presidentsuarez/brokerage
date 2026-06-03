@@ -1,11 +1,11 @@
 {
   "files": {
     "main.css": "/brokerage/static/css/main.ddd570db.css",
-    "main.js": "/brokerage/static/js/main.41c5b01a.js",
+    "main.js": "/brokerage/static/js/main.440f8af9.js",
     "index.html": "/brokerage/index.html"
   },
   "entrypoints": [
     "static/css/main.ddd570db.css",
-    "static/js/main.41c5b01a.js"
+    "static/js/main.440f8af9.js"
   ]
 }
