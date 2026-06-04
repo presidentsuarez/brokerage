@@ -73,17 +73,17 @@ const STATUS_CONFIG = {
 };
 
 const NAV = [
-  { id:"dashboard", label:"Dashboard", icon:"⬡" },
-  { id:"deals",     label:"Deals",     icon:"◈" },
-  { id:"contacts",  label:"Contacts",  icon:"◎" },
-  { id:"tasks",     label:"Tasks",     icon:"◻" },
-  { id:"calendar",  label:"Calendar",  icon:"◷" },
-  { id:"applications",label:"Applications",icon:"✦", adminOnly:true },
-  { id:"financials",  label:"Financials",  icon:"◑", adminOnly:true },
+  { id:"dashboard", label:"Dashboard", icon:"🏠" },
+  { id:"deals",     label:"Deals",     icon:"🏘️" },
+  { id:"contacts",  label:"Contacts",  icon:"👤" },
+  { id:"tasks",     label:"Tasks",     icon:"✅" },
+  { id:"calendar",  label:"Calendar",  icon:"📅" },
+  { id:"applications",label:"Applications",icon:"📥", adminOnly:true },
+  { id:"financials",  label:"Financials",  icon:"💵", adminOnly:true },
   { id:"performance", label:"Performance", icon:"📈", adminOnly:true },
-  { id:"robots",    label:"Ari",       icon:"✦", platformOnly:true },
-  { id:"notepad",   label:"Notepad",   icon:"✎", platformOnly:true },
-  { id:"settings",  label:"Settings",  icon:"⚙", platformOnly:true },
+  { id:"robots",    label:"Ari",       icon:"✨", platformOnly:true },
+  { id:"notepad",   label:"Notepad",   icon:"📝", platformOnly:true },
+  { id:"settings",  label:"Settings",  icon:"⚙️", platformOnly:true },
 ];
 
 // ── Shared atoms ──────────────────────────────────────────────
@@ -2177,14 +2177,14 @@ function DealsView({ user, deals, onRefresh }) {
 // ════════════════════════════════════════════════════════════
 
 const PORTAL_NAV = [
-  { id:"portal_dashboard", label:"Dashboard",  icon:"⬡" },
-  { id:"portal_pipeline",  label:"Pipeline",   icon:"◈" },
-  { id:"portal_contacts",  label:"Contacts",   icon:"◎" },
-  { id:"portal_tasks",     label:"Tasks",      icon:"◻" },
-  { id:"portal_team",      label:"Team",       icon:"◑" },
-  { id:"portal_calendar",  label:"Calendar",   icon:"◷" },
-  { id:"portal_earnings",  label:"My Earnings", icon:"$" },
-  { id:"portal_chat",      label:"Chat · Ari", icon:"✦" },
+  { id:"portal_dashboard", label:"Dashboard",  icon:"🏠" },
+  { id:"portal_pipeline",  label:"Pipeline",   icon:"🏘️" },
+  { id:"portal_contacts",  label:"Contacts",   icon:"👤" },
+  { id:"portal_tasks",     label:"Tasks",      icon:"✅" },
+  { id:"portal_team",      label:"Team",       icon:"👥" },
+  { id:"portal_calendar",  label:"Calendar",   icon:"📅" },
+  { id:"portal_earnings",  label:"My Earnings", icon:"💰" },
+  { id:"portal_chat",      label:"Chat · Ari", icon:"✨" },
 ];
 
 function PortalChatPanel({
@@ -6448,15 +6448,15 @@ export default function App() {
     // Check if team user first
     supabase.from("user_profiles").select("*").eq("email",email).maybeSingle()
       .then(async ({data})=>{
-        if(data){
-          // Team user — main app
+        const STAFF = ["owner","admin","manager"];
+        if(data && STAFF.includes(data.role)){
+          // Staff (owner / admin / manager) — main app
           setUserProfile(data);
           const hrs = (Date.now()-new Date(data.created_at))/3600000;
           if(hrs<72) setTempBanner(true);
         } else {
-          // Agent access = a Contact of type Agent whose email matches the login.
-          // (The portal-enable toggle / agent_portal_access table is retired —
-          //  creating an auth account is what puts an agent "live".)
+          // Everyone else (agent / non-gold user / no profile) → portal,
+          // scoped by RLS to their own Agent contact.
           const { data:agentRows } = await supabase.from("contacts")
             .select("*").eq("org_id",ORG_ID).eq("contact_type","Agent")
             .ilike("email",email).limit(1);
