@@ -2427,6 +2427,7 @@ function AgentPortalApp(
   const [agentPackage, setAgentPackage] = useState(null);
   const [agentLifetime, setAgentLifetime] = useState(null);
   const [agentYearly, setAgentYearly]     = useState([]);
+  const [agentTxns, setAgentTxns]         = useState([]);
 
   const agentName  = agentContact?.full_name || "Agent";
   const agentEmail = agentContact?.email || session?.user?.email || "";
@@ -2475,6 +2476,10 @@ function AgentPortalApp(
       supabase.from("agent_performance_yearly").select("*")
         .eq("agent_contact_id", agentContact.id).order("tax_year",{ascending:false})
         .then(({data})=>setAgentYearly(data||[]));
+      supabase.from("transactions").select("*")
+        .eq("agent_contact_id", agentContact.id)
+        .order("tax_year",{ascending:false}).order("close_date",{ascending:false,nullsFirst:false})
+        .then(({data})=>setAgentTxns(data||[]));
     }
 
     // Load Ari chat for this agent
@@ -2724,33 +2729,34 @@ function AgentPortalApp(
     const fmt2 = n=>n>=1e6?`$${(n/1e6).toFixed(1)}M`:n>=1e3?`$${(n/1e3).toFixed(0)}K`:`$${n}`;
     const [tab,setTab] = useState("pipeline");
     const [statusF,setStatusF] = useState("all");
+    const [yearF,setYearF] = useState("all");
     const statuses = ["all", ...Array.from(new Set(myDeals.map(d=>d.status).filter(Boolean)))];
     const shown = statusF==="all" ? myDeals : myDeals.filter(d=>d.status===statusF);
-    const yrs = agentYearly;
-    const totalRow = yrs.reduce((a,y)=>({deals:a.deals+(y.deals||0), volume:a.volume+Number(y.volume||0), gci:a.gci+Number(y.gci||0)}),{deals:0,volume:0,gci:0});
+    const histYears = ["all", ...Array.from(new Set(agentTxns.map(t=>t.tax_year).filter(Boolean))).sort((a,b)=>b-a)];
+    const histTxns = yearF==="all" ? agentTxns : agentTxns.filter(t=>String(t.tax_year)===String(yearF));
+    const histSum = histTxns.reduce((a,t)=>({v:a.v+Number(t.close_price||0), g:a.g+Number(t.gross_commission||0)}),{v:0,g:0});
     const Tab = ({id,label}) => (
       <button onClick={()=>setTab(id)} style={{
         background: tab===id?C.goldDim:"transparent", color: tab===id?C.gold:C.text2,
         border:`1px solid ${tab===id?C.goldBorder:C.border}`, borderRadius:8,
         padding:"7px 14px", fontSize:12, fontWeight:600, fontFamily:FONT, cursor:"pointer" }}>{label}</button>
     );
+    const pill = (active) => ({
+      background: active?C.text:"transparent", color: active?C.bg:C.text2,
+      border:`1px solid ${active?C.text:C.border2}`, borderRadius:20,
+      padding:"5px 13px", fontSize:11, fontWeight:600, fontFamily:FONT, cursor:"pointer" });
     return (
       <div style={{ padding:"20px 24px" }}>
         <div style={{ display:"flex", gap:8, marginBottom:14, flexWrap:"wrap" }}>
           <Tab id="pipeline" label="Active Pipeline" />
-          <Tab id="history" label={`Track Record${agentLifetime?` \u00b7 ${agentLifetime.total_deals} closed`:""}`} />
+          <Tab id="history" label={`Track Record${agentTxns.length?` \u00b7 ${agentTxns.length} closed`:""}`} />
         </div>
 
         {tab==="pipeline" && (
           <>
             <div style={{ display:"flex", gap:7, flexWrap:"wrap", marginBottom:14 }}>
               {statuses.map(st=>(
-                <button key={st} onClick={()=>setStatusF(st)} style={{
-                  background: statusF===st?C.text:"transparent", color: statusF===st?C.bg:C.text2,
-                  border:`1px solid ${statusF===st?C.text:C.border2}`, borderRadius:20,
-                  padding:"5px 13px", fontSize:11, fontWeight:600, fontFamily:FONT, cursor:"pointer" }}>
-                  {st==="all"?"All":st}
-                </button>
+                <button key={st} onClick={()=>setStatusF(st)} style={pill(statusF===st)}>{st==="all"?"All":st}</button>
               ))}
             </div>
             <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden" }}>
@@ -2780,18 +2786,13 @@ function AgentPortalApp(
                     <div>
                       <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:FONT }}>{d.address||"\u2014"}</div>
                       <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>
-                        {[d.city,d.state].filter(Boolean).join(", ")}
-                        {d.mls_number?` \u00b7 MLS ${d.mls_number}`:""}
+                        {[d.city,d.state].filter(Boolean).join(", ")}{d.mls_number?` \u00b7 MLS ${d.mls_number}`:""}
                       </div>
                     </div>
                     <span style={{ fontSize:11, fontWeight:600, color:C.gold, fontFamily:FONT,
-                      background:C.goldDim, borderRadius:5, padding:"2px 8px", width:"fit-content" }}>
-                      {d.agent_role||"Agent"}
-                    </span>
+                      background:C.goldDim, borderRadius:5, padding:"2px 8px", width:"fit-content" }}>{d.agent_role||"Agent"}</span>
                     <StatusBadge status={d.status} />
-                    <span style={{ fontSize:12, fontWeight:700, color:C.gold, fontFamily:MONO }}>
-                      {d.price?fmt2(d.price):"\u2014"}
-                    </span>
+                    <span style={{ fontSize:12, fontWeight:700, color:C.gold, fontFamily:MONO }}>{d.price?fmt2(d.price):"\u2014"}</span>
                   </div>
                 ))
               }
@@ -2800,41 +2801,56 @@ function AgentPortalApp(
         )}
 
         {tab==="history" && (
-          <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden" }}>
-            <div style={{ padding:"13px 18px", borderBottom:`1px solid ${C.border}` }}>
-              <span style={{ fontSize:11, fontWeight:700, color:C.text2, fontFamily:FONT,
-                textTransform:"uppercase", letterSpacing:"0.08em" }}>Production History \u00b7 Closed by Year</span>
-            </div>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1.4fr 1.4fr 1.4fr", padding:"8px 18px", borderBottom:`1px solid ${C.border}` }}>
-              {["Year","Closed","Volume","GCI","Avg Price"].map(h=>(
-                <span key={h} style={{ fontSize:10, fontWeight:700, color:C.text3,
-                  fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.08em" }}>{h}</span>
+          <>
+            <div style={{ display:"flex", gap:7, flexWrap:"wrap", marginBottom:12 }}>
+              {histYears.map(y=>(
+                <button key={y} onClick={()=>setYearF(y)} style={pill(String(yearF)===String(y))}>{y==="all"?"All Years":y}</button>
               ))}
             </div>
-            {yrs.length===0
-              ? <div style={{ padding:"48px 18px", textAlign:"center", color:C.text3, fontSize:13, fontFamily:FONT }}>No production history on file.</div>
-              : <>
-                {yrs.map(y=>(
-                  <div key={y.tax_year} style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1.4fr 1.4fr 1.4fr",
-                    padding:"12px 18px", borderBottom:`1px solid ${C.border}`, alignItems:"center" }}>
-                    <span style={{ fontSize:13, fontWeight:700, color:C.text, fontFamily:MONO }}>{y.tax_year}</span>
-                    <span style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:FONT }}>{y.deals||0}</span>
-                    <span style={{ fontSize:12, color:C.text2, fontFamily:MONO }}>{Number(y.volume)?fmt2(Number(y.volume)):"\u2014"}</span>
-                    <span style={{ fontSize:12, color:C.green, fontFamily:MONO }}>{Number(y.gci)?fmt2(Number(y.gci)):"\u2014"}</span>
-                    <span style={{ fontSize:12, color:C.text3, fontFamily:MONO }}>{Number(y.avg_deal_size)?fmt2(Number(y.avg_deal_size)):"\u2014"}</span>
-                  </div>
-                ))}
-                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1.4fr 1.4fr 1.4fr",
-                  padding:"12px 18px", alignItems:"center", background:C.surface2 }}>
-                  <span style={{ fontSize:12, fontWeight:700, color:C.gold, fontFamily:FONT }}>TOTAL</span>
-                  <span style={{ fontSize:13, fontWeight:700, color:C.gold, fontFamily:FONT }}>{totalRow.deals}</span>
-                  <span style={{ fontSize:12, fontWeight:700, color:C.gold, fontFamily:MONO }}>{totalRow.volume?fmt2(totalRow.volume):"\u2014"}</span>
-                  <span style={{ fontSize:12, fontWeight:700, color:C.gold, fontFamily:MONO }}>{totalRow.gci?fmt2(totalRow.gci):"\u2014"}</span>
-                  <span/>
+            <div style={{ display:"flex", gap:24, flexWrap:"wrap", marginBottom:14, padding:"12px 18px",
+              background:`linear-gradient(135deg, ${C.goldDim}, ${C.surface})`, border:`1px solid ${C.goldBorder}`, borderRadius:12 }}>
+              {[
+                {label: yearF==="all"?"Total Closed":`${yearF} Closed`, val:histTxns.length},
+                {label:"Volume", val:histSum.v?fmt2(histSum.v):"\u2014"},
+                {label:"Gross Commission", val:histSum.g?fmt2(histSum.g):"\u2014"},
+              ].map(s=>(
+                <div key={s.label}>
+                  <div style={{ fontSize:20, fontWeight:700, color:C.text, fontFamily:SERIF, letterSpacing:"-0.02em" }}>{s.val}</div>
+                  <div style={{ fontSize:10, fontWeight:700, color:C.text2, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.07em", marginTop:2 }}>{s.label}</div>
                 </div>
-              </>
-            }
-          </div>
+              ))}
+            </div>
+            <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden" }}>
+              <div style={{ display:"grid", gridTemplateColumns:"2.4fr 0.7fr 1.1fr 1.1fr 0.9fr", padding:"9px 18px", borderBottom:`1px solid ${C.border}` }}>
+                {["Property","Year","Close Price","Commission","Status"].map(h=>(
+                  <span key={h} style={{ fontSize:10, fontWeight:700, color:C.text3, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.08em" }}>{h}</span>
+                ))}
+              </div>
+              {histTxns.length===0
+                ? <div style={{ padding:"48px 18px", textAlign:"center", color:C.text3, fontSize:13, fontFamily:FONT }}>No transactions on file.</div>
+                : histTxns.map(t=>(
+                  <div key={t.id} style={{ display:"grid", gridTemplateColumns:"2.4fr 0.7fr 1.1fr 1.1fr 0.9fr",
+                    padding:"11px 18px", borderBottom:`1px solid ${C.border}`, alignItems:"center" }}
+                    onMouseEnter={e=>e.currentTarget.style.background=C.surface2}
+                    onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                    <div style={{ minWidth:0 }}>
+                      <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:FONT,
+                        whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{t.address||"\u2014"}</div>
+                      {(t.buyer_name||t.seller_name||t.transaction_type) && (
+                        <div style={{ fontSize:10, color:C.text3, fontFamily:FONT }}>
+                          {[t.transaction_type, t.side].filter(Boolean).join(" \u00b7 ")}
+                        </div>
+                      )}
+                    </div>
+                    <span style={{ fontSize:12, color:C.text2, fontFamily:MONO }}>{t.tax_year||"\u2014"}</span>
+                    <span style={{ fontSize:12, fontWeight:600, color:C.text, fontFamily:MONO }}>{Number(t.close_price)?fmt2(Number(t.close_price)):"\u2014"}</span>
+                    <span style={{ fontSize:12, color:C.green, fontFamily:MONO }}>{Number(t.gross_commission)?fmt2(Number(t.gross_commission)):"\u2014"}</span>
+                    <StatusBadge status={t.status} />
+                  </div>
+                ))
+              }
+            </div>
+          </>
         )}
       </div>
     );
