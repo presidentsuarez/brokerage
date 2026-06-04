@@ -2406,8 +2406,9 @@ function PortalChatPanel({
 }
 
 function AgentPortalApp(
-{ agentContact, session, onSignOut, isPreview=false }) {
-  const [view, setView]       = useState("portal_dashboard");
+{ agentContact, session, onSignOut, isPreview=false, initialView, onViewChange }) {
+  const [view, setView]       = useState(initialView||"portal_dashboard");
+  useEffect(()=>{ if(onViewChange) onViewChange(view); },[view]); // eslint-disable-line react-hooks/exhaustive-deps
   const [theme,setTheme] = useState(()=>{ try{ return (typeof localStorage!=="undefined" && localStorage.getItem("prism-theme"))||"dark"; }catch(e){ return "dark"; } });
   const toggleTheme = ()=>{ const nx=theme==="dark"?"light":"dark"; applyPalette(nx); try{ localStorage.setItem("prism-theme",nx); }catch(e){} setTheme(nx); };
   const [myDeals, setMyDeals] = useState([]);
@@ -2424,6 +2425,8 @@ function AgentPortalApp(
   const [chatConvId, setChatConvId] = useState(null);
   const chatBottomRef = useRef(null);
   const [agentPackage, setAgentPackage] = useState(null);
+  const [agentLifetime, setAgentLifetime] = useState(null);
+  const [agentYearly, setAgentYearly]     = useState([]);
 
   const agentName  = agentContact?.full_name || "Agent";
   const agentEmail = agentContact?.email || session?.user?.email || "";
@@ -2464,6 +2467,16 @@ function AgentPortalApp(
         .maybeSingle().then(({data})=>setAgentPackage(data||null));
     }
 
+    // Load historical production (track record)
+    if(agentContact?.id) {
+      supabase.from("agent_performance_lifetime").select("*")
+        .eq("agent_contact_id", agentContact.id).maybeSingle()
+        .then(({data})=>setAgentLifetime(data||null));
+      supabase.from("agent_performance_yearly").select("*")
+        .eq("agent_contact_id", agentContact.id).order("tax_year",{ascending:false})
+        .then(({data})=>setAgentYearly(data||[]));
+    }
+
     // Load Ari chat for this agent
     if(agentContact?.id) {
       supabase.from("robot_conversations")
@@ -2496,10 +2509,10 @@ function AgentPortalApp(
           style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.6)", zIndex:99 }} />
       )}
       <div style={{ width:sW, minWidth:sW, background:C.surface,
-      borderRight:`1px solid ${C.border}`, height:"100vh",
+      borderRight:`1px solid ${C.border}`, height:isPreview?"calc(100vh - 40px)":"100vh",
       display:"flex", flexDirection:"column",
       transition:"transform 0.25s ease, width 0.2s,min-width 0.2s", overflow:"hidden",
-      position:"fixed", top:0, left:0, zIndex:100,
+      position:"fixed", top:isPreview?40:0, left:0, zIndex:100,
       transform:isHidden?"translateX(-100%)":"translateX(0)",
       boxShadow:isMobile&&mobileMenuOpen?"4px 0 24px rgba(0,0,0,0.4)":"none" }}>
 
@@ -2579,11 +2592,18 @@ function AgentPortalApp(
   // ── Portal Dashboard ──
   const PortalDashboard = () => {
     const active   = myDeals.filter(d=>!["Closed","Dead"].includes(d.status));
-    const closed   = myDeals.filter(d=>d.status==="Closed");
     const underC   = myDeals.filter(d=>d.status==="Under Contract");
     const openT    = myTasks.filter(t=>t.status!=="done");
-    const gci      = closed.reduce((s,d)=>s+((d.price||0)*((d.commission_rate||3)/100)),0);
     const upcoming = myTasks.filter(t=>t.status!=="done"&&t.due_date).sort((a,b)=>a.due_date>b.due_date?1:-1).slice(0,3);
+
+    // Historical track record (from performance tables)
+    const ltDeals  = agentLifetime?.total_deals  ?? 0;
+    const ltVolume = Number(agentLifetime?.total_volume||0);
+    const ltGci    = Number(agentLifetime?.total_gci||0);
+    const thisYear = new Date().getFullYear();
+    const cy       = agentYearly.find(y=>Number(y.tax_year)===thisYear);
+    const cyDeals  = cy?.deals ?? 0;
+    const cyVolume = Number(cy?.volume||0);
 
     return (
       <div style={{ padding:"24px" }}>
@@ -2597,14 +2617,14 @@ function AgentPortalApp(
           </p>
         </div>
 
-        {/* Stats */}
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))", gap:12, marginBottom:24 }}>
+        {/* Live pipeline */}
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))", gap:12, marginBottom:14 }}>
           {[
-            {label:"Active",        val:active.length,  accent:C.blue},
-            {label:"Under Contract",val:underC.length,  accent:C.amber},
-            {label:"Closed",        val:closed.length,  accent:C.green},
-            {label:"Est. GCI",      val:gci>0?fmt(gci):"—", accent:C.gold},
-            {label:"Open Tasks",    val:openT.length,   accent:openT.length>3?C.amber:C.text2},
+            {label:"Active Listings", val:active.length,  accent:C.blue},
+            {label:"Under Contract",  val:underC.length,  accent:C.amber},
+            {label:`${thisYear} Closed`, val:cyDeals,     accent:C.green},
+            {label:`${thisYear} Volume`, val:cyVolume>0?fmt(cyVolume):"—", accent:C.gold},
+            {label:"Open Tasks",      val:openT.length,   accent:openT.length>3?C.amber:C.text2},
           ].map(s=>(
             <div key={s.label} style={{ background:C.surface, border:`1px solid ${C.border}`,
               borderRadius:12, padding:"16px 18px" }}>
@@ -2615,6 +2635,35 @@ function AgentPortalApp(
             </div>
           ))}
         </div>
+
+        {/* Lifetime track record */}
+        {agentLifetime && (
+          <div style={{ background:`linear-gradient(135deg, ${C.goldDim}, ${C.surface})`,
+            border:`1px solid ${C.goldBorder}`, borderRadius:12, padding:"16px 20px", marginBottom:24,
+            display:"flex", flexWrap:"wrap", gap:24, alignItems:"center" }}>
+            <div style={{ fontSize:11, fontWeight:700, color:C.gold, fontFamily:FONT,
+              textTransform:"uppercase", letterSpacing:"0.08em" }}>
+              Career<br/>Track Record
+            </div>
+            {[
+              {label:"Lifetime Closed", val:ltDeals},
+              {label:"Lifetime Volume", val:ltVolume>0?fmt(ltVolume):"—"},
+              {label:"Lifetime GCI",    val:ltGci>0?fmt(ltGci):"—"},
+              {label:"Years Active",    val:(agentLifetime.active_years||[]).length||"—"},
+            ].map(s=>(
+              <div key={s.label}>
+                <div style={{ fontSize:20, fontWeight:700, color:C.text, fontFamily:SERIF, letterSpacing:"-0.02em" }}>{s.val}</div>
+                <div style={{ fontSize:10, fontWeight:700, color:C.text2, fontFamily:FONT,
+                  textTransform:"uppercase", letterSpacing:"0.07em", marginTop:2 }}>{s.label}</div>
+              </div>
+            ))}
+            <button onClick={()=>setView("portal_pipeline")} style={{ marginLeft:"auto",
+              background:"none", border:`1px solid ${C.goldBorder}`, color:C.gold, cursor:"pointer",
+              fontSize:11, fontFamily:FONT, fontWeight:600, padding:"7px 12px", borderRadius:8 }}>
+              View history →
+            </button>
+          </div>
+        )}
 
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(240px,1fr))", gap:12 }}>
           {/* Recent deals */}
@@ -2673,50 +2722,120 @@ function AgentPortalApp(
   // ── Pipeline ──
   const PortalPipeline = () => {
     const fmt2 = n=>n>=1e6?`$${(n/1e6).toFixed(1)}M`:n>=1e3?`$${(n/1e3).toFixed(0)}K`:`$${n}`;
+    const [tab,setTab] = useState("pipeline");
+    const [statusF,setStatusF] = useState("all");
+    const statuses = ["all", ...Array.from(new Set(myDeals.map(d=>d.status).filter(Boolean)))];
+    const shown = statusF==="all" ? myDeals : myDeals.filter(d=>d.status===statusF);
+    const yrs = agentYearly;
+    const totalRow = yrs.reduce((a,y)=>({deals:a.deals+(y.deals||0), volume:a.volume+Number(y.volume||0), gci:a.gci+Number(y.gci||0)}),{deals:0,volume:0,gci:0});
+    const Tab = ({id,label}) => (
+      <button onClick={()=>setTab(id)} style={{
+        background: tab===id?C.goldDim:"transparent", color: tab===id?C.gold:C.text2,
+        border:`1px solid ${tab===id?C.goldBorder:C.border}`, borderRadius:8,
+        padding:"7px 14px", fontSize:12, fontWeight:600, fontFamily:FONT, cursor:"pointer" }}>{label}</button>
+    );
     return (
       <div style={{ padding:"20px 24px" }}>
-        <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden" }}>
-          <div style={{ padding:"13px 18px", borderBottom:`1px solid ${C.border}`,
-            display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-            <span style={{ fontSize:11, fontWeight:700, color:C.text2, fontFamily:FONT,
-              textTransform:"uppercase", letterSpacing:"0.08em" }}>My Listing Pipeline</span>
-            <span style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>{myDeals.length} deals</span>
-          </div>
-          <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr 1fr", padding:"8px 18px", borderBottom:`1px solid ${C.border}` }}>
-            {["Property","My Role","Status","Price"].map(h=>(
-              <span key={h} style={{ fontSize:10, fontWeight:700, color:C.text3,
-                fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.08em" }}>{h}</span>
-            ))}
-          </div>
-          {myDeals.length===0
-            ? <div style={{ padding:"48px 18px", textAlign:"center", color:C.text3, fontSize:13, fontFamily:FONT }}>
-                No deals linked to you yet.<br/>
-                <span style={{ fontSize:11, marginTop:6, display:"block" }}>Contact your broker to get linked to your listings.</span>
-              </div>
-            : myDeals.map(d=>(
-              <div key={d.id} style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr 1fr",
-                padding:"12px 18px", borderBottom:`1px solid ${C.border}`, alignItems:"center" }}
-                onMouseEnter={e=>e.currentTarget.style.background=C.surface2}
-                onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-                <div>
-                  <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:FONT }}>{d.address||"—"}</div>
-                  <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>
-                    {[d.city,d.state].filter(Boolean).join(", ")}
-                    {d.mls_number?` · MLS ${d.mls_number}`:""}
-                  </div>
-                </div>
-                <span style={{ fontSize:11, fontWeight:600, color:C.gold, fontFamily:FONT,
-                  background:C.goldDim, borderRadius:5, padding:"2px 8px", width:"fit-content" }}>
-                  {d.agent_role||"Agent"}
-                </span>
-                <StatusBadge status={d.status} />
-                <span style={{ fontSize:12, fontWeight:700, color:C.gold, fontFamily:MONO }}>
-                  {d.price?fmt2(d.price):"—"}
-                </span>
-              </div>
-            ))
-          }
+        <div style={{ display:"flex", gap:8, marginBottom:14, flexWrap:"wrap" }}>
+          <Tab id="pipeline" label="Active Pipeline" />
+          <Tab id="history" label={`Track Record${agentLifetime?` \u00b7 ${agentLifetime.total_deals} closed`:""}`} />
         </div>
+
+        {tab==="pipeline" && (
+          <>
+            <div style={{ display:"flex", gap:7, flexWrap:"wrap", marginBottom:14 }}>
+              {statuses.map(st=>(
+                <button key={st} onClick={()=>setStatusF(st)} style={{
+                  background: statusF===st?C.text:"transparent", color: statusF===st?C.bg:C.text2,
+                  border:`1px solid ${statusF===st?C.text:C.border2}`, borderRadius:20,
+                  padding:"5px 13px", fontSize:11, fontWeight:600, fontFamily:FONT, cursor:"pointer" }}>
+                  {st==="all"?"All":st}
+                </button>
+              ))}
+            </div>
+            <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden" }}>
+              <div style={{ padding:"13px 18px", borderBottom:`1px solid ${C.border}`,
+                display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+                <span style={{ fontSize:11, fontWeight:700, color:C.text2, fontFamily:FONT,
+                  textTransform:"uppercase", letterSpacing:"0.08em" }}>My Listing Pipeline</span>
+                <span style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>{shown.length} deals</span>
+              </div>
+              <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr 1fr", padding:"8px 18px", borderBottom:`1px solid ${C.border}` }}>
+                {["Property","My Role","Status","Price"].map(h=>(
+                  <span key={h} style={{ fontSize:10, fontWeight:700, color:C.text3,
+                    fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.08em" }}>{h}</span>
+                ))}
+              </div>
+              {shown.length===0
+                ? <div style={{ padding:"48px 18px", textAlign:"center", color:C.text3, fontSize:13, fontFamily:FONT }}>
+                    {myDeals.length===0
+                      ? <>No live deals linked to you yet.<br/><span style={{ fontSize:11, marginTop:6, display:"block" }}>Your closed history is under <strong>Track Record</strong>.</span></>
+                      : "No deals match this filter."}
+                  </div>
+                : shown.map(d=>(
+                  <div key={d.id} style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr 1fr",
+                    padding:"12px 18px", borderBottom:`1px solid ${C.border}`, alignItems:"center" }}
+                    onMouseEnter={e=>e.currentTarget.style.background=C.surface2}
+                    onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                    <div>
+                      <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:FONT }}>{d.address||"\u2014"}</div>
+                      <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>
+                        {[d.city,d.state].filter(Boolean).join(", ")}
+                        {d.mls_number?` \u00b7 MLS ${d.mls_number}`:""}
+                      </div>
+                    </div>
+                    <span style={{ fontSize:11, fontWeight:600, color:C.gold, fontFamily:FONT,
+                      background:C.goldDim, borderRadius:5, padding:"2px 8px", width:"fit-content" }}>
+                      {d.agent_role||"Agent"}
+                    </span>
+                    <StatusBadge status={d.status} />
+                    <span style={{ fontSize:12, fontWeight:700, color:C.gold, fontFamily:MONO }}>
+                      {d.price?fmt2(d.price):"\u2014"}
+                    </span>
+                  </div>
+                ))
+              }
+            </div>
+          </>
+        )}
+
+        {tab==="history" && (
+          <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden" }}>
+            <div style={{ padding:"13px 18px", borderBottom:`1px solid ${C.border}` }}>
+              <span style={{ fontSize:11, fontWeight:700, color:C.text2, fontFamily:FONT,
+                textTransform:"uppercase", letterSpacing:"0.08em" }}>Production History \u00b7 Closed by Year</span>
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1.4fr 1.4fr 1.4fr", padding:"8px 18px", borderBottom:`1px solid ${C.border}` }}>
+              {["Year","Closed","Volume","GCI","Avg Price"].map(h=>(
+                <span key={h} style={{ fontSize:10, fontWeight:700, color:C.text3,
+                  fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.08em" }}>{h}</span>
+              ))}
+            </div>
+            {yrs.length===0
+              ? <div style={{ padding:"48px 18px", textAlign:"center", color:C.text3, fontSize:13, fontFamily:FONT }}>No production history on file.</div>
+              : <>
+                {yrs.map(y=>(
+                  <div key={y.tax_year} style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1.4fr 1.4fr 1.4fr",
+                    padding:"12px 18px", borderBottom:`1px solid ${C.border}`, alignItems:"center" }}>
+                    <span style={{ fontSize:13, fontWeight:700, color:C.text, fontFamily:MONO }}>{y.tax_year}</span>
+                    <span style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:FONT }}>{y.deals||0}</span>
+                    <span style={{ fontSize:12, color:C.text2, fontFamily:MONO }}>{Number(y.volume)?fmt2(Number(y.volume)):"\u2014"}</span>
+                    <span style={{ fontSize:12, color:C.green, fontFamily:MONO }}>{Number(y.gci)?fmt2(Number(y.gci)):"\u2014"}</span>
+                    <span style={{ fontSize:12, color:C.text3, fontFamily:MONO }}>{Number(y.avg_deal_size)?fmt2(Number(y.avg_deal_size)):"\u2014"}</span>
+                  </div>
+                ))}
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1.4fr 1.4fr 1.4fr",
+                  padding:"12px 18px", alignItems:"center", background:C.surface2 }}>
+                  <span style={{ fontSize:12, fontWeight:700, color:C.gold, fontFamily:FONT }}>TOTAL</span>
+                  <span style={{ fontSize:13, fontWeight:700, color:C.gold, fontFamily:FONT }}>{totalRow.deals}</span>
+                  <span style={{ fontSize:12, fontWeight:700, color:C.gold, fontFamily:MONO }}>{totalRow.volume?fmt2(totalRow.volume):"\u2014"}</span>
+                  <span style={{ fontSize:12, fontWeight:700, color:C.gold, fontFamily:MONO }}>{totalRow.gci?fmt2(totalRow.gci):"\u2014"}</span>
+                  <span/>
+                </div>
+              </>
+            }
+          </div>
+        )}
       </div>
     );
   };
@@ -2979,7 +3098,7 @@ function AgentPortalApp(
 }
 
 
-function AgentPortalPreview({ contact, onClose }) {
+function AgentPortalPreview({ contact, onClose, initialView, onViewChange }) {
   return (
     <div style={{ position:"fixed", inset:0, zIndex:400, background:C.bg,
       transform:"translateZ(0)", willChange:"transform" }}>
@@ -3011,6 +3130,8 @@ function AgentPortalPreview({ contact, onClose }) {
           session={null}
           onSignOut={onClose}
           isPreview={true}
+          initialView={initialView}
+          onViewChange={onViewChange}
         />
       </div>
     </div>
@@ -6412,6 +6533,17 @@ function IntelligenceView({ user }) {
 }
 
 
+// Lightweight URL query-param helpers (no router) — used to persist the
+// admin "view as agent" preview across refreshes.
+const getQ = (k) => { try { return new URLSearchParams(window.location.search).get(k); } catch(e){ return null; } };
+const setQ = (obj) => {
+  try {
+    const u = new URL(window.location.href);
+    Object.entries(obj).forEach(([k,v])=> (v==null||v==="") ? u.searchParams.delete(k) : u.searchParams.set(k,v));
+    window.history.replaceState({}, "", u);
+  } catch(e){}
+};
+
 export default function App() {
   const [session,setSession]             = useState(null);
   const [authLoading,setAuthLoading]     = useState(true);
@@ -6467,6 +6599,15 @@ export default function App() {
       });
   },[session]);
 
+  // Restore an in-progress "View as agent" preview after a page refresh.
+  useEffect(()=>{
+    const asId = getQ("as");
+    if(!asId) return;
+    if(!userProfile || !["owner","admin","manager"].includes(userProfile.role)) return;
+    supabase.from("contacts").select("*").eq("id",asId).maybeSingle()
+      .then(({data})=>{ if(data) setViewAsContact(data); });
+  },[userProfile]);
+
   const loadData = useCallback(async()=>{
     if(!session) return;
     const [d,c,t] = await Promise.all([
@@ -6494,6 +6635,20 @@ export default function App() {
 
   if(authScreen==="setpassword")
     return <SetPasswordScreen onDone={()=>{ setAuthScreen("login"); setTempBanner(false); }} />;
+
+  // Real agent login → dedicated portal (full experience, RLS-scoped to them).
+  if(agentPortalContact && !userProfile){
+    return (
+      <AgentPortalApp
+        agentContact={agentPortalContact}
+        session={session}
+        onSignOut={signOut}
+        isPreview={false}
+        initialView={getQ("v")||undefined}
+        onViewChange={(v)=>setQ({v})}
+      />
+    );
+  }
 
   if(!dataLoaded) return <LoadingScreen message="Loading your workspace\u2026" />;
 
@@ -6563,11 +6718,15 @@ export default function App() {
       {showAgentPicker && (
         <AgentPickerModal
           contacts={contacts.filter(c=>c.contact_type==="Agent")}
-          onPick={c=>{ setShowAgentPicker(false); setViewAsContact(c); }}
+          onPick={c=>{ setShowAgentPicker(false); setViewAsContact(c); setQ({as:c.id, v:"portal_dashboard"}); }}
           onClose={()=>setShowAgentPicker(false)} />
       )}
       {viewAsContact && (
-        <AgentPortalPreview contact={viewAsContact} onClose={()=>setViewAsContact(null)} />
+        <AgentPortalPreview
+          contact={viewAsContact}
+          initialView={getQ("v")||undefined}
+          onViewChange={(v)=>setQ({v})}
+          onClose={()=>{ setViewAsContact(null); setQ({as:null, v:null}); }} />
       )}
       {isMobile && <BottomNavBar activeView={view} onNav={setView} user={cu} />}
     </div>
