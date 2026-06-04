@@ -164,15 +164,18 @@ function Sel({ label, value, onChange, options }) {
 }
 
 function Modal({ title, onClose, children, maxWidth=500 }) {
+  const isMobile = useIsMobile();
   return (
     <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.75)", zIndex:200,
-      display:"flex", alignItems:"center", justifyContent:"center", padding:24 }}
+      display:"flex", alignItems:isMobile?"flex-start":"center", justifyContent:"center",
+      padding:isMobile?10:24, overflowY:"auto" }}
       onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:16,
-        padding:28, width:"100%", maxWidth, maxHeight:"90vh", overflowY:"auto" }}>
-        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:22 }}>
+        padding:isMobile?18:28, width:"100%", maxWidth, maxHeight:isMobile?"none":"90vh",
+        marginTop:isMobile?8:0, marginBottom:isMobile?24:0, overflowY:"auto" }}>
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:isMobile?16:22 }}>
           <h2 style={{ fontSize:18, fontWeight:700, color:C.text, fontFamily:SERIF, margin:0 }}>{title}</h2>
-          <button onClick={onClose} style={{ background:"none", border:"none", color:C.text2, fontSize:20, cursor:"pointer", lineHeight:1, padding:4 }}>✕</button>
+          <button onClick={onClose} style={{ background:"none", border:"none", color:C.text2, fontSize:22, cursor:"pointer", lineHeight:1, padding:4 }}>✕</button>
         </div>
         {children}
       </div>
@@ -2407,7 +2410,9 @@ function PortalChatPanel({
 
 function PortalDealModal({ deal, agentContact, myContacts, onClose, onSaved, onContactsChanged }) {
   const isEdit = !!deal;
+  const isMobile = useIsMobile();
   const agentEmail = agentContact?.email || "";
+  const [tab,setTab] = useState("overview");
   const [f, setF] = useState({
     address: deal?.address||"", city: deal?.city||"", state: deal?.state||"", zip: deal?.zip||"",
     price: deal?.price!=null?String(deal.price):"", status: deal?.status||"Active",
@@ -2418,34 +2423,54 @@ function PortalDealModal({ deal, agentContact, myContacts, onClose, onSaved, onC
     close_date: deal?.close_date||"", notes: deal?.notes||"",
   });
   const set = (k)=>(v)=>setF(p=>({...p,[k]:v}));
-  const [client, setClient] = useState(null);
-  const [clientRole, setClientRole] = useState("Buyer");
-  const [cq, setCq] = useState("");
-  const [showNew, setShowNew] = useState(false);
-  const [nc, setNc] = useState({full_name:"", email:"", phone:""});
-  const [saving, setSaving] = useState(false);
-  const [err, setErr] = useState("");
-  const row2 = { display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 };
+  const [links,setLinks] = useState([]);
+  const [cq,setCq] = useState(""); const [pickRole,setPickRole] = useState("Buyer");
+  const [showNew,setShowNew] = useState(false); const [nc,setNc] = useState({full_name:"",email:"",phone:""});
+  const [saving,setSaving] = useState(false); const [err,setErr] = useState("");
+  const c2 = { display:"grid", gridTemplateColumns: isMobile?"1fr":"1fr 1fr", gap:12 };
+  const c3 = { display:"grid", gridTemplateColumns: isMobile?"1fr 1fr":"2fr 1fr 1fr", gap:12 };
+  const c4 = { display:"grid", gridTemplateColumns: isMobile?"1fr 1fr":"1fr 1fr 1fr 1fr", gap:12 };
+
+  useEffect(()=>{
+    if(!isEdit) return;
+    supabase.from("deal_contacts").select("id, role, contact_id, contacts(id,full_name,email,phone)")
+      .eq("deal_id", deal.id)
+      .then(({data})=>setLinks((data||[]).map(r=>({id:r.id, role:r.role, contact:r.contacts||{id:r.contact_id, full_name:"Contact"}}))));
+  }, []); // eslint-disable-line
 
   const matches = cq.trim()
-    ? myContacts.filter(c=>`${c.full_name||""} ${c.email||""} ${c.phone||""}`.toLowerCase().includes(cq.toLowerCase())).slice(0,6)
+    ? myContacts.filter(c=>!links.some(l=>l.contact?.id===c.id) && `${c.full_name||""} ${c.email||""} ${c.phone||""}`.toLowerCase().includes(cq.toLowerCase())).slice(0,6)
     : [];
 
+  const addLink = async (contact, role) => {
+    if(links.some(l=>l.contact?.id===contact.id)) { setCq(""); return; }
+    if(isEdit){
+      const { data } = await supabase.from("deal_contacts").insert({deal_id:deal.id, contact_id:contact.id, role, org_id:ORG_ID, added_by:agentEmail}).select().single();
+      setLinks(p=>[...p,{id:data?.id, role, contact}]);
+    } else {
+      setLinks(p=>[...p,{id:null, role, contact}]);
+    }
+    setCq("");
+  };
+  const removeLink = async (l) => {
+    if(l.id) await supabase.from("deal_contacts").delete().eq("id", l.id);
+    setLinks(p=>p.filter(x=>x!==l));
+  };
   const createContact = async () => {
     if(!nc.full_name.trim()){ setErr("Contact needs a name"); return; }
     setSaving(true); setErr("");
     const { data, error } = await supabase.from("contacts").insert({
       org_id:ORG_ID, full_name:nc.full_name.trim(), email:nc.email.trim()||null, phone:nc.phone.trim()||null,
-      contact_type:"Client", status:"Active", created_by:agentEmail, assigned_to:agentEmail, source:"Agent Portal"
+      contact_type:"Client", status:"Active", pipeline_stage:"New", created_by:agentEmail, assigned_to:agentEmail, source:"Agent Portal"
     }).select().single();
     setSaving(false);
     if(error){ setErr(error.message); return; }
-    setClient(data); setShowNew(false); setNc({full_name:"",email:"",phone:""}); setCq("");
+    setShowNew(false); setNc({full_name:"",email:"",phone:""});
     onContactsChanged && onContactsChanged();
+    addLink(data, pickRole);
   };
-
   const save = async () => {
-    if(!f.address.trim()){ setErr("Property address is required"); return; }
+    if(!f.address.trim()){ setTab("overview"); setErr("Property address is required"); return; }
     setSaving(true); setErr("");
     const payload = {
       address:f.address.trim(), city:f.city.trim()||null, state:f.state.trim()||null, zip:f.zip.trim()||null,
@@ -2460,83 +2485,105 @@ function PortalDealModal({ deal, agentContact, myContacts, onClose, onSaved, onC
       const { error } = await supabase.from("deals").update(payload).eq("id", deal.id);
       if(error){ setSaving(false); setErr(error.message); return; }
     } else {
-      const { data, error } = await supabase.from("deals").insert({
-        ...payload, org_id:ORG_ID, agent_contact_id:agentContact.id, created_by:agentEmail
-      }).select().single();
+      const { data, error } = await supabase.from("deals").insert({...payload, org_id:ORG_ID, agent_contact_id:agentContact.id, created_by:agentEmail}).select().single();
       if(error){ setSaving(false); setErr(error.message); return; }
       dealId = data.id;
-    }
-    if(client && dealId){
-      await supabase.from("deal_contacts").insert({
-        deal_id:dealId, contact_id:client.id, role:clientRole, org_id:ORG_ID, added_by:agentEmail });
+      const pending = links.filter(l=>!l.id);
+      if(pending.length) await supabase.from("deal_contacts").insert(pending.map(l=>({deal_id:dealId, contact_id:l.contact.id, role:l.role, org_id:ORG_ID, added_by:agentEmail})));
     }
     setSaving(false);
     onSaved && onSaved();
   };
 
-  return (
-    <Modal title={isEdit?"Edit Deal":"Add Deal"} onClose={onClose} maxWidth={560}>
-      <div style={{ display:"flex", flexDirection:"column", gap:13 }}>
-        <Field label="Property Address" value={f.address} onChange={set("address")} placeholder="123 Main St" autoFocus required />
-        <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr", gap:12 }}>
-          <Field label="City" value={f.city} onChange={set("city")} placeholder="Tampa" />
-          <Field label="State" value={f.state} onChange={set("state")} placeholder="FL" />
-          <Field label="Zip" value={f.zip} onChange={set("zip")} placeholder="33611" />
-        </div>
-        <div style={row2}>
-          <Sel label="Status" value={f.status} onChange={set("status")} options={["New","Active","Under Contract","Pending","Closed","Dead"]} />
-          <Sel label="Type" value={f.deal_type} onChange={set("deal_type")} options={["Listing","Buyer","Lease","Referral"]} />
-        </div>
-        <div style={row2}>
-          <Field label="Price" type="number" value={f.price} onChange={set("price")} placeholder="350000" />
-          <Field label="Commission %" type="number" value={f.commission_rate} onChange={set("commission_rate")} placeholder="3" />
-        </div>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:12 }}>
-          <Field label="Beds" type="number" value={f.bedrooms} onChange={set("bedrooms")} />
-          <Field label="Baths" type="number" value={f.bathrooms} onChange={set("bathrooms")} />
-          <Field label="Sqft" type="number" value={f.sqft} onChange={set("sqft")} />
-          <Field label="Built" type="number" value={f.year_built} onChange={set("year_built")} />
-        </div>
-        <div style={row2}>
-          <Sel label="Property Type" value={f.property_type} onChange={set("property_type")} options={["Single Family","Condo","Townhouse","Multi-Family","Land","Commercial"]} />
-          <Field label="MLS #" value={f.mls_number} onChange={set("mls_number")} placeholder="T1234567" />
-        </div>
-        <Field label="Close Date" type="date" value={f.close_date} onChange={set("close_date")} />
+  const TabBtn = ({id,label}) => (
+    <button onClick={()=>setTab(id)} style={{ flex:isMobile?1:"none", background:tab===id?C.goldDim:"transparent",
+      color:tab===id?C.gold:C.text2, border:"none", borderBottom:`2px solid ${tab===id?C.gold:"transparent"}`,
+      padding:"9px 16px", fontSize:13, fontWeight:600, fontFamily:FONT, cursor:"pointer" }}>{label}</button>
+  );
 
-        <div style={{ borderTop:`1px solid ${C.border}`, paddingTop:12 }}>
-          <label style={{ fontSize:11, fontWeight:700, color:C.text2, fontFamily:FONT, letterSpacing:"0.08em", textTransform:"uppercase", display:"block", marginBottom:6 }}>Client{isEdit?" (add)":""}</label>
-          {client ? (
-            <div style={{ display:"flex", alignItems:"center", gap:10, background:C.surface2, border:`1px solid ${C.border2}`, borderRadius:8, padding:"8px 12px" }}>
-              <Avatar name={client.full_name} email={client.email} size={28} />
-              <div style={{ flex:1, minWidth:0 }}>
-                <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:FONT }}>{client.full_name}</div>
-                <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>{client.email||client.phone||""}</div>
-              </div>
-              <select value={clientRole} onChange={e=>setClientRole(e.target.value)} style={{ background:C.surface, border:`1px solid ${C.border2}`, borderRadius:6, color:C.text, fontSize:12, fontFamily:FONT, padding:"5px 8px" }}>
-                {["Buyer","Seller","Tenant","Referral"].map(r=><option key={r} value={r}>{r}</option>)}
-              </select>
-              <button onClick={()=>setClient(null)} style={{ background:"none", border:"none", color:C.text3, cursor:"pointer", fontSize:18, lineHeight:1 }}>×</button>
+  return (
+    <Modal title={isEdit?(f.address||"Property"):"Add Deal"} onClose={onClose} maxWidth={580}>
+      <div style={{ display:"flex", gap:4, borderBottom:`1px solid ${C.border}`, marginBottom:16, marginTop:-6 }}>
+        <TabBtn id="overview" label="Overview" />
+        <TabBtn id="people" label={`People${links.length?` (${links.length})`:""}`} />
+        <TabBtn id="notes" label="Notes" />
+      </div>
+
+      {tab==="overview" && (
+        <div style={{ display:"flex", flexDirection:"column", gap:13 }}>
+          <Field label="Property Address" value={f.address} onChange={set("address")} placeholder="123 Main St" autoFocus required />
+          <div style={c3}>
+            <Field label="City" value={f.city} onChange={set("city")} placeholder="Tampa" />
+            <Field label="State" value={f.state} onChange={set("state")} placeholder="FL" />
+            <Field label="Zip" value={f.zip} onChange={set("zip")} placeholder="33611" />
+          </div>
+          <div style={c2}>
+            <Sel label="Status" value={f.status} onChange={set("status")} options={["New","Active","Under Contract","Pending","Closed","Dead"]} />
+            <Sel label="Type" value={f.deal_type} onChange={set("deal_type")} options={["Listing","Buyer","Lease","Referral"]} />
+          </div>
+          <div style={c2}>
+            <Field label="Price" type="number" value={f.price} onChange={set("price")} placeholder="350000" />
+            <Field label="Commission %" type="number" value={f.commission_rate} onChange={set("commission_rate")} placeholder="3" />
+          </div>
+          <div style={c4}>
+            <Field label="Beds" type="number" value={f.bedrooms} onChange={set("bedrooms")} />
+            <Field label="Baths" type="number" value={f.bathrooms} onChange={set("bathrooms")} />
+            <Field label="Sqft" type="number" value={f.sqft} onChange={set("sqft")} />
+            <Field label="Built" type="number" value={f.year_built} onChange={set("year_built")} />
+          </div>
+          <div style={c2}>
+            <Sel label="Property Type" value={f.property_type} onChange={set("property_type")} options={["Single Family","Condo","Townhouse","Multi-Family","Land","Commercial"]} />
+            <Field label="MLS #" value={f.mls_number} onChange={set("mls_number")} placeholder="T1234567" />
+          </div>
+          <Field label="Close Date" type="date" value={f.close_date} onChange={set("close_date")} />
+        </div>
+      )}
+
+      {tab==="people" && (
+        <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+          {links.length>0 && (
+            <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+              {links.map((l,idx)=>(
+                <div key={l.id||idx} style={{ display:"flex", alignItems:"center", gap:10, background:C.surface2, border:`1px solid ${C.border2}`, borderRadius:8, padding:"8px 12px" }}>
+                  <Avatar name={l.contact?.full_name} email={l.contact?.email} size={28} />
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:FONT }}>{l.contact?.full_name}</div>
+                    <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>{l.contact?.email||l.contact?.phone||""}</div>
+                  </div>
+                  <span style={{ fontSize:11, fontWeight:600, color:C.gold, fontFamily:FONT, background:C.goldDim, borderRadius:5, padding:"3px 9px" }}>{l.role}</span>
+                  <button onClick={()=>removeLink(l)} style={{ background:"none", border:"none", color:C.text3, cursor:"pointer", fontSize:18, lineHeight:1 }}>×</button>
+                </div>
+              ))}
             </div>
-          ) : showNew ? (
+          )}
+          {showNew ? (
             <div style={{ display:"flex", flexDirection:"column", gap:9, background:C.surface2, border:`1px solid ${C.border2}`, borderRadius:8, padding:12 }}>
               <Field label="Name" value={nc.full_name} onChange={v=>setNc(p=>({...p,full_name:v}))} placeholder="Client name" autoFocus />
-              <div style={row2}>
+              <div style={c2}>
                 <Field label="Email" value={nc.email} onChange={v=>setNc(p=>({...p,email:v}))} placeholder="name@email.com" />
                 <Field label="Phone" value={nc.phone} onChange={v=>setNc(p=>({...p,phone:v}))} placeholder="(813) 555-1234" />
               </div>
-              <div style={{ display:"flex", gap:8 }}>
-                <GoldButton small onClick={createContact} disabled={saving}>Save contact</GoldButton>
+              <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+                <select value={pickRole} onChange={e=>setPickRole(e.target.value)} style={{ background:C.surface, border:`1px solid ${C.border2}`, borderRadius:6, color:C.text, fontSize:12, fontFamily:FONT, padding:"7px 9px" }}>
+                  {["Buyer","Seller","Tenant","Referral"].map(r=><option key={r} value={r}>{r}</option>)}
+                </select>
+                <GoldButton small onClick={createContact} disabled={saving}>Save & add</GoldButton>
                 <GoldButton small outline onClick={()=>{setShowNew(false);setErr("");}}>Cancel</GoldButton>
               </div>
             </div>
           ) : (
-            <>
-              <input value={cq} onChange={e=>setCq(e.target.value)} placeholder="Search your contacts…"
-                style={{ width:"100%", padding:"9px 12px", background:C.surface2, border:`1px solid ${C.border2}`, borderRadius:8, color:C.text, fontSize:13, fontFamily:FONT, outline:"none", boxSizing:"border-box" }} />
+            <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+              <div style={{ display:"flex", gap:8 }}>
+                <input value={cq} onChange={e=>setCq(e.target.value)} placeholder="Search your contacts to add…"
+                  style={{ flex:1, padding:"9px 12px", background:C.surface2, border:`1px solid ${C.border2}`, borderRadius:8, color:C.text, fontSize:13, fontFamily:FONT, outline:"none", boxSizing:"border-box" }} />
+                <select value={pickRole} onChange={e=>setPickRole(e.target.value)} style={{ background:C.surface2, border:`1px solid ${C.border2}`, borderRadius:8, color:C.text, fontSize:12, fontFamily:FONT, padding:"0 9px" }}>
+                  {["Buyer","Seller","Tenant","Referral"].map(r=><option key={r} value={r}>{r}</option>)}
+                </select>
+              </div>
               {matches.length>0 && (
-                <div style={{ marginTop:6, border:`1px solid ${C.border}`, borderRadius:8, overflow:"hidden" }}>
+                <div style={{ border:`1px solid ${C.border}`, borderRadius:8, overflow:"hidden" }}>
                   {matches.map(c=>(
-                    <button key={c.id} onClick={()=>{setClient(c);setCq("");}} style={{ display:"flex", alignItems:"center", gap:9, width:"100%", textAlign:"left", background:C.surface, border:"none", borderBottom:`1px solid ${C.border}`, padding:"8px 12px", cursor:"pointer" }}>
+                    <button key={c.id} onClick={()=>addLink(c, pickRole)} style={{ display:"flex", alignItems:"center", gap:9, width:"100%", textAlign:"left", background:C.surface, border:"none", borderBottom:`1px solid ${C.border}`, padding:"8px 12px", cursor:"pointer" }}>
                       <Avatar name={c.full_name} email={c.email} size={26} />
                       <div style={{ minWidth:0 }}>
                         <div style={{ fontSize:12, fontWeight:600, color:C.text, fontFamily:FONT }}>{c.full_name}</div>
@@ -2546,19 +2593,24 @@ function PortalDealModal({ deal, agentContact, myContacts, onClose, onSaved, onC
                   ))}
                 </div>
               )}
-              {cq.trim() && matches.length===0 && <div style={{ fontSize:12, color:C.text3, fontFamily:FONT, marginTop:6 }}>No match.</div>}
-              <button onClick={()=>{setShowNew(true);setErr("");}} style={{ marginTop:8, background:"none", border:`1px dashed ${C.border2}`, color:C.gold, cursor:"pointer", fontSize:12, fontFamily:FONT, fontWeight:600, padding:"7px 12px", borderRadius:8, width:"100%" }}>
+              {cq.trim() && matches.length===0 && <div style={{ fontSize:12, color:C.text3, fontFamily:FONT }}>No match.</div>}
+              <button onClick={()=>{setShowNew(true);setErr("");}} style={{ background:"none", border:`1px dashed ${C.border2}`, color:C.gold, cursor:"pointer", fontSize:12, fontFamily:FONT, fontWeight:600, padding:"8px 12px", borderRadius:8, width:"100%" }}>
                 + Add a new contact
               </button>
-            </>
+            </div>
           )}
         </div>
+      )}
 
-        {err && <div style={{ fontSize:12, color:"#ef4444", fontFamily:FONT }}>{err}</div>}
-        <div style={{ display:"flex", justifyContent:"flex-end", gap:8, marginTop:4 }}>
-          <GoldButton outline small onClick={onClose}>Cancel</GoldButton>
-          <GoldButton small onClick={save} disabled={saving}>{saving?"Saving…":(isEdit?"Save changes":"Add deal")}</GoldButton>
-        </div>
+      {tab==="notes" && (
+        <textarea value={f.notes} onChange={e=>set("notes")(e.target.value)} rows={7} placeholder="Notes about this deal…"
+          style={{ width:"100%", padding:"12px 14px", background:C.surface2, border:`1.5px solid ${C.border2}`, borderRadius:8, color:C.text, fontSize:13, fontFamily:FONT, outline:"none", boxSizing:"border-box", resize:"vertical" }} />
+      )}
+
+      {err && <div style={{ fontSize:12, color:"#ef4444", fontFamily:FONT, marginTop:12 }}>{err}</div>}
+      <div style={{ display:"flex", justifyContent:"flex-end", gap:8, marginTop:16, borderTop:`1px solid ${C.border}`, paddingTop:14 }}>
+        <GoldButton outline small onClick={onClose}>Close</GoldButton>
+        <GoldButton small onClick={save} disabled={saving}>{saving?"Saving…":(isEdit?"Save changes":"Add deal")}</GoldButton>
       </div>
     </Modal>
   );
@@ -2566,24 +2618,25 @@ function PortalDealModal({ deal, agentContact, myContacts, onClose, onSaved, onC
 
 function PortalContactModal({ contact, agentContact, onClose, onSaved }) {
   const isEdit = !!contact;
+  const isMobile = useIsMobile();
   const agentEmail = agentContact?.email || "";
   const [f,setF] = useState({
     full_name: contact?.full_name||"", email: contact?.email||"", phone: contact?.phone||"",
-    contact_type: contact?.contact_type||"Lead", status: contact?.status||"New",
+    contact_type: contact?.contact_type||"Lead", pipeline_stage: contact?.pipeline_stage||"New",
     address: contact?.address||"", city: contact?.city||"", state: contact?.state||"", notes: contact?.notes||"",
   });
   const set=(k)=>(v)=>setF(p=>({...p,[k]:v}));
   const [saving,setSaving]=useState(false); const [err,setErr]=useState("");
-  const row2={ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 };
+  const c2={ display:"grid", gridTemplateColumns: isMobile?"1fr":"1fr 1fr", gap:12 };
   const save = async () => {
     if(!f.full_name.trim()){ setErr("Name is required"); return; }
     setSaving(true); setErr("");
     const payload={ full_name:f.full_name.trim(), email:f.email.trim()||null, phone:f.phone.trim()||null,
-      contact_type:f.contact_type, status:f.status, address:f.address.trim()||null, city:f.city.trim()||null,
+      contact_type:f.contact_type, pipeline_stage:f.pipeline_stage, address:f.address.trim()||null, city:f.city.trim()||null,
       state:f.state.trim()||null, notes:f.notes.trim()||null, updated_at:new Date().toISOString() };
     let error;
     if(isEdit){ ({error}=await supabase.from("contacts").update(payload).eq("id",contact.id)); }
-    else { ({error}=await supabase.from("contacts").insert({...payload, org_id:ORG_ID, created_by:agentEmail, assigned_to:agentEmail, source:"Agent Portal"})); }
+    else { ({error}=await supabase.from("contacts").insert({...payload, org_id:ORG_ID, status:"Active", created_by:agentEmail, assigned_to:agentEmail, source:"Agent Portal"})); }
     setSaving(false);
     if(error){ setErr(error.message); return; }
     onSaved && onSaved();
@@ -2592,16 +2645,16 @@ function PortalContactModal({ contact, agentContact, onClose, onSaved }) {
     <Modal title={isEdit?"Edit Contact":"Add Contact"} onClose={onClose} maxWidth={500}>
       <div style={{ display:"flex", flexDirection:"column", gap:13 }}>
         <Field label="Full Name" value={f.full_name} onChange={set("full_name")} placeholder="Jane Smith" autoFocus required />
-        <div style={row2}>
+        <div style={c2}>
           <Field label="Email" value={f.email} onChange={set("email")} placeholder="jane@email.com" />
           <Field label="Phone" value={f.phone} onChange={set("phone")} placeholder="(813) 555-1234" />
         </div>
-        <div style={row2}>
+        <div style={c2}>
           <Sel label="Type" value={f.contact_type} onChange={set("contact_type")} options={["Lead","Client","Buyer","Seller","Vendor","Other"]} />
-          <Sel label="Stage" value={f.status} onChange={set("status")} options={["New","Contacted","Nurturing","Active","Client","Past Client"]} />
+          <Sel label="Stage" value={f.pipeline_stage} onChange={set("pipeline_stage")} options={["New","Contacted","Nurturing","Active","Client","Past Client"]} />
         </div>
         <Field label="Address" value={f.address} onChange={set("address")} placeholder="123 Main St" />
-        <div style={row2}>
+        <div style={c2}>
           <Field label="City" value={f.city} onChange={set("city")} placeholder="Tampa" />
           <Field label="State" value={f.state} onChange={set("state")} placeholder="FL" />
         </div>
@@ -2949,7 +3002,7 @@ function AgentPortalApp(
     const [tab,setTab] = useState("pipeline");
     const [statusF,setStatusF] = useState("all");
     const [yearF,setYearF] = useState("all");
-    const [mode,setMode] = useState("table");
+    const [mode,setMode] = useState(isMobile?"cards":"table");
     const statuses = ["all", ...Array.from(new Set(myDeals.map(d=>d.status).filter(Boolean)))];
     const shown = statusF==="all" ? myDeals : myDeals.filter(d=>d.status===statusF);
     const KANBAN = ["New","Active","Under Contract","Pending","Closed"];
@@ -3093,7 +3146,7 @@ function AgentPortalApp(
     const [mode,setMode] = useState("list");
     const filtered = myContacts.filter(c=>!search||`${c.full_name||""} ${c.email||""} ${c.phone||""}`.toLowerCase().includes(search.toLowerCase()));
     const STAGES = ["New","Contacted","Nurturing","Active","Client","Past Client"];
-    const cols = Array.from(new Set([...STAGES, ...myContacts.map(c=>c.status).filter(Boolean)]));
+    const cols = Array.from(new Set([...STAGES, ...myContacts.map(c=>c.pipeline_stage).filter(Boolean)]));
     const openContact = (c)=>setContactModal({open:true, contact:c||null});
     const ModeBtn = ({id,label}) => (
       <button onClick={()=>setMode(id)} style={{ background: mode===id?C.surface2:"transparent", color: mode===id?C.text:C.text3,
@@ -3131,21 +3184,21 @@ function AgentPortalApp(
           </div>
         ) : mode==="list" ? (
           <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden" }}>
-            <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1.5fr 1fr", padding:"8px 18px", borderBottom:`1px solid ${C.border}` }}>
-              {["Name","Stage","Email","Phone"].map(h=>(<span key={h} style={{ fontSize:10, fontWeight:700, color:C.text3, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.08em" }}>{h}</span>))}
+            <div style={{ display:"grid", gridTemplateColumns:isMobile?"2fr 1fr":"2fr 1fr 1.5fr 1fr", padding:"8px 18px", borderBottom:`1px solid ${C.border}` }}>
+              {(isMobile?["Name","Stage"]:["Name","Stage","Email","Phone"]).map(h=>(<span key={h} style={{ fontSize:10, fontWeight:700, color:C.text3, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.08em" }}>{h}</span>))}
             </div>
             {filtered.length===0
               ? <div style={{ padding:"40px 18px", textAlign:"center", color:C.text3, fontSize:13, fontFamily:FONT }}>No results.</div>
               : filtered.map(c=>(
-                <div key={c.id} onClick={()=>openContact(c)} style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1.5fr 1fr", padding:"11px 18px", borderBottom:`1px solid ${C.border}`, alignItems:"center", cursor:"pointer" }}
+                <div key={c.id} onClick={()=>openContact(c)} style={{ display:"grid", gridTemplateColumns:isMobile?"2fr 1fr":"2fr 1fr 1.5fr 1fr", padding:"11px 18px", borderBottom:`1px solid ${C.border}`, alignItems:"center", cursor:"pointer" }}
                   onMouseEnter={e=>e.currentTarget.style.background=C.surface2} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-                  <div style={{ display:"flex", alignItems:"center", gap:9 }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:9, minWidth:0 }}>
                     <Avatar name={c.full_name} email={c.email} size={26} />
-                    <span style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:FONT }}>{c.full_name}</span>
+                    <span style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:FONT, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{c.full_name}</span>
                   </div>
-                  <span style={{ fontSize:11, color:C.text2, fontFamily:FONT }}>{c.status||c.contact_type||"\u2014"}</span>
-                  <span style={{ fontSize:12, color:C.text2, fontFamily:FONT }}>{c.email||"\u2014"}</span>
-                  <span style={{ fontSize:12, color:C.text2, fontFamily:MONO }}>{c.phone||"\u2014"}</span>
+                  <span style={{ fontSize:11, color:C.text2, fontFamily:FONT }}>{c.pipeline_stage||"\u2014"}</span>
+                  {!isMobile && <span style={{ fontSize:12, color:C.text2, fontFamily:FONT }}>{c.email||"\u2014"}</span>}
+                  {!isMobile && <span style={{ fontSize:12, color:C.text2, fontFamily:MONO }}>{c.phone||"\u2014"}</span>}
                 </div>
               ))
             }
@@ -3153,7 +3206,7 @@ function AgentPortalApp(
         ) : (
           <div style={{ display:"flex", gap:12, overflowX:"auto", paddingBottom:8 }}>
             {cols.map(col=>{
-              const items=filtered.filter(c=>(c.status||"New")===col);
+              const items=filtered.filter(c=>(c.pipeline_stage||"New")===col);
               return (
                 <div key={col} style={{ minWidth:230, width:230, flexShrink:0 }}>
                   <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"6px 10px", marginBottom:8 }}>
