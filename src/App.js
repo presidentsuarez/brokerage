@@ -2405,6 +2405,165 @@ function PortalChatPanel({
     );
 }
 
+function PortalDealModal({ deal, agentContact, myContacts, onClose, onSaved, onContactsChanged }) {
+  const isEdit = !!deal;
+  const agentEmail = agentContact?.email || "";
+  const [f, setF] = useState({
+    address: deal?.address||"", city: deal?.city||"", state: deal?.state||"", zip: deal?.zip||"",
+    price: deal?.price!=null?String(deal.price):"", status: deal?.status||"Active",
+    deal_type: deal?.deal_type||"Listing", property_type: deal?.property_type||"Single Family",
+    bedrooms: deal?.bedrooms!=null?String(deal.bedrooms):"", bathrooms: deal?.bathrooms!=null?String(deal.bathrooms):"",
+    sqft: deal?.sqft!=null?String(deal.sqft):"", year_built: deal?.year_built!=null?String(deal.year_built):"",
+    mls_number: deal?.mls_number||"", commission_rate: deal?.commission_rate!=null?String(deal.commission_rate):"",
+    close_date: deal?.close_date||"", notes: deal?.notes||"",
+  });
+  const set = (k)=>(v)=>setF(p=>({...p,[k]:v}));
+  const [client, setClient] = useState(null);
+  const [clientRole, setClientRole] = useState("Buyer");
+  const [cq, setCq] = useState("");
+  const [showNew, setShowNew] = useState(false);
+  const [nc, setNc] = useState({full_name:"", email:"", phone:""});
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+  const row2 = { display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 };
+
+  const matches = cq.trim()
+    ? myContacts.filter(c=>`${c.full_name||""} ${c.email||""} ${c.phone||""}`.toLowerCase().includes(cq.toLowerCase())).slice(0,6)
+    : [];
+
+  const createContact = async () => {
+    if(!nc.full_name.trim()){ setErr("Contact needs a name"); return; }
+    setSaving(true); setErr("");
+    const { data, error } = await supabase.from("contacts").insert({
+      org_id:ORG_ID, full_name:nc.full_name.trim(), email:nc.email.trim()||null, phone:nc.phone.trim()||null,
+      contact_type:"Client", status:"Active", created_by:agentEmail, assigned_to:agentEmail, source:"Agent Portal"
+    }).select().single();
+    setSaving(false);
+    if(error){ setErr(error.message); return; }
+    setClient(data); setShowNew(false); setNc({full_name:"",email:"",phone:""}); setCq("");
+    onContactsChanged && onContactsChanged();
+  };
+
+  const save = async () => {
+    if(!f.address.trim()){ setErr("Property address is required"); return; }
+    setSaving(true); setErr("");
+    const payload = {
+      address:f.address.trim(), city:f.city.trim()||null, state:f.state.trim()||null, zip:f.zip.trim()||null,
+      price:f.price?Number(f.price):null, status:f.status, deal_type:f.deal_type, property_type:f.property_type,
+      bedrooms:f.bedrooms?parseInt(f.bedrooms):null, bathrooms:f.bathrooms?Number(f.bathrooms):null,
+      sqft:f.sqft?parseInt(f.sqft):null, year_built:f.year_built?parseInt(f.year_built):null,
+      mls_number:f.mls_number.trim()||null, commission_rate:f.commission_rate?Number(f.commission_rate):null,
+      close_date:f.close_date||null, notes:f.notes.trim()||null, updated_at:new Date().toISOString(),
+    };
+    let dealId = deal?.id;
+    if(isEdit){
+      const { error } = await supabase.from("deals").update(payload).eq("id", deal.id);
+      if(error){ setSaving(false); setErr(error.message); return; }
+    } else {
+      const { data, error } = await supabase.from("deals").insert({
+        ...payload, org_id:ORG_ID, agent_contact_id:agentContact.id, created_by:agentEmail
+      }).select().single();
+      if(error){ setSaving(false); setErr(error.message); return; }
+      dealId = data.id;
+    }
+    if(client && dealId){
+      await supabase.from("deal_contacts").insert({
+        deal_id:dealId, contact_id:client.id, role:clientRole, org_id:ORG_ID, added_by:agentEmail });
+    }
+    setSaving(false);
+    onSaved && onSaved();
+  };
+
+  return (
+    <Modal title={isEdit?"Edit Deal":"Add Deal"} onClose={onClose} maxWidth={560}>
+      <div style={{ display:"flex", flexDirection:"column", gap:13 }}>
+        <Field label="Property Address" value={f.address} onChange={set("address")} placeholder="123 Main St" autoFocus required />
+        <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr", gap:12 }}>
+          <Field label="City" value={f.city} onChange={set("city")} placeholder="Tampa" />
+          <Field label="State" value={f.state} onChange={set("state")} placeholder="FL" />
+          <Field label="Zip" value={f.zip} onChange={set("zip")} placeholder="33611" />
+        </div>
+        <div style={row2}>
+          <Sel label="Status" value={f.status} onChange={set("status")} options={["New","Active","Under Contract","Pending","Closed","Dead"]} />
+          <Sel label="Type" value={f.deal_type} onChange={set("deal_type")} options={["Listing","Buyer","Lease","Referral"]} />
+        </div>
+        <div style={row2}>
+          <Field label="Price" type="number" value={f.price} onChange={set("price")} placeholder="350000" />
+          <Field label="Commission %" type="number" value={f.commission_rate} onChange={set("commission_rate")} placeholder="3" />
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:12 }}>
+          <Field label="Beds" type="number" value={f.bedrooms} onChange={set("bedrooms")} />
+          <Field label="Baths" type="number" value={f.bathrooms} onChange={set("bathrooms")} />
+          <Field label="Sqft" type="number" value={f.sqft} onChange={set("sqft")} />
+          <Field label="Built" type="number" value={f.year_built} onChange={set("year_built")} />
+        </div>
+        <div style={row2}>
+          <Sel label="Property Type" value={f.property_type} onChange={set("property_type")} options={["Single Family","Condo","Townhouse","Multi-Family","Land","Commercial"]} />
+          <Field label="MLS #" value={f.mls_number} onChange={set("mls_number")} placeholder="T1234567" />
+        </div>
+        <Field label="Close Date" type="date" value={f.close_date} onChange={set("close_date")} />
+
+        <div style={{ borderTop:`1px solid ${C.border}`, paddingTop:12 }}>
+          <label style={{ fontSize:11, fontWeight:700, color:C.text2, fontFamily:FONT, letterSpacing:"0.08em", textTransform:"uppercase", display:"block", marginBottom:6 }}>Client{isEdit?" (add)":""}</label>
+          {client ? (
+            <div style={{ display:"flex", alignItems:"center", gap:10, background:C.surface2, border:`1px solid ${C.border2}`, borderRadius:8, padding:"8px 12px" }}>
+              <Avatar name={client.full_name} email={client.email} size={28} />
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:FONT }}>{client.full_name}</div>
+                <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>{client.email||client.phone||""}</div>
+              </div>
+              <select value={clientRole} onChange={e=>setClientRole(e.target.value)} style={{ background:C.surface, border:`1px solid ${C.border2}`, borderRadius:6, color:C.text, fontSize:12, fontFamily:FONT, padding:"5px 8px" }}>
+                {["Buyer","Seller","Tenant","Referral"].map(r=><option key={r} value={r}>{r}</option>)}
+              </select>
+              <button onClick={()=>setClient(null)} style={{ background:"none", border:"none", color:C.text3, cursor:"pointer", fontSize:18, lineHeight:1 }}>×</button>
+            </div>
+          ) : showNew ? (
+            <div style={{ display:"flex", flexDirection:"column", gap:9, background:C.surface2, border:`1px solid ${C.border2}`, borderRadius:8, padding:12 }}>
+              <Field label="Name" value={nc.full_name} onChange={v=>setNc(p=>({...p,full_name:v}))} placeholder="Client name" autoFocus />
+              <div style={row2}>
+                <Field label="Email" value={nc.email} onChange={v=>setNc(p=>({...p,email:v}))} placeholder="name@email.com" />
+                <Field label="Phone" value={nc.phone} onChange={v=>setNc(p=>({...p,phone:v}))} placeholder="(813) 555-1234" />
+              </div>
+              <div style={{ display:"flex", gap:8 }}>
+                <GoldButton small onClick={createContact} disabled={saving}>Save contact</GoldButton>
+                <GoldButton small outline onClick={()=>{setShowNew(false);setErr("");}}>Cancel</GoldButton>
+              </div>
+            </div>
+          ) : (
+            <>
+              <input value={cq} onChange={e=>setCq(e.target.value)} placeholder="Search your contacts…"
+                style={{ width:"100%", padding:"9px 12px", background:C.surface2, border:`1px solid ${C.border2}`, borderRadius:8, color:C.text, fontSize:13, fontFamily:FONT, outline:"none", boxSizing:"border-box" }} />
+              {matches.length>0 && (
+                <div style={{ marginTop:6, border:`1px solid ${C.border}`, borderRadius:8, overflow:"hidden" }}>
+                  {matches.map(c=>(
+                    <button key={c.id} onClick={()=>{setClient(c);setCq("");}} style={{ display:"flex", alignItems:"center", gap:9, width:"100%", textAlign:"left", background:C.surface, border:"none", borderBottom:`1px solid ${C.border}`, padding:"8px 12px", cursor:"pointer" }}>
+                      <Avatar name={c.full_name} email={c.email} size={26} />
+                      <div style={{ minWidth:0 }}>
+                        <div style={{ fontSize:12, fontWeight:600, color:C.text, fontFamily:FONT }}>{c.full_name}</div>
+                        <div style={{ fontSize:10, color:C.text3, fontFamily:FONT }}>{c.email||c.phone||""}</div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {cq.trim() && matches.length===0 && <div style={{ fontSize:12, color:C.text3, fontFamily:FONT, marginTop:6 }}>No match.</div>}
+              <button onClick={()=>{setShowNew(true);setErr("");}} style={{ marginTop:8, background:"none", border:`1px dashed ${C.border2}`, color:C.gold, cursor:"pointer", fontSize:12, fontFamily:FONT, fontWeight:600, padding:"7px 12px", borderRadius:8, width:"100%" }}>
+                + Add a new contact
+              </button>
+            </>
+          )}
+        </div>
+
+        {err && <div style={{ fontSize:12, color:"#ef4444", fontFamily:FONT }}>{err}</div>}
+        <div style={{ display:"flex", justifyContent:"flex-end", gap:8, marginTop:4 }}>
+          <GoldButton outline small onClick={onClose}>Cancel</GoldButton>
+          <GoldButton small onClick={save} disabled={saving}>{saving?"Saving…":(isEdit?"Save changes":"Add deal")}</GoldButton>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 function AgentPortalApp(
 { agentContact, session, onSignOut, isPreview=false, initialView, onViewChange }) {
   const [view, setView]       = useState(initialView||"portal_dashboard");
@@ -2428,6 +2587,7 @@ function AgentPortalApp(
   const [agentLifetime, setAgentLifetime] = useState(null);
   const [agentYearly, setAgentYearly]     = useState([]);
   const [agentTxns, setAgentTxns]         = useState([]);
+  const [dealModal, setDealModal]         = useState({open:false, deal:null});
 
   const agentName  = agentContact?.full_name || "Agent";
   const agentEmail = agentContact?.email || session?.user?.email || "";
@@ -2437,9 +2597,11 @@ function AgentPortalApp(
     const load = async () => {
       const [dc, ct, t, tm] = await Promise.all([
         // deals linked to this agent
-        supabase.from("deal_contacts")
-          .select("role, deals(id,address,city,state,price,status,deal_type,mls_number,bedrooms,bathrooms,sqft,close_date,commission_rate,notes,created_at)")
-          .eq("contact_id", agentContact?.id || "00000000-0000-0000-0000-000000000000"),
+        supabase.from("deals")
+          .select("id,address,city,state,zip,price,status,deal_type,property_type,mls_number,bedrooms,bathrooms,sqft,year_built,close_date,commission_rate,notes,created_at")
+          .eq("org_id", ORG_ID)
+          .eq("agent_contact_id", agentContact?.id || "00000000-0000-0000-0000-000000000000")
+          .order("created_at",{ascending:false}),
         // contacts created by agent
         supabase.from("contacts")
           .select("*").eq("org_id", ORG_ID)
@@ -2453,7 +2615,7 @@ function AgentPortalApp(
           .select("full_name,email,brokerage_role,role,phone")
           .eq("org_id", ORG_ID).order("full_name"),
       ]);
-      setMyDeals((dc.data||[]).map(r=>({...r.deals, agent_role:r.role})).filter(d=>d?.id));
+      setMyDeals(dc.data||[]);
       setMyCon(ct.data||[]);
       setMyTasks(t.data||[]);
       setTeam(tm.data||[]);
@@ -2726,122 +2888,134 @@ function AgentPortalApp(
 
   // ── Pipeline ──
   const PortalPipeline = () => {
-    const fmt2 = n=>n>=1e6?`$${(n/1e6).toFixed(1)}M`:n>=1e3?`$${(n/1e3).toFixed(0)}K`:`$${n}`;
+    const fmt2 = n=>{ n=Number(n||0); return n>=1e6?`$${(n/1e6).toFixed(1)}M`:n>=1e3?`$${(n/1e3).toFixed(0)}K`:`$${n}`; };
     const [tab,setTab] = useState("pipeline");
     const [statusF,setStatusF] = useState("all");
     const [yearF,setYearF] = useState("all");
+    const [mode,setMode] = useState("table");
     const statuses = ["all", ...Array.from(new Set(myDeals.map(d=>d.status).filter(Boolean)))];
     const shown = statusF==="all" ? myDeals : myDeals.filter(d=>d.status===statusF);
+    const KANBAN = ["New","Active","Under Contract","Pending","Closed"];
     const histYears = ["all", ...Array.from(new Set(agentTxns.map(t=>t.tax_year).filter(Boolean))).sort((a,b)=>b-a)];
     const histTxns = yearF==="all" ? agentTxns : agentTxns.filter(t=>String(t.tax_year)===String(yearF));
     const histSum = histTxns.reduce((a,t)=>({v:a.v+Number(t.close_price||0), g:a.g+Number(t.gross_commission||0)}),{v:0,g:0});
+    const openDeal = (d)=>setDealModal({open:true, deal:d||null});
     const Tab = ({id,label}) => (
-      <button onClick={()=>setTab(id)} style={{
-        background: tab===id?C.goldDim:"transparent", color: tab===id?C.gold:C.text2,
-        border:`1px solid ${tab===id?C.goldBorder:C.border}`, borderRadius:8,
-        padding:"7px 14px", fontSize:12, fontWeight:600, fontFamily:FONT, cursor:"pointer" }}>{label}</button>
+      <button onClick={()=>setTab(id)} style={{ background: tab===id?C.goldDim:"transparent", color: tab===id?C.gold:C.text2,
+        border:`1px solid ${tab===id?C.goldBorder:C.border}`, borderRadius:8, padding:"7px 14px", fontSize:12, fontWeight:600, fontFamily:FONT, cursor:"pointer" }}>{label}</button>
     );
-    const pill = (active) => ({
-      background: active?C.text:"transparent", color: active?C.bg:C.text2,
-      border:`1px solid ${active?C.text:C.border2}`, borderRadius:20,
-      padding:"5px 13px", fontSize:11, fontWeight:600, fontFamily:FONT, cursor:"pointer" });
+    const pill = (active) => ({ background: active?C.text:"transparent", color: active?C.bg:C.text2,
+      border:`1px solid ${active?C.text:C.border2}`, borderRadius:20, padding:"5px 13px", fontSize:11, fontWeight:600, fontFamily:FONT, cursor:"pointer" });
+    const ModeBtn = ({id,label}) => (
+      <button onClick={()=>setMode(id)} style={{ background: mode===id?C.surface2:"transparent", color: mode===id?C.text:C.text3,
+        border:`1px solid ${mode===id?C.border2:C.border}`, borderRadius:7, padding:"5px 11px", fontSize:11, fontWeight:600, fontFamily:FONT, cursor:"pointer" }}>{label}</button>
+    );
+    const card = (d) => (
+      <div key={d.id} onClick={()=>openDeal(d)} style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:10, padding:"13px 15px", cursor:"pointer" }}
+        onMouseEnter={e=>e.currentTarget.style.borderColor=C.goldBorder} onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:8 }}>
+          <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:FONT }}>{d.address||"\u2014"}</div>
+          <StatusBadge status={d.status} />
+        </div>
+        <div style={{ fontSize:11, color:C.text3, fontFamily:FONT, marginTop:3 }}>{[d.city,d.state].filter(Boolean).join(", ")}{d.mls_number?` \u00b7 MLS ${d.mls_number}`:""}</div>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:9 }}>
+          <span style={{ fontSize:11, color:C.text2, fontFamily:FONT }}>{d.deal_type||"\u2014"}</span>
+          <span style={{ fontSize:13, fontWeight:700, color:C.gold, fontFamily:MONO }}>{d.price?fmt2(d.price):"\u2014"}</span>
+        </div>
+      </div>
+    );
     return (
       <div style={{ padding:"20px 24px" }}>
-        <div style={{ display:"flex", gap:8, marginBottom:14, flexWrap:"wrap" }}>
-          <Tab id="pipeline" label="Active Pipeline" />
-          <Tab id="history" label={`Track Record${agentTxns.length?` \u00b7 ${agentTxns.length} closed`:""}`} />
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10, marginBottom:14, flexWrap:"wrap" }}>
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+            <Tab id="pipeline" label="Active Pipeline" />
+            <Tab id="history" label={`Track Record${agentTxns.length?` \u00b7 ${agentTxns.length} closed`:""}`} />
+          </div>
+          {tab==="pipeline" && <GoldButton small onClick={()=>openDeal(null)}>+ Add Deal</GoldButton>}
         </div>
 
         {tab==="pipeline" && (
           <>
-            <div style={{ display:"flex", gap:7, flexWrap:"wrap", marginBottom:14 }}>
-              {statuses.map(st=>(
-                <button key={st} onClick={()=>setStatusF(st)} style={pill(statusF===st)}>{st==="all"?"All":st}</button>
-              ))}
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10, marginBottom:14, flexWrap:"wrap" }}>
+              <div style={{ display:"flex", gap:7, flexWrap:"wrap" }}>
+                {statuses.map(st=>(<button key={st} onClick={()=>setStatusF(st)} style={pill(statusF===st)}>{st==="all"?"All":st}</button>))}
+              </div>
+              <div style={{ display:"flex", gap:6 }}>
+                <ModeBtn id="table" label="Table" /><ModeBtn id="kanban" label="Kanban" /><ModeBtn id="cards" label="Cards" />
+              </div>
             </div>
-            <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden" }}>
-              <div style={{ padding:"13px 18px", borderBottom:`1px solid ${C.border}`,
-                display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-                <span style={{ fontSize:11, fontWeight:700, color:C.text2, fontFamily:FONT,
-                  textTransform:"uppercase", letterSpacing:"0.08em" }}>My Listing Pipeline</span>
-                <span style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>{shown.length} deals</span>
+
+            {myDeals.length===0 ? (
+              <div style={{ background:C.surface, border:`1px dashed ${C.border2}`, borderRadius:12, padding:"48px 18px", textAlign:"center" }}>
+                <div style={{ fontSize:14, color:C.text2, fontFamily:FONT, marginBottom:4 }}>No deals yet.</div>
+                <div style={{ fontSize:12, color:C.text3, fontFamily:FONT, marginBottom:14 }}>Add your first deal to start tracking your pipeline. Your closed history is under <strong>Track Record</strong>.</div>
+                <GoldButton small onClick={()=>openDeal(null)}>+ Add your first deal</GoldButton>
               </div>
-              <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr 1fr", padding:"8px 18px", borderBottom:`1px solid ${C.border}` }}>
-                {["Property","My Role","Status","Price"].map(h=>(
-                  <span key={h} style={{ fontSize:10, fontWeight:700, color:C.text3,
-                    fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.08em" }}>{h}</span>
-                ))}
+            ) : mode==="table" ? (
+              <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden" }}>
+                <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr 1fr", padding:"8px 18px", borderBottom:`1px solid ${C.border}` }}>
+                  {["Property","Type","Status","Price"].map(h=>(<span key={h} style={{ fontSize:10, fontWeight:700, color:C.text3, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.08em" }}>{h}</span>))}
+                </div>
+                {shown.length===0
+                  ? <div style={{ padding:"40px 18px", textAlign:"center", color:C.text3, fontSize:13, fontFamily:FONT }}>No deals match this filter.</div>
+                  : shown.map(d=>(
+                    <div key={d.id} onClick={()=>openDeal(d)} style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr 1fr", padding:"12px 18px", borderBottom:`1px solid ${C.border}`, alignItems:"center", cursor:"pointer" }}
+                      onMouseEnter={e=>e.currentTarget.style.background=C.surface2} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                      <div>
+                        <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:FONT }}>{d.address||"\u2014"}</div>
+                        <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>{[d.city,d.state].filter(Boolean).join(", ")}{d.mls_number?` \u00b7 MLS ${d.mls_number}`:""}</div>
+                      </div>
+                      <span style={{ fontSize:12, color:C.text2, fontFamily:FONT }}>{d.deal_type||"\u2014"}</span>
+                      <StatusBadge status={d.status} />
+                      <span style={{ fontSize:12, fontWeight:700, color:C.gold, fontFamily:MONO }}>{d.price?fmt2(d.price):"\u2014"}</span>
+                    </div>
+                  ))
+                }
               </div>
-              {shown.length===0
-                ? <div style={{ padding:"48px 18px", textAlign:"center", color:C.text3, fontSize:13, fontFamily:FONT }}>
-                    {myDeals.length===0
-                      ? <>No live deals linked to you yet.<br/><span style={{ fontSize:11, marginTop:6, display:"block" }}>Your closed history is under <strong>Track Record</strong>.</span></>
-                      : "No deals match this filter."}
-                  </div>
-                : shown.map(d=>(
-                  <div key={d.id} style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr 1fr",
-                    padding:"12px 18px", borderBottom:`1px solid ${C.border}`, alignItems:"center" }}
-                    onMouseEnter={e=>e.currentTarget.style.background=C.surface2}
-                    onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-                    <div>
-                      <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:FONT }}>{d.address||"\u2014"}</div>
-                      <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>
-                        {[d.city,d.state].filter(Boolean).join(", ")}{d.mls_number?` \u00b7 MLS ${d.mls_number}`:""}
+            ) : mode==="cards" ? (
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(240px,1fr))", gap:12 }}>
+                {shown.length===0 ? <div style={{ color:C.text3, fontSize:13, fontFamily:FONT }}>No deals match this filter.</div> : shown.map(card)}
+              </div>
+            ) : (
+              <div style={{ display:"flex", gap:12, overflowX:"auto", paddingBottom:8 }}>
+                {KANBAN.map(col=>{
+                  const items=myDeals.filter(d=>d.status===col);
+                  return (
+                    <div key={col} style={{ minWidth:230, width:230, flexShrink:0 }}>
+                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"6px 10px", marginBottom:8 }}>
+                        <span style={{ fontSize:11, fontWeight:700, color:C.text2, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.07em" }}>{col}</span>
+                        <span style={{ fontSize:11, color:C.text3, fontFamily:MONO }}>{items.length}</span>
+                      </div>
+                      <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
+                        {items.length===0 ? <div style={{ fontSize:11, color:C.text3, fontFamily:FONT, padding:"10px", textAlign:"center", border:`1px dashed ${C.border}`, borderRadius:9 }}>{"\u2014"}</div> : items.map(card)}
                       </div>
                     </div>
-                    <span style={{ fontSize:11, fontWeight:600, color:C.gold, fontFamily:FONT,
-                      background:C.goldDim, borderRadius:5, padding:"2px 8px", width:"fit-content" }}>{d.agent_role||"Agent"}</span>
-                    <StatusBadge status={d.status} />
-                    <span style={{ fontSize:12, fontWeight:700, color:C.gold, fontFamily:MONO }}>{d.price?fmt2(d.price):"\u2014"}</span>
-                  </div>
-                ))
-              }
-            </div>
+                  );
+                })}
+              </div>
+            )}
           </>
         )}
 
         {tab==="history" && (
           <>
             <div style={{ display:"flex", gap:7, flexWrap:"wrap", marginBottom:12 }}>
-              {histYears.map(y=>(
-                <button key={y} onClick={()=>setYearF(y)} style={pill(String(yearF)===String(y))}>{y==="all"?"All Years":y}</button>
-              ))}
+              {histYears.map(y=>(<button key={y} onClick={()=>setYearF(y)} style={pill(String(yearF)===String(y))}>{y==="all"?"All Years":y}</button>))}
             </div>
-            <div style={{ display:"flex", gap:24, flexWrap:"wrap", marginBottom:14, padding:"12px 18px",
-              background:`linear-gradient(135deg, ${C.goldDim}, ${C.surface})`, border:`1px solid ${C.goldBorder}`, borderRadius:12 }}>
-              {[
-                {label: yearF==="all"?"Total Closed":`${yearF} Closed`, val:histTxns.length},
-                {label:"Volume", val:histSum.v?fmt2(histSum.v):"\u2014"},
-                {label:"Gross Commission", val:histSum.g?fmt2(histSum.g):"\u2014"},
-              ].map(s=>(
-                <div key={s.label}>
-                  <div style={{ fontSize:20, fontWeight:700, color:C.text, fontFamily:SERIF, letterSpacing:"-0.02em" }}>{s.val}</div>
-                  <div style={{ fontSize:10, fontWeight:700, color:C.text2, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.07em", marginTop:2 }}>{s.label}</div>
-                </div>
+            <div style={{ display:"flex", gap:24, flexWrap:"wrap", marginBottom:14, padding:"12px 18px", background:`linear-gradient(135deg, ${C.goldDim}, ${C.surface})`, border:`1px solid ${C.goldBorder}`, borderRadius:12 }}>
+              {[{label: yearF==="all"?"Total Closed":`${yearF} Closed`, val:histTxns.length},{label:"Volume", val:histSum.v?fmt2(histSum.v):"\u2014"},{label:"Gross Commission", val:histSum.g?fmt2(histSum.g):"\u2014"}].map(s=>(
+                <div key={s.label}><div style={{ fontSize:20, fontWeight:700, color:C.text, fontFamily:SERIF, letterSpacing:"-0.02em" }}>{s.val}</div><div style={{ fontSize:10, fontWeight:700, color:C.text2, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.07em", marginTop:2 }}>{s.label}</div></div>
               ))}
             </div>
             <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden" }}>
               <div style={{ display:"grid", gridTemplateColumns:"2.4fr 0.7fr 1.1fr 1.1fr 0.9fr", padding:"9px 18px", borderBottom:`1px solid ${C.border}` }}>
-                {["Property","Year","Close Price","Commission","Status"].map(h=>(
-                  <span key={h} style={{ fontSize:10, fontWeight:700, color:C.text3, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.08em" }}>{h}</span>
-                ))}
+                {["Property","Year","Close Price","Commission","Status"].map(h=>(<span key={h} style={{ fontSize:10, fontWeight:700, color:C.text3, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.08em" }}>{h}</span>))}
               </div>
               {histTxns.length===0
                 ? <div style={{ padding:"48px 18px", textAlign:"center", color:C.text3, fontSize:13, fontFamily:FONT }}>No transactions on file.</div>
                 : histTxns.map(t=>(
-                  <div key={t.id} style={{ display:"grid", gridTemplateColumns:"2.4fr 0.7fr 1.1fr 1.1fr 0.9fr",
-                    padding:"11px 18px", borderBottom:`1px solid ${C.border}`, alignItems:"center" }}
-                    onMouseEnter={e=>e.currentTarget.style.background=C.surface2}
-                    onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-                    <div style={{ minWidth:0 }}>
-                      <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:FONT,
-                        whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{t.address||"\u2014"}</div>
-                      {(t.buyer_name||t.seller_name||t.transaction_type) && (
-                        <div style={{ fontSize:10, color:C.text3, fontFamily:FONT }}>
-                          {[t.transaction_type, t.side].filter(Boolean).join(" \u00b7 ")}
-                        </div>
-                      )}
-                    </div>
+                  <div key={t.id} style={{ display:"grid", gridTemplateColumns:"2.4fr 0.7fr 1.1fr 1.1fr 0.9fr", padding:"11px 18px", borderBottom:`1px solid ${C.border}`, alignItems:"center" }}>
+                    <div style={{ minWidth:0 }}><div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:FONT, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{t.address||"\u2014"}</div><div style={{ fontSize:10, color:C.text3, fontFamily:FONT }}>{[t.transaction_type,t.side].filter(Boolean).join(" \u00b7 ")}</div></div>
                     <span style={{ fontSize:12, color:C.text2, fontFamily:MONO }}>{t.tax_year||"\u2014"}</span>
                     <span style={{ fontSize:12, fontWeight:600, color:C.text, fontFamily:MONO }}>{Number(t.close_price)?fmt2(Number(t.close_price)):"\u2014"}</span>
                     <span style={{ fontSize:12, color:C.green, fontFamily:MONO }}>{Number(t.gross_commission)?fmt2(Number(t.gross_commission)):"\u2014"}</span>
@@ -3108,6 +3282,26 @@ function AgentPortalApp(
             </>
           }
         </main>
+        {dealModal.open && (
+          <PortalDealModal
+            deal={dealModal.deal}
+            agentContact={agentContact}
+            myContacts={myContacts}
+            onClose={()=>setDealModal({open:false,deal:null})}
+            onSaved={async()=>{
+              setDealModal({open:false,deal:null});
+              const { data } = await supabase.from("deals")
+                .select("id,address,city,state,zip,price,status,deal_type,property_type,mls_number,bedrooms,bathrooms,sqft,year_built,close_date,commission_rate,notes,created_at")
+                .eq("org_id",ORG_ID).eq("agent_contact_id",agentContact.id).order("created_at",{ascending:false});
+              setMyDeals(data||[]);
+            }}
+            onContactsChanged={async()=>{
+              const { data } = await supabase.from("contacts").select("*")
+                .eq("org_id",ORG_ID).eq("created_by",agentEmail).order("full_name");
+              setMyCon(data||[]);
+            }}
+          />
+        )}
       </div>
     </div>
   );
