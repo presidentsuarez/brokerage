@@ -2487,7 +2487,7 @@ function AgentPortalApp(
 
   // ── Agent Sidebar ──
   const AgentSidebar = () => {
-    const sW = sidebarCollapsed&&!isMobile ? 56 : 272;
+    const sW = isMobile ? 272 : sidebarCollapsed ? 56 : 220;
     const isHidden = isMobile && !mobileMenuOpen;
     return (
     <>
