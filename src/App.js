@@ -1987,6 +1987,7 @@ function DealsTable({ deals, allDeals, onSelect, fmt }) {
 }
 
 function DealsView({ user, deals, onRefresh }) {
+  const isMobile = useIsMobile();
   const [rows,setRows]     = useState([]);
   const [agents,setAgents] = useState([]);
   const [myCid,setMyCid]   = useState(null);
@@ -2088,6 +2089,32 @@ function DealsView({ user, deals, onRefresh }) {
         <span style={{ fontSize:12, color:C.text2 }}>GCI <b style={{color:C.gold,fontFamily:MONO}}>{fmt(sumGci)}</b></span>
       </div>
 
+      {isMobile ? (
+        <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+          {loading
+            ? <div style={{ padding:"40px 18px", textAlign:"center", color:C.text3, fontSize:13, fontFamily:FONT }}>Loading deals…</div>
+            : shown.length===0
+              ? <div style={{ padding:"40px 18px", textAlign:"center", color:C.text3, fontSize:13, fontFamily:FONT }}>No deals match your filter</div>
+              : shown.map(r=>(
+                <div key={r.key} onClick={()=>setSel(r)} style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:"13px 15px", cursor:"pointer" }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:8 }}>
+                    <div style={{ fontSize:14, fontWeight:700, color:C.text, fontFamily:FONT, minWidth:0 }}>{r.address||"\u2014"}</div>
+                    <div style={{ fontSize:14, fontWeight:700, color:C.gold, fontFamily:MONO, whiteSpace:"nowrap" }}>{r.price?fmt(r.price):"\u2014"}</div>
+                  </div>
+                  <div style={{ display:"flex", alignItems:"center", gap:8, marginTop:5, flexWrap:"wrap" }}>
+                    {r.active && <span style={{ fontSize:9, fontWeight:700, color:C.blue, background:"rgba(59,130,246,0.12)", borderRadius:10, padding:"2px 7px" }}>ACTIVE</span>}
+                    {r.ref && <span style={{ fontSize:9, fontWeight:700, color:C.blue, border:`1px solid ${C.border2}`, borderRadius:10, padding:"2px 7px" }}>REFERRAL</span>}
+                    {r.fee && <span style={{ fontSize:9, fontWeight:700, color:C.text3, border:`1px solid ${C.border2}`, borderRadius:10, padding:"2px 7px" }}>FEE</span>}
+                    <span style={{ fontSize:12, color:C.text2, fontFamily:FONT }}>{nameOf[r.agent_contact_id]||"\u2014"}</span>
+                    <span style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>{[r.type, r.year].filter(Boolean).join(" \u00b7 ")}</span>
+                    {r.gci ? <span style={{ fontSize:11, color:C.gold, fontFamily:MONO, marginLeft:"auto" }}>GCI {fmt(r.gci)}</span> : null}
+                  </div>
+                </div>
+              ))
+          }
+          {filtered.length>500 && <div style={{ padding:"10px", color:C.text3, fontSize:12, fontFamily:FONT, textAlign:"center" }}>Showing first 500 of {filtered.length.toLocaleString()} — narrow with a filter.</div>}
+        </div>
+      ) : (
       <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden" }}>
         <div style={{ display:"grid", gridTemplateColumns:"2fr 1.3fr 0.8fr 0.5fr 1fr 1fr", padding:"9px 18px", borderBottom:`1px solid ${C.border}` }}>
           {["Address","Agent","Type","Year","Price","GCI"].map(h=>(
@@ -2104,21 +2131,22 @@ function DealsView({ user, deals, onRefresh }) {
                 onMouseEnter={e=>e.currentTarget.style.background=C.surface2}
                 onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
                 <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:FONT, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
-                  {r.address||"—"}
-                  {r.active?<span style={{color:C.blue,fontSize:10,marginLeft:6,fontWeight:700}}>● ACTIVE</span>:null}
+                  {r.address||"\u2014"}
+                  {r.active?<span style={{color:C.blue,fontSize:10,marginLeft:6,fontWeight:700}}>\u25cf ACTIVE</span>:null}
                   {r.ref?<span style={{color:C.blue,fontSize:10,marginLeft:6}}>REF</span>:null}
                   {r.fee?<span style={{color:C.text3,fontSize:10,marginLeft:6}}>FEE</span>:null}
                 </div>
-                <span style={{ fontSize:12.5, color:C.text2, fontFamily:FONT, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{nameOf[r.agent_contact_id]||"—"}</span>
-                <span style={{ fontSize:12, color:C.text2, fontFamily:FONT }}>{r.type||"—"}</span>
-                <span style={{ fontSize:12, color:C.text3, fontFamily:MONO }}>{r.year||"—"}</span>
-                <span style={{ fontSize:12, fontWeight:600, color:C.text, fontFamily:MONO }}>{r.price?fmt(r.price):"—"}</span>
-                <span style={{ fontSize:12, fontWeight:600, color:C.gold, fontFamily:MONO }}>{r.gci?fmt(r.gci):"—"}</span>
+                <span style={{ fontSize:12.5, color:C.text2, fontFamily:FONT, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{nameOf[r.agent_contact_id]||"\u2014"}</span>
+                <span style={{ fontSize:12, color:C.text2, fontFamily:FONT }}>{r.type||"\u2014"}</span>
+                <span style={{ fontSize:12, color:C.text3, fontFamily:MONO }}>{r.year||"\u2014"}</span>
+                <span style={{ fontSize:12, fontWeight:600, color:C.text, fontFamily:MONO }}>{r.price?fmt(r.price):"\u2014"}</span>
+                <span style={{ fontSize:12, fontWeight:600, color:C.gold, fontFamily:MONO }}>{r.gci?fmt(r.gci):"\u2014"}</span>
               </div>
             ))
         }
         {filtered.length>500 && <div style={{ padding:"12px 18px", color:C.text3, fontSize:12, fontFamily:FONT, textAlign:"center" }}>Showing first 500 of {filtered.length.toLocaleString()} — narrow with a filter.</div>}
       </div>
+      )}
 
       {sel&&(
         <Modal title={sel.active?"Active Listing":"Deal"} onClose={()=>setSel(null)} maxWidth={500}>
