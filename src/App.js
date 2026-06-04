@@ -3018,6 +3018,45 @@ function AgentPortalPreview({ contact, onClose }) {
 }
 
 
+function AgentPickerModal({ contacts, onPick, onClose }) {
+  const [q,setQ] = useState("");
+  const list = contacts
+    .filter(c=>!q || `${c.full_name||""} ${c.email||""}`.toLowerCase().includes(q.toLowerCase()))
+    .sort((a,b)=>(a.full_name||"").localeCompare(b.full_name||""));
+  return (
+    <Modal title="View as agent" onClose={onClose} maxWidth={460}>
+      <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+        <div style={{ fontSize:12, color:C.text3, fontFamily:FONT }}>
+          Open any agent's portal exactly as they see it. Agents without an email on file can't be previewed.
+        </div>
+        <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search agents…" autoFocus
+          style={{ padding:"9px 12px", background:C.surface2, border:`1px solid ${C.border2}`,
+            borderRadius:8, color:C.text, fontSize:13, fontFamily:FONT, outline:"none" }} />
+        <div style={{ maxHeight:360, overflowY:"auto", display:"flex", flexDirection:"column", gap:6 }}>
+          {list.length===0 && (
+            <div style={{ fontSize:13, color:C.text3, fontFamily:FONT, padding:"12px 4px" }}>No agents found.</div>
+          )}
+          {list.map(c=>(
+            <button key={c.id} onClick={()=>c.email&&onPick(c)} disabled={!c.email}
+              title={c.email?"":"No email on file — can't preview portal"}
+              style={{ display:"flex", alignItems:"center", gap:10, textAlign:"left",
+                background:C.surface, border:`1px solid ${C.border}`, borderRadius:10,
+                padding:"10px 12px", cursor:c.email?"pointer":"not-allowed",
+                opacity:c.email?1:0.5, width:"100%" }}>
+              <Avatar name={c.full_name} email={c.email} size={30} />
+              <div style={{ minWidth:0 }}>
+                <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:FONT,
+                  whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{c.full_name}</div>
+                <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>{c.email||"no email"}</div>
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 function ContactsTable({ contacts, allContacts, onSelect, typeDot }) {
   const isMobile = useIsMobile();
   if(contacts.length===0) return (
@@ -3240,57 +3279,20 @@ function ContactDetail({ contact, user, onClose, onRefresh }) {
             </div>
           )}
 
-          {/* ── Agent Portal Toggle ── */}
-          <div style={{ background:C.surface, border:`1px solid ${contact.portal_enabled?C.goldBorder:C.border}`,
-            borderRadius:12, padding:"16px 18px" }}>
-            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom: contact.portal_enabled||portalMode?12:0 }}>
-              <div>
-                <div style={{ fontSize:13, fontWeight:700, color:C.text, fontFamily:FONT,
-                  display:"flex", alignItems:"center", gap:8 }}>
-                  Agent Portal
-                  {contact.portal_enabled&&<span style={{ fontSize:10, fontWeight:700,
-                    color:C.green, background:"rgba(34,197,94,0.10)",
-                    borderRadius:20, padding:"2px 8px" }}>Active</span>}
-                </div>
+          {/* ── Agent Portal Preview (admin sees exactly what the agent sees) ── */}
+          {contact.contact_type==="Agent" && contact.email && (
+            <div style={{ background:C.surface, border:`1px solid ${C.border}`,
+              borderRadius:12, padding:"16px 18px", display:"flex", alignItems:"center",
+              justifyContent:"space-between", gap:12 }}>
+              <div style={{ minWidth:0 }}>
+                <div style={{ fontSize:13, fontWeight:700, color:C.text, fontFamily:FONT }}>Agent Portal</div>
                 <div style={{ fontSize:11, color:C.text3, fontFamily:FONT, marginTop:2 }}>
-                  {contact.portal_enabled
-                    ? `Access: ${contact.portal_email}`
-                    : "Give this agent a personal portal login"}
+                  See exactly what {(contact.full_name||"this agent").split(" ")[0]} sees when they log in
                 </div>
               </div>
-              <div>
-                {contact.portal_enabled ? (
-                  <div style={{ display:"flex", gap:8 }}>
-                    <GoldButton small onClick={()=>setShowPreview(true)}>Preview portal</GoldButton>
-                    <GoldButton small danger onClick={disablePortal} disabled={saving}>
-                      {saving?"Revoking…":"Revoke"}
-                    </GoldButton>
-                  </div>
-                ) : (
-                  <GoldButton small outline onClick={()=>setPortalMode(p=>!p)}>
-                    {portalMode?"Cancel":"Enable portal"}
-                  </GoldButton>
-                )}
-              </div>
+              <GoldButton small onClick={()=>setShowPreview(true)}>Preview portal</GoldButton>
             </div>
-
-            {/* Enable portal form */}
-            {!contact.portal_enabled && portalMode && (
-              <div style={{ borderTop:`1px solid ${C.border}`, paddingTop:12,
-                display:"flex", flexDirection:"column", gap:10 }}>
-                <Field label="Portal login email" value={portalEmail}
-                  onChange={setPortalEmail} type="email"
-                  placeholder={contact.email||"agent@example.com"} autoFocus />
-                <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>
-                  The agent will use this email to log into their portal.
-                  Make sure it matches their auth email if they already have an account.
-                </div>
-                <GoldButton onClick={enablePortal} disabled={saving||!portalEmail.trim()} small>
-                  {saving?"Enabling…":"Enable & save"}
-                </GoldButton>
-              </div>
-            )}
-          </div>
+          )}
         </div>
       </div>
 
@@ -6427,6 +6429,8 @@ export default function App() {
   const [dataLoaded,setDataLoaded]       = useState(false);
 
   const [agentPortalContact, setAgentPortalContact] = useState(null);
+  const [viewAsContact, setViewAsContact]     = useState(null);
+  const [showAgentPicker, setShowAgentPicker] = useState(false);
 
   useEffect(()=>{
     supabase.auth.getSession().then(({data:{session}})=>{ setSession(session); setAuthLoading(false); });
@@ -6450,12 +6454,14 @@ export default function App() {
           const hrs = (Date.now()-new Date(data.created_at))/3600000;
           if(hrs<72) setTempBanner(true);
         } else {
-          // Check agent portal access
-          const { data:portal } = await supabase.from("agent_portal_access")
-            .select("*, contacts(*)")
-            .eq("portal_email",email).eq("is_active",true).maybeSingle();
-          if(portal?.contacts) {
-            setAgentPortalContact(portal.contacts);
+          // Agent access = a Contact of type Agent whose email matches the login.
+          // (The portal-enable toggle / agent_portal_access table is retired —
+          //  creating an auth account is what puts an agent "live".)
+          const { data:agentRows } = await supabase.from("contacts")
+            .select("*").eq("org_id",ORG_ID).eq("contact_type","Agent")
+            .ilike("email",email).limit(1);
+          if(agentRows && agentRows[0]) {
+            setAgentPortalContact(agentRows[0]);
           }
         }
       });
@@ -6530,7 +6536,15 @@ export default function App() {
         display:"flex", flexDirection:"column", minWidth:0,
         paddingBottom:isMobile?60:0 }}>
         <TopBar title={title} subtitle={subtitle} theme={theme} onToggleTheme={toggleTheme}
-          onToggleSidebar={()=>isMobile ? setMobileMenu(o=>!o) : setSC(c=>!c)} />
+          onToggleSidebar={()=>isMobile ? setMobileMenu(o=>!o) : setSC(c=>!c)}
+          actions={["admin","owner"].includes(cu.role) ? (
+            <button onClick={()=>setShowAgentPicker(true)} title="View any agent's portal as they see it"
+              style={{ background:"none", border:`1px solid ${C.border2}`, color:C.text2,
+                cursor:"pointer", fontSize:12, fontFamily:FONT, padding:"7px 12px", borderRadius:8,
+                minHeight:38, display:"flex", alignItems:"center", gap:6, flexShrink:0, whiteSpace:"nowrap" }}>
+              {"\u{1F441}"} {isMobile ? "" : "View as agent"}
+            </button>
+          ) : null} />
         {showTempBanner&&<TempPasswordBanner onAction={()=>{ setTempBanner(false); setAuthScreen("setpassword"); }} />}
         <main style={{ flex:1, overflowY:"auto" }}>
           {view==="dashboard"&&<DashboardView user={cu} deals={deals} contacts={contacts} tasks={tasks} />}
@@ -6546,6 +6560,15 @@ export default function App() {
           {view==="performance" &&<PerformanceView  user={cu} />}
         </main>
       </div>
+      {showAgentPicker && (
+        <AgentPickerModal
+          contacts={contacts.filter(c=>c.contact_type==="Agent")}
+          onPick={c=>{ setShowAgentPicker(false); setViewAsContact(c); }}
+          onClose={()=>setShowAgentPicker(false)} />
+      )}
+      {viewAsContact && (
+        <AgentPortalPreview contact={viewAsContact} onClose={()=>setViewAsContact(null)} />
+      )}
       {isMobile && <BottomNavBar activeView={view} onNav={setView} user={cu} />}
     </div>
   );
