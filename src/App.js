@@ -2564,6 +2564,62 @@ function PortalDealModal({ deal, agentContact, myContacts, onClose, onSaved, onC
   );
 }
 
+function PortalContactModal({ contact, agentContact, onClose, onSaved }) {
+  const isEdit = !!contact;
+  const agentEmail = agentContact?.email || "";
+  const [f,setF] = useState({
+    full_name: contact?.full_name||"", email: contact?.email||"", phone: contact?.phone||"",
+    contact_type: contact?.contact_type||"Lead", status: contact?.status||"New",
+    address: contact?.address||"", city: contact?.city||"", state: contact?.state||"", notes: contact?.notes||"",
+  });
+  const set=(k)=>(v)=>setF(p=>({...p,[k]:v}));
+  const [saving,setSaving]=useState(false); const [err,setErr]=useState("");
+  const row2={ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 };
+  const save = async () => {
+    if(!f.full_name.trim()){ setErr("Name is required"); return; }
+    setSaving(true); setErr("");
+    const payload={ full_name:f.full_name.trim(), email:f.email.trim()||null, phone:f.phone.trim()||null,
+      contact_type:f.contact_type, status:f.status, address:f.address.trim()||null, city:f.city.trim()||null,
+      state:f.state.trim()||null, notes:f.notes.trim()||null, updated_at:new Date().toISOString() };
+    let error;
+    if(isEdit){ ({error}=await supabase.from("contacts").update(payload).eq("id",contact.id)); }
+    else { ({error}=await supabase.from("contacts").insert({...payload, org_id:ORG_ID, created_by:agentEmail, assigned_to:agentEmail, source:"Agent Portal"})); }
+    setSaving(false);
+    if(error){ setErr(error.message); return; }
+    onSaved && onSaved();
+  };
+  return (
+    <Modal title={isEdit?"Edit Contact":"Add Contact"} onClose={onClose} maxWidth={500}>
+      <div style={{ display:"flex", flexDirection:"column", gap:13 }}>
+        <Field label="Full Name" value={f.full_name} onChange={set("full_name")} placeholder="Jane Smith" autoFocus required />
+        <div style={row2}>
+          <Field label="Email" value={f.email} onChange={set("email")} placeholder="jane@email.com" />
+          <Field label="Phone" value={f.phone} onChange={set("phone")} placeholder="(813) 555-1234" />
+        </div>
+        <div style={row2}>
+          <Sel label="Type" value={f.contact_type} onChange={set("contact_type")} options={["Lead","Client","Buyer","Seller","Vendor","Other"]} />
+          <Sel label="Stage" value={f.status} onChange={set("status")} options={["New","Contacted","Nurturing","Active","Client","Past Client"]} />
+        </div>
+        <Field label="Address" value={f.address} onChange={set("address")} placeholder="123 Main St" />
+        <div style={row2}>
+          <Field label="City" value={f.city} onChange={set("city")} placeholder="Tampa" />
+          <Field label="State" value={f.state} onChange={set("state")} placeholder="FL" />
+        </div>
+        <div>
+          <label style={{ fontSize:11, fontWeight:700, color:C.text2, fontFamily:FONT, letterSpacing:"0.08em", textTransform:"uppercase", display:"block", marginBottom:5 }}>Notes</label>
+          <textarea value={f.notes} onChange={e=>set("notes")(e.target.value)} rows={3}
+            style={{ width:"100%", padding:"10px 13px", background:C.surface2, border:`1.5px solid ${C.border2}`, borderRadius:8, color:C.text, fontSize:13, fontFamily:FONT, outline:"none", boxSizing:"border-box", resize:"vertical" }} />
+        </div>
+        {err && <div style={{ fontSize:12, color:"#ef4444", fontFamily:FONT }}>{err}</div>}
+        <div style={{ display:"flex", justifyContent:"flex-end", gap:8 }}>
+          <GoldButton outline small onClick={onClose}>Cancel</GoldButton>
+          <GoldButton small onClick={save} disabled={saving}>{saving?"Saving…":(isEdit?"Save changes":"Add contact")}</GoldButton>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 function AgentPortalApp(
 { agentContact, session, onSignOut, isPreview=false, initialView, onViewChange }) {
   const [view, setView]       = useState(initialView||"portal_dashboard");
@@ -2588,6 +2644,7 @@ function AgentPortalApp(
   const [agentYearly, setAgentYearly]     = useState([]);
   const [agentTxns, setAgentTxns]         = useState([]);
   const [dealModal, setDealModal]         = useState({open:false, deal:null});
+  const [contactModal, setContactModal]   = useState({open:false, contact:null});
 
   const agentName  = agentContact?.full_name || "Agent";
   const agentEmail = agentContact?.email || session?.user?.email || "";
@@ -3033,45 +3090,84 @@ function AgentPortalApp(
   // ── Contacts ──
   const PortalContacts = () => {
     const [search,setSearch] = useState("");
-    const filtered = myContacts.filter(c=>
-      !search||`${c.full_name} ${c.email} ${c.phone}`.toLowerCase().includes(search.toLowerCase())
+    const [mode,setMode] = useState("list");
+    const filtered = myContacts.filter(c=>!search||`${c.full_name||""} ${c.email||""} ${c.phone||""}`.toLowerCase().includes(search.toLowerCase()));
+    const STAGES = ["New","Contacted","Nurturing","Active","Client","Past Client"];
+    const cols = Array.from(new Set([...STAGES, ...myContacts.map(c=>c.status).filter(Boolean)]));
+    const openContact = (c)=>setContactModal({open:true, contact:c||null});
+    const ModeBtn = ({id,label}) => (
+      <button onClick={()=>setMode(id)} style={{ background: mode===id?C.surface2:"transparent", color: mode===id?C.text:C.text3,
+        border:`1px solid ${mode===id?C.border2:C.border}`, borderRadius:7, padding:"6px 12px", fontSize:11, fontWeight:600, fontFamily:FONT, cursor:"pointer" }}>{label}</button>
+    );
+    const ccard = (c) => (
+      <div key={c.id} onClick={()=>openContact(c)} style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:10, padding:"12px 14px", cursor:"pointer" }}
+        onMouseEnter={e=>e.currentTarget.style.borderColor=C.goldBorder} onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}>
+        <div style={{ display:"flex", alignItems:"center", gap:9 }}>
+          <Avatar name={c.full_name} email={c.email} size={30} />
+          <div style={{ minWidth:0 }}>
+            <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:FONT, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{c.full_name}</div>
+            <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>{c.contact_type||""}</div>
+          </div>
+        </div>
+        {(c.email||c.phone) && <div style={{ fontSize:11, color:C.text2, fontFamily:FONT, marginTop:8, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{c.email||c.phone}</div>}
+      </div>
     );
     return (
       <div style={{ padding:"20px 24px" }}>
-        <div style={{ display:"flex", gap:10, marginBottom:16 }}>
-          <input value={search} onChange={e=>setSearch(e.target.value)}
-            placeholder="Search my contacts…"
-            style={{ padding:"8px 12px", background:C.surface2, border:`1px solid ${C.border2}`,
-              borderRadius:8, color:C.text, fontSize:13, fontFamily:FONT, outline:"none", width:260 }}
-            onFocus={e=>e.target.style.borderColor=C.gold}
-            onBlur={e=>e.target.style.borderColor=C.border2} />
-        </div>
-        <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden" }}>
-          <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1.5fr 1fr",
-            padding:"8px 18px", borderBottom:`1px solid ${C.border}` }}>
-            {["Name","Type","Email","Phone"].map(h=>(
-              <span key={h} style={{ fontSize:10, fontWeight:700, color:C.text3,
-                fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.08em" }}>{h}</span>
-            ))}
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10, marginBottom:16, flexWrap:"wrap" }}>
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search my contacts…"
+            style={{ padding:"8px 12px", background:C.surface2, border:`1px solid ${C.border2}`, borderRadius:8, color:C.text, fontSize:13, fontFamily:FONT, outline:"none", width:240, maxWidth:"45%", boxSizing:"border-box" }} />
+          <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+            <ModeBtn id="list" label="List" /><ModeBtn id="pipeline" label="Pipeline" />
+            <GoldButton small onClick={()=>openContact(null)}>+ Add Contact</GoldButton>
           </div>
-          {filtered.length===0
-            ? <div style={{ padding:"40px 18px", textAlign:"center", color:C.text3, fontSize:13, fontFamily:FONT }}>
-                {myContacts.length===0?"You haven't added any contacts yet":"No results"}
-              </div>
-            : filtered.map(c=>(
-              <div key={c.id} style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1.5fr 1fr",
-                padding:"11px 18px", borderBottom:`1px solid ${C.border}`, alignItems:"center" }}>
-                <div style={{ display:"flex", alignItems:"center", gap:9 }}>
-                  <Avatar name={c.full_name} email={c.email} size={26} />
-                  <span style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:FONT }}>{c.full_name}</span>
-                </div>
-                <span style={{ fontSize:11, color:C.text2, fontFamily:FONT }}>{c.contact_type}</span>
-                <span style={{ fontSize:12, color:C.text2, fontFamily:FONT }}>{c.email||"—"}</span>
-                <span style={{ fontSize:12, color:C.text2, fontFamily:MONO }}>{c.phone||"—"}</span>
-              </div>
-            ))
-          }
         </div>
+
+        {myContacts.length===0 ? (
+          <div style={{ background:C.surface, border:`1px dashed ${C.border2}`, borderRadius:12, padding:"48px 18px", textAlign:"center" }}>
+            <div style={{ fontSize:14, color:C.text2, fontFamily:FONT, marginBottom:4 }}>No contacts yet.</div>
+            <div style={{ fontSize:12, color:C.text3, fontFamily:FONT, marginBottom:14 }}>Add your clients and leads to track them here.</div>
+            <GoldButton small onClick={()=>openContact(null)}>+ Add your first contact</GoldButton>
+          </div>
+        ) : mode==="list" ? (
+          <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden" }}>
+            <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1.5fr 1fr", padding:"8px 18px", borderBottom:`1px solid ${C.border}` }}>
+              {["Name","Stage","Email","Phone"].map(h=>(<span key={h} style={{ fontSize:10, fontWeight:700, color:C.text3, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.08em" }}>{h}</span>))}
+            </div>
+            {filtered.length===0
+              ? <div style={{ padding:"40px 18px", textAlign:"center", color:C.text3, fontSize:13, fontFamily:FONT }}>No results.</div>
+              : filtered.map(c=>(
+                <div key={c.id} onClick={()=>openContact(c)} style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1.5fr 1fr", padding:"11px 18px", borderBottom:`1px solid ${C.border}`, alignItems:"center", cursor:"pointer" }}
+                  onMouseEnter={e=>e.currentTarget.style.background=C.surface2} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                  <div style={{ display:"flex", alignItems:"center", gap:9 }}>
+                    <Avatar name={c.full_name} email={c.email} size={26} />
+                    <span style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:FONT }}>{c.full_name}</span>
+                  </div>
+                  <span style={{ fontSize:11, color:C.text2, fontFamily:FONT }}>{c.status||c.contact_type||"\u2014"}</span>
+                  <span style={{ fontSize:12, color:C.text2, fontFamily:FONT }}>{c.email||"\u2014"}</span>
+                  <span style={{ fontSize:12, color:C.text2, fontFamily:MONO }}>{c.phone||"\u2014"}</span>
+                </div>
+              ))
+            }
+          </div>
+        ) : (
+          <div style={{ display:"flex", gap:12, overflowX:"auto", paddingBottom:8 }}>
+            {cols.map(col=>{
+              const items=filtered.filter(c=>(c.status||"New")===col);
+              return (
+                <div key={col} style={{ minWidth:230, width:230, flexShrink:0 }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"6px 10px", marginBottom:8 }}>
+                    <span style={{ fontSize:11, fontWeight:700, color:C.text2, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.07em" }}>{col}</span>
+                    <span style={{ fontSize:11, color:C.text3, fontFamily:MONO }}>{items.length}</span>
+                  </div>
+                  <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
+                    {items.length===0 ? <div style={{ fontSize:11, color:C.text3, fontFamily:FONT, padding:"10px", textAlign:"center", border:`1px dashed ${C.border}`, borderRadius:9 }}>{"\u2014"}</div> : items.map(ccard)}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     );
   };
@@ -3296,6 +3392,19 @@ function AgentPortalApp(
               setMyDeals(data||[]);
             }}
             onContactsChanged={async()=>{
+              const { data } = await supabase.from("contacts").select("*")
+                .eq("org_id",ORG_ID).eq("created_by",agentEmail).order("full_name");
+              setMyCon(data||[]);
+            }}
+          />
+        )}
+        {contactModal.open && (
+          <PortalContactModal
+            contact={contactModal.contact}
+            agentContact={agentContact}
+            onClose={()=>setContactModal({open:false,contact:null})}
+            onSaved={async()=>{
+              setContactModal({open:false,contact:null});
               const { data } = await supabase.from("contacts").select("*")
                 .eq("org_id",ORG_ID).eq("created_by",agentEmail).order("full_name");
               setMyCon(data||[]);
