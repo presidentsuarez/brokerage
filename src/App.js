@@ -97,6 +97,7 @@ const NAV = [
   { id:"contacts",  label:"Contacts",  icon:"👤" },
   { id:"tasks",     label:"Tasks",     icon:"✅" },
   { id:"calendar",  label:"Calendar",  icon:"📅" },
+  { id:"leasing",   label:"Leasing",   icon:"🔑" },
   { id:"recruiting", label:"Recruiting",  icon:"🎯", adminOnly:true },
   { id:"applications",label:"Applications",icon:"📥", adminOnly:true },
   { id:"financials",  label:"Financials",  icon:"💵", adminOnly:true },
@@ -4847,6 +4848,430 @@ function RobotsView({ user, deals, contacts, tasks }) {
 
 
 // ════════════════════════════════════════════════════════════
+// LEASING VIEW — tenant / leasing opportunity pipeline (team)
+// ════════════════════════════════════════════════════════════
+
+const LEASE_STAGES = [
+  { id:"New Inquiry",       label:"New Inquiry",  color:C.text2,  bg:C.surface2 },
+  { id:"Showing Scheduled", label:"Showing",      color:C.blue,   bg:"rgba(59,130,246,0.10)" },
+  { id:"Application",       label:"Application",  color:C.amber,  bg:"rgba(245,158,11,0.10)" },
+  { id:"Approved",          label:"Approved",     color:C.purple, bg:"rgba(168,85,247,0.10)" },
+  { id:"Lease Signed",      label:"Signed",       color:C.green,  bg:"rgba(34,197,94,0.10)" },
+  { id:"Lost",              label:"Lost",         color:C.red,    bg:"rgba(239,68,68,0.10)" },
+];
+const LEASE_SOURCES = ["Zillow","Apartments.com","Website","Referral","Walk-in","Sign Call","Social","MLS","Other"];
+
+function leaseFmt$(n){ return n==null||n===""?"—":"$"+Math.round(Number(n)).toLocaleString(); }
+function leaseFmtDate(d){ return d ? new Date(d+"T00:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "—"; }
+
+function LeasingView({ user }) {
+  const isMobile = useIsMobile();
+  const [leads, setLeads] = useState([]);
+  const [loading, setLoad] = useState(true);
+  const [sel, setSel] = useState(null);
+  const [mode, setMode] = useState("pipeline");
+  const [q, setQ] = useState("");
+  const [fStage, setFStage] = useState("all");
+  const [fAssign, setFAssign] = useState("all");
+  const [showNew, setShowNew] = useState(false);
+  const [toast, setToast] = useState(null);
+
+  const load = async () => {
+    setLoad(true);
+    const data = await fetchAllRows(()=>supabase.from("leasing_leads")
+      .select("*").eq("org_id", ORG_ID).order("created_at",{ascending:false}));
+    setLeads(data||[]);
+    setLoad(false);
+  };
+  useEffect(()=>{ load(); },[]);
+
+  const callers = Array.from(new Set(leads.map(l=>l.assigned_to).filter(Boolean)));
+  const filtered = leads.filter(l=>{
+    if(fStage!=="all" && l.stage!==fStage) return false;
+    if(fAssign!=="all" && (l.assigned_to||"")!==fAssign) return false;
+    if(q){
+      const hay=`${l.tenant_name} ${l.property_address} ${l.property_city} ${l.tenant_email} ${l.tenant_phone}`.toLowerCase();
+      if(!hay.includes(q.toLowerCase())) return false;
+    }
+    return true;
+  });
+
+  const activeStages = ["New Inquiry","Showing Scheduled","Application","Approved"];
+  const stat = {
+    total: leads.length,
+    active: leads.filter(l=>activeStages.includes(l.stage)).length,
+    showings: leads.filter(l=>l.stage==="Showing Scheduled").length,
+    signed: leads.filter(l=>l.stage==="Lease Signed").length,
+  };
+
+  return (
+    <div style={{ padding:isMobile?"12px":"20px 24px", maxWidth:1280 }}>
+      {toast && <Toast message={toast.msg} type={toast.type} onDone={()=>setToast(null)} />}
+
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(130px,1fr))", gap:10, marginBottom:16 }}>
+        {[
+          { l:"Total Opportunities", v:stat.total,    c:C.gold },
+          { l:"Active Pipeline",     v:stat.active,   c:C.blue },
+          { l:"Showings Scheduled",  v:stat.showings, c:C.amber },
+          { l:"Leases Signed",       v:stat.signed,   c:C.green },
+        ].map(s=>(
+          <div key={s.l} style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:10, padding:"13px 14px" }}>
+            <div style={{ fontSize:22, fontWeight:700, color:s.c, fontFamily:SERIF }}>{s.v}</div>
+            <div style={{ fontSize:10, fontWeight:700, color:C.text2, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.07em", marginTop:2 }}>{s.l}</div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display:"flex", flexWrap:"wrap", gap:8, alignItems:"center", marginBottom:14 }}>
+        <div style={{ display:"flex", gap:4, background:C.surface2, borderRadius:8, padding:3 }}>
+          {[["pipeline","Pipeline"],["list","List"]].map(([v,l])=>(
+            <button key={v} onClick={()=>setMode(v)} style={{ padding:"6px 14px", borderRadius:6, border:"none",
+              background:mode===v?C.gold:"transparent", color:mode===v?"#0a0a0a":C.text2,
+              fontSize:12, fontWeight:600, fontFamily:FONT, cursor:"pointer" }}>{l}</button>
+          ))}
+        </div>
+        <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search tenant, property, city…"
+          style={{ flex:"1 1 200px", minWidth:160, padding:"8px 12px", background:C.surface2,
+            border:`1.5px solid ${C.border2}`, borderRadius:8, color:C.text, fontSize:13, fontFamily:FONT, outline:"none" }} />
+        <select value={fStage} onChange={e=>setFStage(e.target.value)} style={leaseSelStyle()}>
+          <option value="all">All stages</option>{LEASE_STAGES.map(s=><option key={s.id} value={s.id}>{s.label}</option>)}
+        </select>
+        {callers.length>0 && (
+          <select value={fAssign} onChange={e=>setFAssign(e.target.value)} style={leaseSelStyle()}>
+            <option value="all">All agents</option>{callers.map(c=><option key={c} value={c}>{c.split("@")[0]}</option>)}
+          </select>
+        )}
+        <GoldButton small onClick={()=>setShowNew(true)}>＋ New opportunity</GoldButton>
+      </div>
+
+      {loading ? (
+        <div style={{ padding:"40px 0", textAlign:"center", color:C.text3, fontSize:13, fontFamily:FONT }}>Loading opportunities…</div>
+      ) : leads.length===0 ? (
+        <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:"44px 16px", textAlign:"center" }}>
+          <div style={{ fontSize:30, marginBottom:10 }}>🔑</div>
+          <div style={{ fontSize:14, color:C.text2, fontFamily:FONT, marginBottom:14 }}>No leasing opportunities yet.</div>
+          <GoldButton small onClick={()=>setShowNew(true)}>＋ Add the first one</GoldButton>
+        </div>
+      ) : mode==="pipeline" ? (
+        <div style={{ display:"flex", gap:12, overflowX:"auto", paddingBottom:12, WebkitOverflowScrolling:"touch" }}>
+          {LEASE_STAGES.map(st=>{
+            const col = filtered.filter(l=>l.stage===st.id);
+            const colRent = col.reduce((a,l)=>a+(Number(l.monthly_rent)||0),0);
+            return (
+              <div key={st.id} style={{ flex:"0 0 270px", width:270 }}>
+                <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between",
+                  padding:"6px 4px", marginBottom:8, borderBottom:`2px solid ${st.color}` }}>
+                  <span style={{ fontSize:12, fontWeight:700, color:st.color, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.05em" }}>{st.label}</span>
+                  <span style={{ fontSize:12, fontWeight:700, color:C.text3, fontFamily:MONO }}>{col.length}</span>
+                </div>
+                {colRent>0 && <div style={{ fontSize:10, color:C.text3, fontFamily:MONO, padding:"0 4px 6px" }}>{leaseFmt$(colRent)}/mo</div>}
+                <div style={{ display:"flex", flexDirection:"column", gap:8, minHeight:60 }}>
+                  {col.map(l=><LeaseCard key={l.id} lead={l} onClick={()=>setSel(l)} />)}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div style={{ display:"flex", flexDirection:"column", gap:7 }}>
+          <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>{filtered.length} of {leads.length}</div>
+          {filtered.map(l=>{
+            const stg=LEASE_STAGES.find(s=>s.id===l.stage)||LEASE_STAGES[0];
+            return (
+              <div key={l.id} onClick={()=>setSel(l)}
+                style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:10, padding:"11px 14px",
+                  cursor:"pointer", display:"flex", alignItems:"center", gap:12 }}
+                onMouseEnter={e=>e.currentTarget.style.borderColor=C.goldBorder}
+                onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}>
+                <Avatar name={l.tenant_name||"?"} email={l.tenant_email} size={36} />
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ fontSize:13, fontWeight:700, color:C.text, fontFamily:FONT }}>{l.tenant_name||"(no name)"}</div>
+                  <div style={{ fontSize:11, color:C.text2, fontFamily:FONT, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                    {l.property_address||"—"}{l.property_city?`, ${l.property_city}`:""} · {leaseFmt$(l.monthly_rent)}/mo</div>
+                </div>
+                <span style={{ fontSize:10, fontWeight:700, color:stg.color, background:stg.bg, borderRadius:10, padding:"3px 9px", whiteSpace:"nowrap" }}>{stg.label}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {sel && <LeasePanel lead={sel} user={user} callers={callers}
+        onClose={()=>setSel(null)} onRefresh={load} onUpdated={u=>setSel(u)} setToast={setToast} />}
+      {showNew && <LeaseCreateModal user={user} onClose={()=>setShowNew(false)}
+        onCreated={async()=>{ setShowNew(false); await load(); setToast({msg:"Opportunity added",type:"success"}); }} />}
+    </div>
+  );
+}
+
+function leaseSelStyle(){
+  return { padding:"8px 10px", background:C.surface2, border:`1.5px solid ${C.border2}`,
+    borderRadius:8, color:C.text, fontSize:12, fontFamily:FONT, outline:"none", maxWidth:170 };
+}
+
+function LeaseCard({ lead, onClick }) {
+  return (
+    <div onClick={onClick} style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:10, padding:"11px 12px", cursor:"pointer" }}
+      onMouseEnter={e=>e.currentTarget.style.borderColor=C.goldBorder}
+      onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}>
+      <div style={{ fontSize:13, fontWeight:700, color:C.text, fontFamily:FONT, marginBottom:3 }}>{lead.tenant_name||"(no name)"}</div>
+      <div style={{ fontSize:11, color:C.text2, fontFamily:FONT, marginBottom:5, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+        {lead.property_address||"No property yet"}{lead.unit?` · ${lead.unit}`:""}</div>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+        <span style={{ fontSize:11, color:C.gold, fontFamily:MONO }}>{leaseFmt$(lead.monthly_rent)}/mo</span>
+        {lead.desired_move_in && <span style={{ fontSize:10, color:C.text3, fontFamily:FONT }}>→ {leaseFmtDate(lead.desired_move_in)}</span>}
+      </div>
+      {lead.assigned_to && <div style={{ fontSize:9, color:C.text3, fontFamily:FONT, marginTop:5 }}>👤 {lead.assigned_to.split("@")[0]}</div>}
+    </div>
+  );
+}
+
+// Shared field set used by both the create modal and the edit panel
+function LeaseForm({ form, set, isMobile }) {
+  const grid2 = { display:"grid", gridTemplateColumns:isMobile?"1fr":"1fr 1fr", gap:10 };
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+      <div style={{ fontSize:10, fontWeight:700, color:C.gold, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.07em" }}>Tenant</div>
+      <Field label="Tenant name" value={form.tenant_name} onChange={v=>set("tenant_name",v)} />
+      <div style={grid2}>
+        <Field label="Phone" value={form.tenant_phone} onChange={v=>set("tenant_phone",v)} />
+        <Field label="Email" value={form.tenant_email} onChange={v=>set("tenant_email",v)} />
+      </div>
+      <div style={grid2}>
+        <Field label="Occupants" type="number" value={form.occupants} onChange={v=>set("occupants",v)} />
+        <Field label="Pets" value={form.pets} onChange={v=>set("pets",v)} placeholder="e.g. 1 dog, 30lb" />
+      </div>
+      <div style={grid2}>
+        <Field label="Budget min" type="number" value={form.budget_min} onChange={v=>set("budget_min",v)} />
+        <Field label="Budget max" type="number" value={form.budget_max} onChange={v=>set("budget_max",v)} />
+      </div>
+
+      <div style={{ fontSize:10, fontWeight:700, color:C.gold, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.07em", marginTop:4 }}>Property</div>
+      <Field label="Address" value={form.property_address} onChange={v=>set("property_address",v)} />
+      <div style={grid2}>
+        <Field label="City" value={form.property_city} onChange={v=>set("property_city",v)} />
+        <Field label="Unit" value={form.unit} onChange={v=>set("unit",v)} />
+      </div>
+      <div style={grid2}>
+        <Field label="Beds" type="number" value={form.bedrooms} onChange={v=>set("bedrooms",v)} />
+        <Field label="Baths" type="number" value={form.bathrooms} onChange={v=>set("bathrooms",v)} />
+      </div>
+      <div style={grid2}>
+        <Field label="Monthly rent" type="number" value={form.monthly_rent} onChange={v=>set("monthly_rent",v)} />
+        <Field label="Security deposit" type="number" value={form.security_deposit} onChange={v=>set("security_deposit",v)} />
+      </div>
+
+      <div style={{ fontSize:10, fontWeight:700, color:C.gold, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.07em", marginTop:4 }}>Lease</div>
+      <div style={grid2}>
+        <Field label="Desired move-in" type="date" value={form.desired_move_in} onChange={v=>set("desired_move_in",v)} />
+        <Field label="Term (months)" type="number" value={form.lease_term_months} onChange={v=>set("lease_term_months",v)} />
+      </div>
+      <div style={grid2}>
+        <Sel label="Source" value={form.source||""} onChange={v=>set("source",v)} options={[{value:"",label:"—"},...LEASE_SOURCES.map(s=>({value:s,label:s}))]} />
+        <Sel label="Stage" value={form.stage} onChange={v=>set("stage",v)} options={LEASE_STAGES.map(s=>({value:s.id,label:s.label}))} />
+      </div>
+    </div>
+  );
+}
+
+const LEASE_BLANK = {
+  tenant_name:"", tenant_phone:"", tenant_email:"", occupants:"", pets:"",
+  budget_min:"", budget_max:"", property_address:"", property_city:"", unit:"",
+  bedrooms:"", bathrooms:"", monthly_rent:"", security_deposit:"",
+  desired_move_in:"", lease_term_months:"", source:"", stage:"New Inquiry",
+};
+function leasePayload(form, extra){
+  const numFields=["occupants","budget_min","budget_max","bedrooms","bathrooms","monthly_rent","security_deposit","lease_term_months"];
+  const out={ ...extra };
+  for(const [k,v] of Object.entries(form)){
+    if(numFields.includes(k)) out[k] = v===""||v==null ? null : Number(v);
+    else if(k==="desired_move_in") out[k] = v||null;
+    else out[k] = v===""?null:v;
+  }
+  return out;
+}
+
+function LeaseCreateModal({ user, onClose, onCreated }) {
+  const isMobile = useIsMobile();
+  const [form, setForm] = useState({ ...LEASE_BLANK });
+  const [saving, setSaving] = useState(false);
+  const set = (k,v)=>setForm(f=>({...f,[k]:v}));
+  const save = async () => {
+    setSaving(true);
+    const payload = leasePayload(form, { org_id:ORG_ID, assigned_to:user.email, created_by:user.email });
+    const { error } = await supabase.from("leasing_leads").insert(payload);
+    setSaving(false);
+    if(error){ alert("Could not save: "+error.message); return; }
+    onCreated();
+  };
+  return (
+    <Modal title="New Leasing Opportunity" onClose={onClose} maxWidth={560}>
+      <LeaseForm form={form} set={set} isMobile={isMobile} />
+      <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:18 }}>
+        <GoldButton outline small onClick={onClose}>Cancel</GoldButton>
+        <GoldButton small onClick={save} disabled={saving||!form.tenant_name.trim()}>{saving?"Saving…":"Add opportunity"}</GoldButton>
+      </div>
+    </Modal>
+  );
+}
+
+function LeasePanel({ lead, user, callers, onClose, onRefresh, onUpdated, setToast }) {
+  const isMobile = useIsMobile();
+  const [tab, setTab] = useState("details");
+  const [edit, setEdit] = useState(false);
+  const [form, setForm] = useState(()=>{ const f={...LEASE_BLANK}; for(const k of Object.keys(f)) f[k]=lead[k]??f[k]; return f; });
+  const [acts, setActs] = useState([]);
+  const [note, setNote] = useState("");
+  const set = (k,v)=>setForm(f=>({...f,[k]:v}));
+
+  const loadActs = async () => {
+    const { data } = await supabase.from("leasing_activities")
+      .select("*").eq("lead_id", lead.id).order("created_at",{ascending:false});
+    setActs(data||[]);
+  };
+  useEffect(()=>{ loadActs(); },[lead.id]);
+
+  const patch = async (fields) => {
+    await supabase.from("leasing_leads").update({ ...fields, updated_at:new Date().toISOString() }).eq("id", lead.id);
+    onUpdated({ ...lead, ...fields }); onRefresh();
+  };
+  const saveEdit = async () => {
+    const payload = leasePayload(form, {});
+    await patch(payload); setEdit(false);
+    setToast({ msg:"Saved", type:"success" });
+  };
+  const logTouch = async (channel) => {
+    await supabase.from("leasing_activities").insert({ lead_id:lead.id, org_id:ORG_ID, activity_type:channel, channel, content:channel, created_by:user.email });
+    await patch({ last_contacted_at:new Date().toISOString(), touch_count:(lead.touch_count||0)+1 });
+    await loadActs();
+    setToast({ msg:`Logged ${channel}`, type:"success" });
+  };
+  const addNote = async () => {
+    if(!note.trim()) return;
+    await supabase.from("leasing_activities").insert({ lead_id:lead.id, org_id:ORG_ID, activity_type:"note", content:note.trim(), created_by:user.email });
+    setNote(""); await loadActs(); setToast({ msg:"Note added", type:"success" });
+  };
+
+  const tel  = lead.tenant_phone ? `tel:${lead.tenant_phone.replace(/\D/g,"")}` : null;
+  const sms  = lead.tenant_phone ? `sms:${lead.tenant_phone.replace(/\D/g,"")}` : null;
+  const mail = lead.tenant_email ? `mailto:${lead.tenant_email}` : null;
+  const stg = LEASE_STAGES.find(s=>s.id===lead.stage)||LEASE_STAGES[0];
+
+  const Row=({l,v})=>(
+    <div style={{ display:"flex", justifyContent:"space-between", padding:"7px 0", borderBottom:`1px solid ${C.border}` }}>
+      <span style={{ fontSize:12, color:C.text3, fontFamily:FONT }}>{l}</span>
+      <span style={{ fontSize:12, color:C.text, fontFamily:FONT, fontWeight:600, textAlign:"right" }}>{v}</span>
+    </div>
+  );
+
+  return (
+    <div style={{ position:"fixed", inset:0, zIndex:300, display:"flex", justifyContent:"flex-end" }}>
+      <div onClick={onClose} style={{ position:"absolute", inset:0, background:"rgba(0,0,0,0.6)" }} />
+      <div style={{ position:"relative", width:isMobile?"100%":500, maxWidth:"100%", height:"100%",
+        background:C.surface, borderLeft:`1px solid ${C.border}`, overflowY:"auto", animation:"slideLeft 0.2s ease" }}>
+        <style>{`@keyframes slideLeft{from{transform:translateX(30px);opacity:0}to{transform:translateX(0);opacity:1}}`}</style>
+
+        <div style={{ padding:"18px 20px", borderBottom:`1px solid ${C.border}`, position:"sticky", top:0, background:C.surface, zIndex:2 }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+            <div style={{ display:"flex", gap:12 }}>
+              <Avatar name={lead.tenant_name||"?"} email={lead.tenant_email} size={46} />
+              <div>
+                <div style={{ fontSize:17, fontWeight:700, color:C.text, fontFamily:SERIF }}>{lead.tenant_name||"(no name)"}</div>
+                <div style={{ fontSize:12, color:C.text2, fontFamily:FONT }}>{lead.property_address||"No property yet"}</div>
+                <span style={{ fontSize:10, fontWeight:700, color:stg.color, background:stg.bg, borderRadius:10, padding:"2px 8px", marginTop:4, display:"inline-block" }}>{stg.label}</span>
+              </div>
+            </div>
+            <button onClick={onClose} style={{ background:"none", border:"none", color:C.text2, fontSize:22, cursor:"pointer" }}>✕</button>
+          </div>
+          <div style={{ display:"flex", gap:8, marginTop:14, flexWrap:"wrap" }}>
+            {tel && <a href={tel} onClick={()=>logTouch("call")} style={leaseQa(C.green)}>📞 Call</a>}
+            {sms && <a href={sms} onClick={()=>logTouch("text")} style={leaseQa(C.blue)}>💬 Text</a>}
+            {mail && <a href={mail} onClick={()=>logTouch("email")} style={leaseQa(C.gold)}>✉️ Email</a>}
+          </div>
+        </div>
+
+        <div style={{ padding:"16px 20px" }}>
+          {/* Stage + assign */}
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:16 }}>
+            <Sel label="Stage" value={lead.stage} onChange={v=>patch({stage:v})} options={LEASE_STAGES.map(s=>({value:s.id,label:s.label}))} />
+            <Sel label="Assigned to" value={lead.assigned_to||""} onChange={v=>patch({assigned_to:v||null})}
+              options={[{value:"",label:"Unassigned"}, {value:user.email,label:"Me ("+user.email.split("@")[0]+")"},
+                ...callers.filter(c=>c!==user.email).map(c=>({value:c,label:c.split("@")[0]}))]} />
+          </div>
+
+          <div style={{ display:"flex", gap:5, marginBottom:12, borderBottom:`1px solid ${C.border}` }}>
+            {[["details","Details"],["activity",`Activity (${acts.length})`],["notes","Notes"]].map(([v,l])=>(
+              <button key={v} onClick={()=>setTab(v)} style={{ padding:"8px 12px", border:"none", background:"none",
+                color:tab===v?C.gold:C.text2, borderBottom:tab===v?`2px solid ${C.gold}`:"2px solid transparent",
+                fontSize:12, fontWeight:600, fontFamily:FONT, cursor:"pointer", marginBottom:-1 }}>{l}</button>
+            ))}
+          </div>
+
+          {tab==="details" && (edit ? (
+            <div>
+              <LeaseForm form={form} set={set} isMobile={isMobile} />
+              <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:14 }}>
+                <GoldButton outline small onClick={()=>setEdit(false)}>Cancel</GoldButton>
+                <GoldButton small onClick={saveEdit}>Save changes</GoldButton>
+              </div>
+            </div>
+          ) : (
+            <div>
+              <div style={{ display:"flex", justifyContent:"flex-end", marginBottom:6 }}>
+                <GoldButton outline small onClick={()=>setEdit(true)}>✎ Edit</GoldButton>
+              </div>
+              <Row l="Monthly rent" v={leaseFmt$(lead.monthly_rent)} />
+              <Row l="Security deposit" v={leaseFmt$(lead.security_deposit)} />
+              <Row l="Property" v={`${lead.property_address||"—"}${lead.unit?` · ${lead.unit}`:""}`} />
+              <Row l="City" v={lead.property_city||"—"} />
+              <Row l="Beds / Baths" v={`${lead.bedrooms??"—"} / ${lead.bathrooms??"—"}`} />
+              <Row l="Desired move-in" v={leaseFmtDate(lead.desired_move_in)} />
+              <Row l="Lease term" v={lead.lease_term_months?`${lead.lease_term_months} mo`:"—"} />
+              <Row l="Budget" v={lead.budget_min||lead.budget_max?`${leaseFmt$(lead.budget_min)} – ${leaseFmt$(lead.budget_max)}`:"—"} />
+              <Row l="Occupants" v={lead.occupants??"—"} />
+              <Row l="Pets" v={lead.pets||"—"} />
+              <Row l="Source" v={lead.source||"—"} />
+              <Row l="Phone" v={lead.tenant_phone||"—"} />
+              <Row l="Email" v={lead.tenant_email||"—"} />
+            </div>
+          ))}
+
+          {tab==="activity" && (
+            <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+              {acts.length===0 ? <div style={{ fontSize:12, color:C.text3, fontFamily:FONT, padding:"12px 0" }}>No activity yet — use the call/text/email buttons above.</div> :
+                acts.map(a=>(
+                  <div key={a.id} style={{ display:"flex", gap:10, padding:"8px 0", borderBottom:`1px solid ${C.border}` }}>
+                    <span style={{ fontSize:14 }}>{a.activity_type==="call"?"📞":a.activity_type==="text"?"💬":a.activity_type==="email"?"✉️":a.activity_type==="note"?"📝":"•"}</span>
+                    <div style={{ flex:1 }}>
+                      <div style={{ fontSize:12, color:C.text, fontFamily:FONT }}>{a.content}</div>
+                      <div style={{ fontSize:10, color:C.text3, fontFamily:FONT }}>{a.created_by?.split("@")[0]} · {new Date(a.created_at).toLocaleString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"})}</div>
+                    </div>
+                  </div>
+                ))}
+            </div>
+          )}
+
+          {tab==="notes" && (
+            <div>
+              <textarea value={note} onChange={e=>setNote(e.target.value)} placeholder="Add a note about this opportunity…"
+                style={{ width:"100%", minHeight:90, padding:"10px 12px", background:C.surface2, border:`1.5px solid ${C.border2}`,
+                  borderRadius:8, color:C.text, fontSize:13, fontFamily:FONT, outline:"none", boxSizing:"border-box", resize:"vertical" }} />
+              <div style={{ marginTop:8 }}><GoldButton small onClick={addNote} disabled={!note.trim()}>Add note</GoldButton></div>
+              {lead.notes && <div style={{ marginTop:14, fontSize:12, color:C.text2, fontFamily:FONT, whiteSpace:"pre-wrap" }}>{lead.notes}</div>}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+function leaseQa(color){
+  return { flex:1, textAlign:"center", textDecoration:"none", padding:"9px 10px", borderRadius:8,
+    border:`1.5px solid ${color}`, color:color, background:"transparent", fontSize:12, fontWeight:700,
+    fontFamily:FONT, cursor:"pointer", whiteSpace:"nowrap" };
+}
+
+// ════════════════════════════════════════════════════════════
 // RECRUITING VIEW — Admin/Owner only (agent recruiting pipeline)
 // ════════════════════════════════════════════════════════════
 
@@ -7597,6 +8022,7 @@ export default function App() {
     settings:["Settings","Account & org"],
     robots:  ["Ari", "Business Unit Leader · ROGA"],
     calendar:   ["Calendar",   "Realty One Group Advantage"],
+    leasing:    ["Leasing Pipeline", "Tenant & rental opportunities"],
     applications:["Applications", "Agent Onboarding Queue"],
     recruiting:["Recruiting Pipeline", "Producing-agent prospects · Admin only"],
     financials:  ["Financials",   "Agent Packages & Deal P&L"],
@@ -7648,6 +8074,7 @@ export default function App() {
           {view==="notepad"  &&<NotesView     user={cu} />}
           {view==="robots"   &&<RobotsView    user={cu} deals={deals} contacts={contacts} tasks={tasks} />}
           {view==="calendar"   &&<CalendarView    user={cu} />}
+          {view==="leasing"    &&<LeasingView     user={cu} />}
           {view==="applications"&&<ApplicationsView user={cu} />}
           {view==="recruiting"  &&<RecruitingView   user={cu} />}
           {view==="financials"  &&<FinancialsView   user={cu} />}
