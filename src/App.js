@@ -6,6 +6,25 @@ const supabase = createClient(
   process.env.REACT_APP_SUPABASE_ANON_KEY
 );
 
+// Supabase/PostgREST caps a single .select() at 1000 rows. fetchAllRows pages
+// through in 1000-row windows so org-wide counts and lists include EVERYTHING,
+// no matter how far past 1000 a table grows. Pass a function that returns a
+// FRESH query builder each call (so .range() chains cleanly per page).
+async function fetchAllRows(buildQuery) {
+  const PAGE = 1000;
+  let from = 0;
+  let all = [];
+  for (;;) {
+    const { data, error } = await buildQuery().range(from, from + PAGE - 1);
+    if (error) { console.error("fetchAllRows error:", error.message); break; }
+    if (!data || data.length === 0) break;
+    all = all.concat(data);
+    if (data.length < PAGE) break;
+    from += PAGE;
+  }
+  return all;
+}
+
 const APP_NAME = "Prism";
 const ORG_NAME = "Realty One Group Advantage";
 const ORG_ID          = "8cc1004c-c4da-4aab-b79a-f8b507983303";
@@ -4902,9 +4921,9 @@ function RecruitingView({ user }) {
 
   const load = async () => {
     setLoad(true);
-    const { data } = await supabase.from("recruiting_leads")
+    const data = await fetchAllRows(()=>supabase.from("recruiting_leads")
       .select("*").eq("org_id", ORG_ID)
-      .order("approx_gci", { ascending:false });
+      .order("approx_gci", { ascending:false, nullsFirst:false }));
     setLeads(data||[]);
     setLoad(false);
   };
@@ -6020,16 +6039,16 @@ function FinancialsView({ user }) {
   const loadAll = async () => {
     setLoading(true);
     const [a, p, f] = await Promise.all([
-      supabase.from("contacts").select("id,full_name,email,phone,contact_type")
-        .eq("org_id", ORG_ID).eq("contact_type", "Agent").order("full_name"),
+      fetchAllRows(()=>supabase.from("contacts").select("id,full_name,email,phone,contact_type")
+        .eq("org_id", ORG_ID).eq("contact_type", "Agent").order("full_name")),
       supabase.from("agent_fee_packages").select("*")
         .eq("org_id", ORG_ID).eq("is_active", true),
-      supabase.from("deal_financials").select("*, deals(address,city,state,status), contacts(full_name)")
-        .eq("org_id", ORG_ID).order("created_at", {ascending: false}),
+      fetchAllRows(()=>supabase.from("deal_financials").select("*, deals(address,city,state,status), contacts(full_name)")
+        .eq("org_id", ORG_ID).order("created_at", {ascending: false})),
     ]);
-    setAgents(a.data || []);
+    setAgents(a || []);
     setPkgs(p.data || []);
-    setFins(f.data || []);
+    setFins(f || []);
     setLoading(false);
   };
 
@@ -7529,11 +7548,11 @@ export default function App() {
   const loadData = useCallback(async()=>{
     if(!session) return;
     const [d,c,t] = await Promise.all([
-      supabase.from("deals").select("*").eq("org_id",ORG_ID).order("created_at",{ascending:false}),
-      supabase.from("contacts").select("*").eq("org_id",ORG_ID).order("contact_type").order("full_name"),
-      supabase.from("tasks").select("*").eq("org_id",ORG_ID).order("created_at",{ascending:false}),
+      fetchAllRows(()=>supabase.from("deals").select("*").eq("org_id",ORG_ID).order("created_at",{ascending:false})),
+      fetchAllRows(()=>supabase.from("contacts").select("*").eq("org_id",ORG_ID).order("contact_type").order("full_name")),
+      fetchAllRows(()=>supabase.from("tasks").select("*").eq("org_id",ORG_ID).order("created_at",{ascending:false})),
     ]);
-    setDeals(d.data||[]); setContacts(c.data||[]); setTasks(t.data||[]);
+    setDeals(d||[]); setContacts(c||[]); setTasks(t||[]);
     setDataLoaded(true);
   },[session]);
 
