@@ -78,6 +78,7 @@ const NAV = [
   { id:"contacts",  label:"Contacts",  icon:"👤" },
   { id:"tasks",     label:"Tasks",     icon:"✅" },
   { id:"calendar",  label:"Calendar",  icon:"📅" },
+  { id:"recruiting", label:"Recruiting",  icon:"🎯", adminOnly:true },
   { id:"applications",label:"Applications",icon:"📥", adminOnly:true },
   { id:"financials",  label:"Financials",  icon:"💵", adminOnly:true },
   { id:"performance", label:"Performance", icon:"📈", adminOnly:true },
@@ -4827,6 +4828,523 @@ function RobotsView({ user, deals, contacts, tasks }) {
 
 
 // ════════════════════════════════════════════════════════════
+// RECRUITING VIEW — Admin/Owner only (agent recruiting pipeline)
+// ════════════════════════════════════════════════════════════
+
+const RECRUIT_STAGES = [
+  { id:"New Lead",         label:"New Lead",     color:C.text2,  bg:C.surface2 },
+  { id:"Attempted",        label:"Attempted",    color:C.amber,  bg:"rgba(245,158,11,0.10)" },
+  { id:"Connected",        label:"Connected",    color:C.blue,   bg:"rgba(59,130,246,0.10)" },
+  { id:"Appointment Set",  label:"Appt Set",     color:C.gold,   bg:C.goldDim },
+  { id:"Joined",           label:"Joined",       color:C.green,  bg:"rgba(34,197,94,0.10)" },
+  { id:"Not Interested",   label:"Not Now",      color:C.red,    bg:"rgba(239,68,68,0.10)" },
+];
+const RECRUIT_TEMPS = {
+  Hot:  { color:C.red,   bg:"rgba(239,68,68,0.12)" },
+  Warm: { color:C.amber, bg:"rgba(245,158,11,0.12)" },
+  Cold: { color:C.blue,  bg:"rgba(59,130,246,0.10)" },
+};
+// Typical industry economics, used ONLY to estimate what a producer is
+// likely giving up today vs ROG Advantage. Clearly labelled as estimates
+// in the UI. ROGA = $100/mo + $1,000/transaction + 100% commission.
+const BRAND_ECON = {
+  "Keller Williams":       { rate:0.87, note:"70/30 to a cap + 6% royalty" },
+  "Compass":               { rate:0.80, note:"split typically 70/30–80/20, often no cap" },
+  "Century 21":            { rate:0.80, note:"franchise split + royalty fees" },
+  "Coldwell Banker Realty":{ rate:0.78, note:"traditional split + franchise fees" },
+  "Coldwell Banker":       { rate:0.78, note:"traditional split + franchise fees" },
+  "RE/MAX":                { rate:0.90, note:"desk/monthly fee model" },
+  "eXp Realty":            { rate:0.90, note:"80/20 to $16K cap + monthly + per-tx" },
+  "Real Broker":           { rate:0.91, note:"85/15 to a cap + fees" },
+  "Sotheby's":             { rate:0.76, note:"luxury split + brand fees" },
+  "Smith & Associates Real Estate":{ rate:0.78, note:"boutique split" },
+  "Coastal Properties Group International":{ rate:0.80, note:"boutique split" },
+  "Florida Executive Realty":{ rate:0.82, note:"split + fees" },
+  "Signature Realty Associates":{ rate:0.85, note:"split + fees" },
+  "Mihara & Associates INC.":{ rate:0.82, note:"split + fees" },
+  // Already-100% / flat-fee lane — money angle is weak, lead with value
+  "LPT Realty":            { rate:0.97, note:"already a 100% / flat-fee model", sameLane:true },
+  "Charles Rutenberg Realty":{ rate:0.96, note:"already a 100% / flat-fee model", sameLane:true },
+  "Dalton Wade INC":       { rate:0.96, note:"already a 100% / flat-fee model", sameLane:true },
+  "Future Home Realty INC":{ rate:0.95, note:"flat-fee model", sameLane:true },
+  "Avenue Homes LLC":      { rate:0.95, note:"flat-fee model", sameLane:true },
+};
+function brandEcon(brand){
+  return BRAND_ECON[brand] || { rate:0.82, note:"typical split brokerage" };
+}
+function rogaNet(gci, units){
+  const u = units && units>0 ? Math.round(units) : 12;
+  return (gci||0) - 1200 - 1000*u;
+}
+function moneyMath(lead){
+  const gci = lead.approx_gci||0;
+  const units = lead.units && lead.units>0 ? Math.round(lead.units) : 12;
+  const ec = brandEcon(lead.brand);
+  const currentNet = gci * ec.rate;          // est. take-home today
+  const roga = rogaNet(gci, units);          // take-home at ROGA
+  const diff = roga - currentNet;            // money left on the table
+  return { gci, units, ec, currentNet, roga, diff };
+}
+
+function RecruitingView({ user }) {
+  const isMobile = useIsMobile();
+  const [leads, setLeads]   = useState([]);
+  const [loading, setLoad]  = useState(true);
+  const [sel, setSel]       = useState(null);
+  const [mode, setMode]     = useState("pipeline"); // pipeline | list
+  const [q, setQ]           = useState("");
+  const [fStage, setFStage] = useState("all");
+  const [fTemp, setFTemp]   = useState("all");
+  const [fBrand, setFBrand] = useState("all");
+  const [fAssign, setFAssign]= useState("all");
+  const [toast, setToast]   = useState(null);
+  const [showPlay, setPlay] = useState(false);
+
+  const load = async () => {
+    setLoad(true);
+    const { data } = await supabase.from("recruiting_leads")
+      .select("*").eq("org_id", ORG_ID)
+      .order("approx_gci", { ascending:false });
+    setLeads(data||[]);
+    setLoad(false);
+  };
+  useEffect(()=>{ load(); },[]);
+
+  const callers = Array.from(new Set(leads.map(l=>l.assigned_to).filter(Boolean)));
+  const brands  = Array.from(new Set(leads.map(l=>l.brand).filter(Boolean))).sort();
+
+  const filtered = leads.filter(l=>{
+    if(fStage!=="all" && l.stage!==fStage) return false;
+    if(fTemp!=="all"  && l.temperature!==fTemp) return false;
+    if(fBrand!=="all" && l.brand!==fBrand) return false;
+    if(fAssign!=="all" && (l.assigned_to||"")!==fAssign) return false;
+    if(q){
+      const hay=`${l.full_name} ${l.current_brokerage} ${l.brand} ${l.city} ${l.email}`.toLowerCase();
+      if(!hay.includes(q.toLowerCase())) return false;
+    }
+    return true;
+  });
+
+  const fmt$ = n => n==null?"—":"$"+Math.round(n).toLocaleString();
+  const stat = {
+    total: leads.length,
+    hot: leads.filter(l=>l.temperature==="Hot").length,
+    appts: leads.filter(l=>l.stage==="Appointment Set").length,
+    joined: leads.filter(l=>l.stage==="Joined").length,
+  };
+
+  return (
+    <div style={{ padding:isMobile?"12px":"20px 24px", maxWidth:1280 }}>
+      {toast && <Toast message={toast.msg} type={toast.type} onDone={()=>setToast(null)} />}
+
+      {/* Stats */}
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(130px,1fr))", gap:10, marginBottom:16 }}>
+        {[
+          { l:"Total Prospects", v:stat.total,  c:C.gold },
+          { l:"Hot · Ready",     v:stat.hot,    c:C.red },
+          { l:"Appointments Set",v:stat.appts,  c:C.gold },
+          { l:"Joined ROGA",     v:stat.joined, c:C.green },
+        ].map(s=>(
+          <div key={s.l} style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:10, padding:"13px 14px" }}>
+            <div style={{ fontSize:22, fontWeight:700, color:s.c, fontFamily:SERIF }}>{s.v}</div>
+            <div style={{ fontSize:10, fontWeight:700, color:C.text2, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.07em", marginTop:2 }}>{s.l}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Controls */}
+      <div style={{ display:"flex", flexWrap:"wrap", gap:8, alignItems:"center", marginBottom:14 }}>
+        <div style={{ display:"flex", gap:4, background:C.surface2, borderRadius:8, padding:3 }}>
+          {[["pipeline","Pipeline"],["list","List"]].map(([v,l])=>(
+            <button key={v} onClick={()=>setMode(v)} style={{ padding:"6px 14px", borderRadius:6, border:"none",
+              background:mode===v?C.gold:"transparent", color:mode===v?"#0a0a0a":C.text2,
+              fontSize:12, fontWeight:600, fontFamily:FONT, cursor:"pointer" }}>{l}</button>
+          ))}
+        </div>
+        <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search name, brokerage, city…"
+          style={{ flex:"1 1 200px", minWidth:160, padding:"8px 12px", background:C.surface2,
+            border:`1.5px solid ${C.border2}`, borderRadius:8, color:C.text, fontSize:13, fontFamily:FONT, outline:"none" }} />
+        <select value={fTemp} onChange={e=>setFTemp(e.target.value)} style={selStyle()}>
+          <option value="all">All temps</option><option>Hot</option><option>Warm</option><option>Cold</option>
+        </select>
+        <select value={fBrand} onChange={e=>setFBrand(e.target.value)} style={selStyle()}>
+          <option value="all">All brands</option>{brands.map(b=><option key={b} value={b}>{b}</option>)}
+        </select>
+        {callers.length>0 && (
+          <select value={fAssign} onChange={e=>setFAssign(e.target.value)} style={selStyle()}>
+            <option value="all">All callers</option>{callers.map(c=><option key={c} value={c}>{c}</option>)}
+          </select>
+        )}
+        <GoldButton small outline onClick={()=>setPlay(true)}>📖 Playbook</GoldButton>
+      </div>
+
+      {loading ? (
+        <div style={{ padding:"40px 0", textAlign:"center", color:C.text3, fontSize:13, fontFamily:FONT }}>Loading prospects…</div>
+      ) : mode==="pipeline" ? (
+        <div style={{ display:"flex", gap:12, overflowX:"auto", paddingBottom:12, WebkitOverflowScrolling:"touch" }}>
+          {RECRUIT_STAGES.map(st=>{
+            const col = filtered.filter(l=>l.stage===st.id);
+            return (
+              <div key={st.id} style={{ flex:"0 0 268px", width:268 }}>
+                <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between",
+                  padding:"6px 4px", marginBottom:8, borderBottom:`2px solid ${st.color}` }}>
+                  <span style={{ fontSize:12, fontWeight:700, color:st.color, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.05em" }}>{st.label}</span>
+                  <span style={{ fontSize:12, fontWeight:700, color:C.text3, fontFamily:MONO }}>{col.length}</span>
+                </div>
+                <div style={{ display:"flex", flexDirection:"column", gap:8, minHeight:60 }}>
+                  {col.slice(0,60).map(l=><RecruitCard key={l.id} lead={l} onClick={()=>setSel(l)} fmt$={fmt$} />)}
+                  {col.length>60 && <div style={{ fontSize:11, color:C.text3, textAlign:"center", padding:8 }}>+{col.length-60} more — use List/filters</div>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div style={{ display:"flex", flexDirection:"column", gap:7 }}>
+          <div style={{ fontSize:11, color:C.text3, fontFamily:FONT, marginBottom:2 }}>{filtered.length} of {leads.length} prospects</div>
+          {filtered.slice(0,400).map(l=>{
+            const t=RECRUIT_TEMPS[l.temperature]||RECRUIT_TEMPS.Warm;
+            const stg=RECRUIT_STAGES.find(s=>s.id===l.stage)||RECRUIT_STAGES[0];
+            return (
+              <div key={l.id} onClick={()=>setSel(l)}
+                style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:10, padding:"11px 14px",
+                  cursor:"pointer", display:"flex", alignItems:"center", gap:12 }}
+                onMouseEnter={e=>e.currentTarget.style.borderColor=C.goldBorder}
+                onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}>
+                <Avatar name={l.full_name} email={l.email} size={36} />
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ fontSize:13, fontWeight:700, color:C.text, fontFamily:FONT }}>{l.full_name}
+                    <span style={{ marginLeft:8, fontSize:10, fontWeight:700, color:t.color, background:t.bg, borderRadius:10, padding:"2px 7px" }}>{l.temperature}</span>
+                  </div>
+                  <div style={{ fontSize:11, color:C.text2, fontFamily:FONT, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                    {l.brand||l.current_brokerage} · {l.city||"—"} · {fmt$(l.approx_gci)} GCI</div>
+                </div>
+                <span style={{ fontSize:10, fontWeight:700, color:stg.color, background:stg.bg, borderRadius:10, padding:"3px 9px", whiteSpace:"nowrap" }}>{stg.label}</span>
+              </div>
+            );
+          })}
+          {filtered.length>400 && <div style={{ fontSize:11, color:C.text3, textAlign:"center", padding:10 }}>Showing first 400 — narrow with filters.</div>}
+        </div>
+      )}
+
+      {sel && <RecruitPanel lead={sel} user={user} onClose={()=>setSel(null)}
+        onRefresh={async()=>{ await load(); }} onUpdated={(u)=>setSel(u)} setToast={setToast} callers={callers} />}
+      {showPlay && <RecruitPlaybook onClose={()=>setPlay(false)} />}
+    </div>
+  );
+}
+
+function selStyle(){
+  return { padding:"8px 10px", background:C.surface2, border:`1.5px solid ${C.border2}`,
+    borderRadius:8, color:C.text, fontSize:12, fontFamily:FONT, outline:"none", maxWidth:170 };
+}
+
+function RecruitCard({ lead, onClick, fmt$ }) {
+  const t=RECRUIT_TEMPS[lead.temperature]||RECRUIT_TEMPS.Warm;
+  const touched=(lead.touch_count||0)>0;
+  return (
+    <div onClick={onClick} style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:10,
+      padding:"11px 12px", cursor:"pointer" }}
+      onMouseEnter={e=>e.currentTarget.style.borderColor=C.goldBorder}
+      onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:5 }}>
+        <span style={{ fontSize:13, fontWeight:700, color:C.text, fontFamily:FONT }}>{lead.full_name}</span>
+        <span style={{ fontSize:9, fontWeight:700, color:t.color, background:t.bg, borderRadius:10, padding:"2px 7px" }}>{lead.temperature}</span>
+      </div>
+      <div style={{ fontSize:11, color:C.text2, fontFamily:FONT, marginBottom:3, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{lead.brand||lead.current_brokerage}</div>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+        <span style={{ fontSize:11, color:C.gold, fontFamily:MONO }}>{fmt$(lead.approx_gci)} GCI</span>
+        <span style={{ fontSize:10, color:C.text3, fontFamily:FONT }}>
+          {touched ? `${lead.touch_count} touch${lead.touch_count>1?"es":""}` : "new"}
+        </span>
+      </div>
+      {lead.assigned_to && <div style={{ fontSize:9, color:C.text3, fontFamily:FONT, marginTop:4 }}>👤 {lead.assigned_to.split("@")[0]}</div>}
+    </div>
+  );
+}
+
+// ── Merge-filled scripts ──────────────────────────────────────
+function fillScripts(lead){
+  const fn = lead.first_name || (lead.full_name||"").split(" ")[0] || "there";
+  const city = lead.city || "the area";
+  const brand = lead.brand || "your brokerage";
+  const mm = moneyMath(lead);
+  const moneyLine = mm.ec.sameLane
+    ? `you're already on a 100% model, so this isn't about a bigger split — it's about what's wrapped around it`
+    : `at your volume you're likely leaving somewhere around ${"$"+Math.round(Math.max(mm.diff,0)/1000)*1+"K"} a year on the table versus a true 100% model`;
+  return {
+    call:
+`OPENER (warm, curious — not a pitch):
+"Hi ${fn}, this is [your name] with Realty ONE Group Advantage here in ${city}. I know I'm calling out of the blue — do you have 30 seconds? … The reason I'm reaching out specifically is I've been watching production in ${city} and your name kept coming up. I'm not calling to pull you out of ${brand} — I'm calling because I'd genuinely like to learn what's working for you and share what we're building. Would you be open to a quick, no-pressure conversation?"
+
+IF "I'm happy where I am":
+"That's great to hear — honestly the best agents usually are. Can I ask, if there were one thing you'd change about your setup, what would it be?" (listen — this is the whole call)
+
+THE ASK (book, don't close):
+"I'm not the right person to get into the weeds on a move — but our broker ${"Dara"} (or Javier) sits down with a handful of producers each week, 15 minutes, just to compare notes. No paperwork, no pitch. Worth me grabbing you a spot?"`,
+    voicemail:
+`VOICEMAIL (under 18 seconds):
+"Hi ${fn}, it's [your name] with Realty ONE Group Advantage. Nothing urgent — I've just been impressed with your work in ${city} and wanted to connect agent-to-agent. I'll send you a quick text so you have my number. Talk soon."`,
+    text:
+`TEXT 1 (after first call/VM):
+"Hi ${fn} — [your name] from Realty ONE Group Advantage. Left you a quick voicemail. No pitch, promise — just impressed by your numbers in ${city} and would love to compare notes sometime. Cool if I check back next week?"
+
+TEXT 2 (value, day 4-5):
+"${fn}, quick one — ${moneyLine}. Happy to show you the exact math on your business, zero obligation. Want me to send it over?"
+
+TEXT 3 (the invite, day 8-10):
+"${fn} — our broker does a casual 15-min sit-down with a few producers each week. Thought of you. This Thurs or next Tues better?"`,
+    email:
+`SUBJECT: Quick note, ${fn} — agent to agent
+
+Hi ${fn},
+
+I'll keep this short. I'm with Realty ONE Group Advantage here in ${city}, and your production stood out to me — genuinely strong work${lead.ltm_growth_pct?` (that ${lead.ltm_growth_pct} growth especially)`:""}.
+
+I'm not writing to talk you out of ${brand}. I'd just like 15 minutes to compare notes — what's working for you, and what we're building over here. A lot of strong agents are surprised by the math once they see it side by side${mm.ec.sameLane?", even coming from a 100% shop":""}.
+
+If you're open to it, our broker Dara (or Javier) keeps a couple of spots open each week. No paperwork, no pressure — just a conversation.
+
+Worth a quick call?
+
+— [Your name]
+Realty ONE Group Advantage`,
+  };
+}
+
+function RecruitPanel({ lead, user, onClose, onRefresh, onUpdated, setToast, callers }) {
+  const isMobile = useIsMobile();
+  const [tab, setTab] = useState("scripts");
+  const [acts, setActs] = useState([]);
+  const [note, setNote] = useState("");
+  const [saving, setSaving] = useState(false);
+  const mm = moneyMath(lead);
+  const scripts = fillScripts(lead);
+  const fmt$ = n => n==null?"—":"$"+Math.round(n).toLocaleString();
+
+  const loadActs = async () => {
+    const { data } = await supabase.from("recruiting_activities")
+      .select("*").eq("lead_id", lead.id).order("created_at",{ascending:false});
+    setActs(data||[]);
+  };
+  useEffect(()=>{ loadActs(); },[lead.id]);
+
+  const patch = async (fields) => {
+    await supabase.from("recruiting_leads").update({ ...fields, updated_at:new Date().toISOString() }).eq("id", lead.id);
+    onUpdated({ ...lead, ...fields });
+    onRefresh();
+  };
+
+  const logTouch = async (channel, disposition) => {
+    const counter = channel==="call"?"call_count":channel==="text"?"text_count":channel==="email"?"email_count":null;
+    const fields = { last_contacted_at:new Date().toISOString(), touch_count:(lead.touch_count||0)+1 };
+    if(counter) fields[counter] = (lead[counter]||0)+1;
+    if(disposition) fields.last_disposition = disposition;
+    if(lead.stage==="New Lead") fields.stage = channel==="call"&&disposition==="Connected" ? "Connected" : "Attempted";
+    if(channel==="call"&&disposition==="Connected") fields.stage="Connected";
+    await supabase.from("recruiting_activities").insert({
+      lead_id:lead.id, org_id:ORG_ID, activity_type:channel, channel, disposition,
+      content:disposition?`${channel} · ${disposition}`:channel, created_by:user.email });
+    await patch(fields);
+    await loadActs();
+    setToast({ msg:`Logged ${channel}${disposition?` · ${disposition}`:""}`, type:"success" });
+  };
+
+  const addNote = async () => {
+    if(!note.trim()) return;
+    setSaving(true);
+    await supabase.from("recruiting_activities").insert({
+      lead_id:lead.id, org_id:ORG_ID, activity_type:"note", content:note.trim(), created_by:user.email });
+    setNote(""); setSaving(false); await loadActs();
+    setToast({ msg:"Note added", type:"success" });
+  };
+
+  const bookAppt = async (who) => {
+    await supabase.from("recruiting_activities").insert({
+      lead_id:lead.id, org_id:ORG_ID, activity_type:"appointment",
+      content:`Appointment set with ${who}`, created_by:user.email });
+    await patch({ stage:"Appointment Set", appointment_with:who, appointment_at:new Date().toISOString() });
+    await loadActs();
+    setToast({ msg:`🎉 Appointment set with ${who}`, type:"success" });
+  };
+
+  const tel  = lead.phone ? `tel:${lead.phone.replace(/\D/g,"")}` : null;
+  const sms  = lead.phone ? `sms:${lead.phone.replace(/\D/g,"")}` : null;
+  const mail = lead.email ? `mailto:${lead.email}?subject=${encodeURIComponent("Quick note, "+(lead.first_name||"")+" — agent to agent")}` : null;
+  const copy = (txt,label)=>{ navigator.clipboard?.writeText(txt); setToast({ msg:(label||"Script")+" copied", type:"success" }); };
+
+  return (
+    <div style={{ position:"fixed", inset:0, zIndex:300, display:"flex", justifyContent:"flex-end" }}>
+      <div onClick={onClose} style={{ position:"absolute", inset:0, background:"rgba(0,0,0,0.6)" }} />
+      <div style={{ position:"relative", width:isMobile?"100%":520, maxWidth:"100%", height:"100%",
+        background:C.surface, borderLeft:`1px solid ${C.border}`, overflowY:"auto",
+        animation:"slideLeft 0.2s ease" }}>
+        <style>{`@keyframes slideLeft{from{transform:translateX(30px);opacity:0}to{transform:translateX(0);opacity:1}}`}</style>
+
+        {/* Header */}
+        <div style={{ padding:"18px 20px", borderBottom:`1px solid ${C.border}`, position:"sticky", top:0, background:C.surface, zIndex:2 }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+            <div style={{ display:"flex", gap:12 }}>
+              <Avatar name={lead.full_name} email={lead.email} size={46} />
+              <div>
+                <div style={{ fontSize:17, fontWeight:700, color:C.text, fontFamily:SERIF }}>{lead.full_name}</div>
+                <div style={{ fontSize:12, color:C.text2, fontFamily:FONT }}>{lead.current_brokerage}</div>
+                <div style={{ fontSize:11, color:C.text3, fontFamily:FONT, marginTop:2 }}>{lead.city||"—"}{lead.license_number?` · Lic ${lead.license_number}`:""}</div>
+              </div>
+            </div>
+            <button onClick={onClose} style={{ background:"none", border:"none", color:C.text2, fontSize:22, cursor:"pointer" }}>✕</button>
+          </div>
+
+          {/* Quick actions */}
+          <div style={{ display:"flex", gap:8, marginTop:14, flexWrap:"wrap" }}>
+            {tel && <a href={tel} onClick={()=>logTouch("call")} style={qaStyle(C.green)}>📞 Call</a>}
+            {sms && <a href={sms} onClick={()=>{copy(scripts.text,"Text script");logTouch("text");}} style={qaStyle(C.blue)}>💬 Text</a>}
+            {mail && <a href={mail} onClick={()=>{copy(scripts.email,"Email");logTouch("email");}} style={qaStyle(C.gold)}>✉️ Email</a>}
+          </div>
+          {/* Call dispositions */}
+          {tel && (
+            <div style={{ display:"flex", gap:5, marginTop:8, flexWrap:"wrap" }}>
+              {["Connected","Voicemail","No Answer","Callback","Not Interested"].map(d=>(
+                <button key={d} onClick={()=>logTouch("call",d)} style={{ fontSize:10, padding:"4px 9px",
+                  borderRadius:14, border:`1px solid ${C.border2}`, background:"transparent", color:C.text2,
+                  fontFamily:FONT, cursor:"pointer" }}>{d}</button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div style={{ padding:"16px 20px" }}>
+          {/* Money math */}
+          <div style={{ background:C.surface2, border:`1px solid ${C.goldBorder}`, borderRadius:12, padding:"14px 16px", marginBottom:16 }}>
+            <div style={{ fontSize:10, fontWeight:700, color:C.gold, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:10 }}>The Money Math · {fmt$(mm.gci)} GCI · {mm.units} units</div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+              <div>
+                <div style={{ fontSize:10, color:C.text3, fontFamily:FONT }}>Est. take-home today</div>
+                <div style={{ fontSize:18, fontWeight:700, color:C.text2, fontFamily:MONO }}>{fmt$(mm.currentNet)}</div>
+                <div style={{ fontSize:9, color:C.text3, fontFamily:FONT }}>{lead.brand} — {mm.ec.note}</div>
+              </div>
+              <div>
+                <div style={{ fontSize:10, color:C.text3, fontFamily:FONT }}>At ROG Advantage</div>
+                <div style={{ fontSize:18, fontWeight:700, color:C.green, fontFamily:MONO }}>{fmt$(mm.roga)}</div>
+                <div style={{ fontSize:9, color:C.text3, fontFamily:FONT }}>$100/mo + $1,000/tx, keep 100%</div>
+              </div>
+            </div>
+            <div style={{ marginTop:10, paddingTop:10, borderTop:`1px solid ${C.border}` }}>
+              {mm.ec.sameLane ? (
+                <div style={{ fontSize:12, color:C.text2, fontFamily:FONT }}>Already on a 100%-style model — <b style={{color:C.gold}}>lead with value, not split</b>: The Edge AI program, Prism tech, local broker access, culture.</div>
+              ) : (
+                <div style={{ fontSize:13, color:C.text, fontFamily:FONT }}>Estimated left on the table: <b style={{ color:C.green, fontFamily:MONO }}>{fmt$(Math.max(mm.diff,0))}/yr</b></div>
+              )}
+              <div style={{ fontSize:9, color:C.text3, fontFamily:FONT, marginTop:4 }}>Typical industry estimate — confirm their actual structure in conversation.</div>
+            </div>
+          </div>
+
+          {/* Production snapshot */}
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:8, marginBottom:16 }}>
+            {[["LTM Volume",fmt$(lead.ltm_volume)],["Growth",lead.ltm_growth_pct||"—"],["Avg Price",fmt$(lead.avg_sale_price)],
+              ["Years Exp.",lead.years_in_industry||"—"],["Yrs @ Office",lead.years_in_office?Number(lead.years_in_office).toFixed(1):"—"],["Move Potential",lead.potential_to_move||"—"]].map(([l,v])=>(
+              <div key={l} style={{ background:C.surface2, borderRadius:8, padding:"8px 10px" }}>
+                <div style={{ fontSize:9, color:C.text3, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.05em" }}>{l}</div>
+                <div style={{ fontSize:13, fontWeight:700, color:C.text, fontFamily:MONO }}>{v}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Stage + assign + book */}
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:12 }}>
+            <Sel label="Stage" value={lead.stage} onChange={v=>patch({stage:v})} options={RECRUIT_STAGES.map(s=>({value:s.id,label:s.label}))} />
+            <Sel label="Assigned caller" value={lead.assigned_to||""} onChange={v=>patch({assigned_to:v||null})}
+              options={[{value:"",label:"Unassigned"}, ...callers.map(c=>({value:c,label:c.split("@")[0]})),
+                {value:user.email,label:"Me ("+user.email.split("@")[0]+")"}]} />
+          </div>
+          <div style={{ display:"flex", gap:8, marginBottom:18 }}>
+            <GoldButton small onClick={()=>bookAppt("Javier")}>📅 Book w/ Javier</GoldButton>
+            <GoldButton small outline onClick={()=>bookAppt("Dara")}>📅 Book w/ Dara</GoldButton>
+            {lead.courted_url && <a href={lead.courted_url} target="_blank" rel="noreferrer" style={{ ...qaStyle(C.text2), fontSize:11 }}>Courted ↗</a>}
+          </div>
+
+          {/* Tabs */}
+          <div style={{ display:"flex", gap:5, marginBottom:12, borderBottom:`1px solid ${C.border}` }}>
+            {[["scripts","Scripts"],["activity",`Activity (${acts.length})`],["notes","Notes"]].map(([v,l])=>(
+              <button key={v} onClick={()=>setTab(v)} style={{ padding:"8px 12px", border:"none", background:"none",
+                color:tab===v?C.gold:C.text2, borderBottom:tab===v?`2px solid ${C.gold}`:"2px solid transparent",
+                fontSize:12, fontWeight:600, fontFamily:FONT, cursor:"pointer", marginBottom:-1 }}>{l}</button>
+            ))}
+          </div>
+
+          {tab==="scripts" && (
+            <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+              {[["Call opener",scripts.call],["Voicemail",scripts.voicemail],["Text sequence",scripts.text],["Email",scripts.email]].map(([title,body])=>(
+                <div key={title} style={{ background:C.surface2, borderRadius:10, padding:"12px 14px" }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
+                    <span style={{ fontSize:11, fontWeight:700, color:C.gold, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.06em" }}>{title}</span>
+                    <button onClick={()=>copy(body,title)} style={{ fontSize:10, padding:"3px 9px", borderRadius:12, border:`1px solid ${C.border2}`, background:"transparent", color:C.text2, cursor:"pointer", fontFamily:FONT }}>Copy</button>
+                  </div>
+                  <pre style={{ fontSize:12, color:C.text, fontFamily:FONT, whiteSpace:"pre-wrap", margin:0, lineHeight:1.5 }}>{body}</pre>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {tab==="activity" && (
+            <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+              {acts.length===0 ? <div style={{ fontSize:12, color:C.text3, fontFamily:FONT, padding:"12px 0" }}>No activity yet. Use the call/text/email buttons above.</div> :
+                acts.map(a=>(
+                  <div key={a.id} style={{ display:"flex", gap:10, padding:"8px 0", borderBottom:`1px solid ${C.border}` }}>
+                    <span style={{ fontSize:14 }}>{a.activity_type==="call"?"📞":a.activity_type==="text"?"💬":a.activity_type==="email"?"✉️":a.activity_type==="appointment"?"📅":a.activity_type==="note"?"📝":"•"}</span>
+                    <div style={{ flex:1 }}>
+                      <div style={{ fontSize:12, color:C.text, fontFamily:FONT }}>{a.content}</div>
+                      <div style={{ fontSize:10, color:C.text3, fontFamily:FONT }}>{a.created_by?.split("@")[0]} · {new Date(a.created_at).toLocaleString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"})}</div>
+                    </div>
+                  </div>
+                ))}
+            </div>
+          )}
+
+          {tab==="notes" && (
+            <div>
+              <textarea value={note} onChange={e=>setNote(e.target.value)} placeholder="What did you learn? Pain points, timeline, objections…"
+                style={{ width:"100%", minHeight:90, padding:"10px 12px", background:C.surface2, border:`1.5px solid ${C.border2}`,
+                  borderRadius:8, color:C.text, fontSize:13, fontFamily:FONT, outline:"none", boxSizing:"border-box", resize:"vertical" }} />
+              <div style={{ marginTop:8 }}><GoldButton small onClick={addNote} disabled={saving||!note.trim()}>Add note</GoldButton></div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+function qaStyle(color){
+  return { flex:1, textAlign:"center", textDecoration:"none", padding:"9px 10px", borderRadius:8,
+    border:`1.5px solid ${color}`, color:color, background:"transparent", fontSize:12, fontWeight:700,
+    fontFamily:FONT, cursor:"pointer", whiteSpace:"nowrap" };
+}
+
+function RecruitPlaybook({ onClose }) {
+  return (
+    <Modal title="Recruiting Playbook" onClose={onClose} maxWidth={620}>
+      <div style={{ fontSize:13, color:C.text, fontFamily:FONT, lineHeight:1.6, display:"flex", flexDirection:"column", gap:14 }}>
+        <Section h="The one rule" b="We are not pulling people out of their brokerage. We're starting conversations with strong producers and earning a 15-minute meeting with Dara or Javier. The call's only job is the next step — never the close." />
+        <Section h="Daily standard (per caller)" b="20–50 dials/day. Work the Pipeline board left to right: New Lead → Attempted → Connected → Appointment Set. Hot prospects first, then Warm. Log every touch with a disposition so nothing falls through." />
+        <Section h="The cadence (≈7 touches / 21 days)" b="Day 1: Call + voicemail, then Text 1. Day 3: Call. Day 5: Text 2 (the money line). Day 8: Call + Text 3 (the invite). Day 12: Email. Day 18: Last call. No answer after that → long-nurture, recycle in 60 days." />
+        <Section h="High-EQ posture" b="Lead with genuine respect for their numbers (these are real top producers). Never trash their current shop. Ask what they'd change — then listen. Give before you ask: a market stat, a free CMA demo, an invite to The Edge." />
+        <Section h="The angle, by brand" b="Split houses (KW, Compass, Century 21, Coldwell, Sotheby's): lead with the money math — what they keep at 100%. Already-100% shops (LPT, Charles Rutenberg, Dalton Wade): money won't move them — lead with what's wrapped around it: The Edge AI program, Prism, local broker access, culture." />
+        <Section h="What ROGA offers" b="$100/month + $1,000/transaction + keep 100% of your commission. Plus The Edge (weekly AI education), the Prism platform, and hands-on brokers in Lutz/Tampa." />
+        <Section h="The handoff" b="Once they say yes to a meeting, hit 'Book w/ Javier' or 'Book w/ Dara' — that flips them to Appointment Set and logs it. Our job is done; the brokers take it from there." />
+      </div>
+    </Modal>
+  );
+}
+function Section({ h, b }){
+  return (
+    <div>
+      <div style={{ fontSize:11, fontWeight:700, color:C.gold, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:4 }}>{h}</div>
+      <div style={{ fontSize:13, color:C.text2, fontFamily:FONT }}>{b}</div>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════
 // APPLICATIONS VIEW — Admin only
 // ════════════════════════════════════════════════════════════
 function ApplicationsView({ user }) {
@@ -7061,6 +7579,7 @@ export default function App() {
     robots:  ["Ari", "Business Unit Leader · ROGA"],
     calendar:   ["Calendar",   "Realty One Group Advantage"],
     applications:["Applications", "Agent Onboarding Queue"],
+    recruiting:["Recruiting Pipeline", "Producing-agent prospects · Admin only"],
     financials:  ["Financials",   "Agent Packages & Deal P&L"],
     performance:["Brokerage Performance", ORG_NAME],
   };
@@ -7111,6 +7630,7 @@ export default function App() {
           {view==="robots"   &&<RobotsView    user={cu} deals={deals} contacts={contacts} tasks={tasks} />}
           {view==="calendar"   &&<CalendarView    user={cu} />}
           {view==="applications"&&<ApplicationsView user={cu} />}
+          {view==="recruiting"  &&<RecruitingView   user={cu} />}
           {view==="financials"  &&<FinancialsView   user={cu} />}
           {view==="performance" &&<PerformanceView  user={cu} />}
         </main>
