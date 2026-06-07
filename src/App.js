@@ -4576,6 +4576,7 @@ function CalendarView({ user, isPortal=false, agentContact=null }) {
 }
 
 function RobotsView({ user, deals, contacts, tasks }) {
+  const isMobile = useIsMobile();
   const [messages, setMessages]   = useState([]);
   const [input, setInput]         = useState("");
   const [sending, setSending]     = useState(false);
@@ -4681,6 +4682,7 @@ function RobotsView({ user, deals, contacts, tasks }) {
   return (
     <div style={{ display:"flex", height:"calc(100vh - 56px)", overflow:"hidden" }}>
       {/* Ari sidebar */}
+      {!isMobile && (
       <div style={{ width:240, background:C.surface, borderRight:`1px solid ${C.border}`,
         display:"flex", flexDirection:"column", padding:"20px 16px", flexShrink:0 }}>
         <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:20 }}>
@@ -4740,6 +4742,7 @@ function RobotsView({ user, deals, contacts, tasks }) {
           )}
         </div>
       </div>
+      )}
 
       {/* Chat area */}
       <div style={{ flex:1, display:"flex", flexDirection:"column", minWidth:0 }}>
@@ -4753,6 +4756,14 @@ function RobotsView({ user, deals, contacts, tasks }) {
               <div style={{ fontSize:14, color:C.text3, fontFamily:FONT, textAlign:"center" }}>
                 Ask Ari anything about your brokerage
               </div>
+            </div>
+          )}
+          {isMobile && messages.length===0 && (
+            <div style={{ display:"flex", flexDirection:"column", gap:8, marginTop:4 }}>
+              <div style={{ fontSize:10, fontWeight:700, color:C.text3, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.07em" }}>Try asking</div>
+              {["What's my pipeline look like?","Which deals need attention?","Summarize this week's activity","How many agents are active?"].map(q=>(
+                <button key={q} onClick={()=>setInput(q)} style={{ textAlign:"left", background:C.surface2, border:`1px solid ${C.border}`, borderRadius:10, color:C.text2, fontSize:13, fontFamily:FONT, cursor:"pointer", padding:"11px 13px" }}>{q}</button>
+              ))}
             </div>
           )}
           {messages.map((m,i)=>(
