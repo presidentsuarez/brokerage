@@ -134,11 +134,13 @@ function Avatar({ name, email, size=32 }) {
 
 function GoldButton({ children, onClick, small, outline, disabled, danger }) {
   const [hov, setHov] = useState(false);
+  const isMobile = useIsMobile();
   const pad = small ? "7px 14px" : "10px 20px";
   const base = { padding:pad, borderRadius:8, border:"none",
     cursor:disabled?"not-allowed":"pointer",
     fontSize:small?12:13, fontWeight:600, fontFamily:FONT,
-    display:"inline-flex", alignItems:"center", gap:6,
+    display:"inline-flex", alignItems:"center", justifyContent:"center", gap:6,
+    minHeight:isMobile?(small?40:44):undefined,
     transition:"opacity 0.12s", opacity:disabled?0.45:hov?0.82:1 };
   let s;
   if (danger)       s={...base,border:"1.5px solid rgba(239,68,68,0.4)",background:hov?"rgba(239,68,68,0.12)":"transparent",color:"#ef4444"};
@@ -154,6 +156,7 @@ function GoldButton({ children, onClick, small, outline, disabled, danger }) {
 
 function Field({ label, value, onChange, type="text", placeholder, required, autoFocus }) {
   const [foc, setFoc] = useState(false);
+  const isMobile = useIsMobile();
   return (
     <div>
       {label && <label style={{ fontSize:11, fontWeight:700, color:C.text2, fontFamily:FONT,
@@ -162,7 +165,7 @@ function Field({ label, value, onChange, type="text", placeholder, required, aut
         placeholder={placeholder} required={required} autoFocus={autoFocus}
         style={{ width:"100%", padding:"10px 13px", background:C.surface2,
           border:`1.5px solid ${foc?C.gold:C.border2}`, borderRadius:8,
-          color:C.text, fontSize:13, fontFamily:FONT, outline:"none",
+          color:C.text, fontSize:isMobile?16:13, fontFamily:FONT, outline:"none",
           transition:"border-color 0.15s", boxSizing:"border-box" }}
         onFocus={()=>setFoc(true)} onBlur={()=>setFoc(false)} />
     </div>
@@ -170,6 +173,7 @@ function Field({ label, value, onChange, type="text", placeholder, required, aut
 }
 
 function Sel({ label, value, onChange, options }) {
+  const isMobile = useIsMobile();
   return (
     <div>
       {label && <label style={{ fontSize:11, fontWeight:700, color:C.text2, fontFamily:FONT,
@@ -177,7 +181,7 @@ function Sel({ label, value, onChange, options }) {
       <select value={value} onChange={e=>onChange(e.target.value)}
         style={{ width:"100%", padding:"10px 13px", background:C.surface2,
           border:`1.5px solid ${C.border2}`, borderRadius:8, color:C.text,
-          fontSize:13, fontFamily:FONT, outline:"none", boxSizing:"border-box" }}>
+          fontSize:isMobile?16:13, fontFamily:FONT, outline:"none", boxSizing:"border-box" }}>
         {options.map(o=><option key={o.value??o} value={o.value??o}>{o.label??o}</option>)}
       </select>
     </div>
@@ -8076,7 +8080,7 @@ export default function App() {
             </button>
           ) : null} />
         {showTempBanner&&<TempPasswordBanner onAction={()=>{ setTempBanner(false); setAuthScreen("setpassword"); }} />}
-        <main style={{ flex:1, overflowY:"auto" }}>
+        <main style={{ flex:1, overflowY:"auto", paddingBottom:isMobile?"calc(56px + env(safe-area-inset-bottom,0px))":0 }}>
           {view==="dashboard"&&<DashboardView user={cu} deals={deals} contacts={contacts} tasks={tasks} />}
           {view==="deals"    &&<DealsView     user={cu} deals={deals}    onRefresh={loadData} />}
           {view==="contacts" &&<ContactsView  user={cu} contacts={contacts} onRefresh={loadData} />}
