@@ -6300,12 +6300,12 @@ function TransactionsTab({ user }) {
         <span><b style={{color:C.text,fontFamily:MONO}}>{f.length}</b> transactions</span>
         <span>P&amp;L total <b style={{color:C.text,fontFamily:MONO}}>{money(total)}</b></span>
       </div>
-      <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden"}}>
-        <div style={{display:"grid",gridTemplateColumns:"0.7fr 1.5fr 1.3fr 0.7fr 0.5fr",padding:"9px 16px",borderBottom:`1px solid ${C.border}`}}>
+      <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,overflow:"auto"}}>
+        <div style={{display:"grid",gridTemplateColumns:"0.7fr 1.5fr 1.3fr 0.7fr 0.5fr",minWidth:560,padding:"9px 16px",borderBottom:`1px solid ${C.border}`}}>
           {["Date","Vendor","Category","Amount","Status"].map(h=><span key={h} style={{fontSize:10,fontWeight:700,color:C.text3,fontFamily:FONT,textTransform:"uppercase",letterSpacing:"0.06em"}}>{h}</span>)}
         </div>
         {f.slice(0,400).map(r=>(
-          <div key={r.id} onClick={()=>open(r)} style={{display:"grid",gridTemplateColumns:"0.7fr 1.5fr 1.3fr 0.7fr 0.5fr",padding:"11px 16px",borderBottom:`1px solid ${C.border}`,alignItems:"center",cursor:"pointer"}}
+          <div key={r.id} onClick={()=>open(r)} style={{display:"grid",gridTemplateColumns:"0.7fr 1.5fr 1.3fr 0.7fr 0.5fr",minWidth:560,padding:"11px 16px",borderBottom:`1px solid ${C.border}`,alignItems:"center",cursor:"pointer"}}
             onMouseEnter={e=>e.currentTarget.style.background=C.surface2} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
             <span style={{fontSize:12,color:C.text3,fontFamily:MONO}}>{String(r.txn_date||"").slice(5)}</span>
             <span style={{fontSize:12.5,fontWeight:600,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{r.vendor||"—"}</span>
@@ -6373,23 +6373,23 @@ function BankingTab({ user }) {
       )}
       {sub==="vendors" && (<div>
         <input value={vq} onChange={e=>setVq(e.target.value)} placeholder="Search vendors…" style={{padding:"8px 12px",background:C.surface2,border:`1px solid ${C.border2}`,borderRadius:8,color:C.text,fontSize:13,fontFamily:FONT,outline:"none",width:240,marginBottom:12}} />
-        <div style={{...card,padding:"4px 0"}}>
-          <div style={{display:"grid",gridTemplateColumns:"1.8fr 1fr 0.5fr 0.8fr",padding:"8px 16px",borderBottom:`1px solid ${C.border}`}}>{["Vendor","Subcategory","Txns","YTD"].map(h=><span key={h} style={lbl}>{h}</span>)}</div>
-          {venF.slice(0,250).map(v=><div key={v.vendor_id} style={{display:"grid",gridTemplateColumns:"1.8fr 1fr 0.5fr 0.8fr",padding:"9px 16px",borderBottom:`1px solid ${C.border}`,alignItems:"center"}}><span style={{fontSize:12.5,color:C.text,fontWeight:600,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{v.vendor_name}</span><span style={{fontSize:11.5,color:C.text3}}>{v.subcategory}</span><span style={{fontSize:12,fontFamily:MONO,color:C.text3}}>{v.txn_count}</span><span style={{fontSize:12,fontFamily:MONO,color:v.ytd_total<0?C.text:C.green}}>{money(v.ytd_total)}</span></div>)}
+        <div style={{...card,padding:"4px 0",overflowX:"auto"}}>
+          <div style={{display:"grid",gridTemplateColumns:"1.8fr 1fr 0.5fr 0.8fr",minWidth:480,padding:"8px 16px",borderBottom:`1px solid ${C.border}`}}>{["Vendor","Subcategory","Txns","YTD"].map(h=><span key={h} style={lbl}>{h}</span>)}</div>
+          {venF.slice(0,250).map(v=><div key={v.vendor_id} style={{display:"grid",gridTemplateColumns:"1.8fr 1fr 0.5fr 0.8fr",minWidth:480,padding:"9px 16px",borderBottom:`1px solid ${C.border}`,alignItems:"center"}}><span style={{fontSize:12.5,color:C.text,fontWeight:600,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{v.vendor_name}</span><span style={{fontSize:11.5,color:C.text3}}>{v.subcategory}</span><span style={{fontSize:12,fontFamily:MONO,color:C.text3}}>{v.txn_count}</span><span style={{fontSize:12,fontFamily:MONO,color:v.ytd_total<0?C.text:C.green}}>{money(v.ytd_total)}</span></div>)}
           {venF.length>250 && <div style={{padding:10,textAlign:"center",color:C.text3,fontSize:12}}>Showing 250 of {venF.length}</div>}
         </div></div>
       )}
       {sub==="statements" && (
-        <div style={{...card,padding:"4px 0"}}>
-          <div style={{display:"grid",gridTemplateColumns:"0.6fr 1fr 1fr 1fr 1fr",padding:"8px 16px",borderBottom:`1px solid ${C.border}`}}>{["Acct","Period","Begin","End","Net flow"].map(h=><span key={h} style={lbl}>{h}</span>)}</div>
-          {stm.map((s,i)=><div key={i} style={{display:"grid",gridTemplateColumns:"0.6fr 1fr 1fr 1fr 1fr",padding:"9px 16px",borderBottom:`1px solid ${C.border}`,alignItems:"center"}}><span style={{fontSize:12,fontFamily:MONO,color:C.text2}}>····{s.account_last4}</span><span style={{fontSize:11.5,fontFamily:MONO,color:C.text3}}>{s.period_start} → {s.period_end}</span><span style={{fontSize:12,fontFamily:MONO,color:C.text2}}>{money(s.begin_balance)}</span><span style={{fontSize:12,fontFamily:MONO,color:C.text}}>{money(s.end_balance)}</span><span style={{fontSize:12,fontFamily:MONO,color:(s.end_balance-s.begin_balance)>=0?C.green:C.red}}>{money(s.end_balance-s.begin_balance)}</span></div>)}
+        <div style={{...card,padding:"4px 0",overflowX:"auto"}}>
+          <div style={{display:"grid",gridTemplateColumns:"0.6fr 1fr 1fr 1fr 1fr",minWidth:520,padding:"8px 16px",borderBottom:`1px solid ${C.border}`}}>{["Acct","Period","Begin","End","Net flow"].map(h=><span key={h} style={lbl}>{h}</span>)}</div>
+          {stm.map((s,i)=><div key={i} style={{display:"grid",gridTemplateColumns:"0.6fr 1fr 1fr 1fr 1fr",minWidth:520,padding:"9px 16px",borderBottom:`1px solid ${C.border}`,alignItems:"center"}}><span style={{fontSize:12,fontFamily:MONO,color:C.text2}}>····{s.account_last4}</span><span style={{fontSize:11.5,fontFamily:MONO,color:C.text3}}>{s.period_start} → {s.period_end}</span><span style={{fontSize:12,fontFamily:MONO,color:C.text2}}>{money(s.begin_balance)}</span><span style={{fontSize:12,fontFamily:MONO,color:C.text}}>{money(s.end_balance)}</span><span style={{fontSize:12,fontFamily:MONO,color:(s.end_balance-s.begin_balance)>=0?C.green:C.red}}>{money(s.end_balance-s.begin_balance)}</span></div>)}
         </div>
       )}
       {sub==="transfers" && (<div>
         <div style={{display:"flex",gap:6,marginBottom:10}}>{["all","IN","OUT"].map(d=><button key={d} onClick={()=>setTdir(d)} style={{padding:"5px 11px",borderRadius:7,border:`1px solid ${tdir===d?C.goldBorder:C.border}`,background:tdir===d?C.goldDim:"transparent",color:tdir===d?C.gold:C.text2,fontSize:12,cursor:"pointer",fontFamily:FONT}}>{d==="all"?"All":d}</button>)}</div>
-        <div style={{...card,padding:"4px 0"}}>
-          <div style={{display:"grid",gridTemplateColumns:"0.7fr 0.5fr 1.4fr 0.8fr 0.6fr",padding:"8px 16px",borderBottom:`1px solid ${C.border}`}}>{["Date","Acct","Counterparty","Amount","Type"].map(h=><span key={h} style={lbl}>{h}</span>)}</div>
-          {trfF.slice(0,250).map(t=><div key={t.id} style={{display:"grid",gridTemplateColumns:"0.7fr 0.5fr 1.4fr 0.8fr 0.6fr",padding:"9px 16px",borderBottom:`1px solid ${C.border}`,alignItems:"center"}}><span style={{fontSize:11.5,fontFamily:MONO,color:C.text3}}>{t.txn_date}</span><span style={{fontSize:11.5,fontFamily:MONO,color:C.text3}}>····{t.account_last4}</span><span style={{fontSize:12,color:C.text2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{t.counterparty}</span><span style={{fontSize:12,fontFamily:MONO,color:t.direction==="IN"?C.green:C.text}}>{money(t.amount)}</span><span style={{fontSize:10.5,color:C.text3}}>{t.type}</span></div>)}
+        <div style={{...card,padding:"4px 0",overflowX:"auto"}}>
+          <div style={{display:"grid",gridTemplateColumns:"0.7fr 0.5fr 1.4fr 0.8fr 0.6fr",minWidth:540,padding:"8px 16px",borderBottom:`1px solid ${C.border}`}}>{["Date","Acct","Counterparty","Amount","Type"].map(h=><span key={h} style={lbl}>{h}</span>)}</div>
+          {trfF.slice(0,250).map(t=><div key={t.id} style={{display:"grid",gridTemplateColumns:"0.7fr 0.5fr 1.4fr 0.8fr 0.6fr",minWidth:540,padding:"9px 16px",borderBottom:`1px solid ${C.border}`,alignItems:"center"}}><span style={{fontSize:11.5,fontFamily:MONO,color:C.text3}}>{t.txn_date}</span><span style={{fontSize:11.5,fontFamily:MONO,color:C.text3}}>····{t.account_last4}</span><span style={{fontSize:12,color:C.text2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{t.counterparty}</span><span style={{fontSize:12,fontFamily:MONO,color:t.direction==="IN"?C.green:C.text}}>{money(t.amount)}</span><span style={{fontSize:10.5,color:C.text3}}>{t.type}</span></div>)}
           {trfF.length>250 && <div style={{padding:10,textAlign:"center",color:C.text3,fontSize:12}}>Showing 250 of {trfF.length}</div>}
         </div></div>
       )}
@@ -6427,9 +6427,9 @@ function InsightsTab({ user }) {
       <div style={{display:"flex",gap:6,marginBottom:16,flexWrap:"wrap"}}>
         {SUB.map(([id,l])=><button key={id} onClick={()=>setSub(id)} style={{padding:"7px 13px",borderRadius:8,border:`1px solid ${sub===id?C.goldBorder:C.border}`,background:sub===id?C.goldDim:"transparent",color:sub===id?C.gold:C.text2,fontFamily:FONT,fontSize:13,fontWeight:600,cursor:"pointer"}}>{l}</button>)}
       </div>
-      {sub==="recon" && (<div style={{...card,padding:"4px 0"}}>
-        <div style={{display:"grid",gridTemplateColumns:"1.6fr 1fr 1fr 1fr",padding:"8px 16px",borderBottom:`1px solid ${C.border}`}}>{["Measure","Deal side","Bank side","Variance"].map(h=><span key={h} style={lbl}>{h}</span>)}</div>
-        {rec.map((r,i)=><div key={i} style={{padding:"10px 16px",borderBottom:`1px solid ${C.border}`}}><div style={{display:"grid",gridTemplateColumns:"1.6fr 1fr 1fr 1fr",alignItems:"center"}}><span style={{fontSize:12.5,color:C.text,fontWeight:600}}>{r.measure}</span><span style={{fontSize:12,fontFamily:MONO,color:C.text2}}>{money(r.deal_side)}</span><span style={{fontSize:12,fontFamily:MONO,color:C.text2}}>{money(r.bank_side)}</span><span style={{fontSize:12,fontFamily:MONO,color:C.gold}}>{money(r.variance)}</span></div>{r.note&&<div style={{fontSize:11,color:C.text3,marginTop:4}}>{r.note}</div>}</div>)}
+      {sub==="recon" && (<div style={{...card,padding:"4px 0",overflowX:"auto"}}>
+        <div style={{display:"grid",gridTemplateColumns:"1.6fr 1fr 1fr 1fr",minWidth:460,padding:"8px 16px",borderBottom:`1px solid ${C.border}`}}>{["Measure","Deal side","Bank side","Variance"].map(h=><span key={h} style={lbl}>{h}</span>)}</div>
+        {rec.map((r,i)=><div key={i} style={{padding:"10px 16px",borderBottom:`1px solid ${C.border}`}}><div style={{display:"grid",gridTemplateColumns:"1.6fr 1fr 1fr 1fr",minWidth:460,alignItems:"center"}}><span style={{fontSize:12.5,color:C.text,fontWeight:600}}>{r.measure}</span><span style={{fontSize:12,fontFamily:MONO,color:C.text2}}>{money(r.deal_side)}</span><span style={{fontSize:12,fontFamily:MONO,color:C.text2}}>{money(r.bank_side)}</span><span style={{fontSize:12,fontFamily:MONO,color:C.gold}}>{money(r.variance)}</span></div>{r.note&&<div style={{fontSize:11,color:C.text3,marginTop:4}}>{r.note}</div>}</div>)}
       </div>)}
       {sub==="cashflow" && (<div style={card}>
         <div style={{...lbl,marginBottom:14}}>2025 monthly net</div>
@@ -6440,12 +6440,12 @@ function InsightsTab({ user }) {
       </div>)}
       {sub==="cuts" && (<div>
         <div style={{fontSize:12.5,color:C.text2,marginBottom:10}}>Estimated annual savings if actioned: <b style={{color:C.green,fontFamily:MONO}}>{money(savings)}</b></div>
-        <div style={{...card,padding:"4px 0"}}>{cuts.map((c,i)=><div key={i} style={{padding:"11px 16px",borderBottom:`1px solid ${C.border}`}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}><span style={{fontSize:13,color:C.text,fontWeight:600}}>{c.vendor_item}</span><span style={{fontSize:10,fontFamily:MONO,padding:"2px 7px",borderRadius:6,background:sev(c.priority)+"22",color:sev(c.priority)}}>{c.priority}</span></div><div style={{fontSize:11.5,color:C.text3,marginTop:3}}>{c.reason} → <span style={{color:C.text2}}>{c.action}</span></div><div style={{fontSize:11.5,fontFamily:MONO,color:C.text3,marginTop:3}}>spend {money(c.annual_spend)} · save <span style={{color:C.green}}>{money(c.est_savings)}</span></div></div>)}</div>
+        <div style={{...card,padding:"4px 0",overflowX:"auto"}}>{cuts.map((c,i)=><div key={i} style={{padding:"11px 16px",borderBottom:`1px solid ${C.border}`}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}><span style={{fontSize:13,color:C.text,fontWeight:600}}>{c.vendor_item}</span><span style={{fontSize:10,fontFamily:MONO,padding:"2px 7px",borderRadius:6,background:sev(c.priority)+"22",color:sev(c.priority)}}>{c.priority}</span></div><div style={{fontSize:11.5,color:C.text3,marginTop:3}}>{c.reason} → <span style={{color:C.text2}}>{c.action}</span></div><div style={{fontSize:11.5,fontFamily:MONO,color:C.text3,marginTop:3}}>spend {money(c.annual_spend)} · save <span style={{color:C.green}}>{money(c.est_savings)}</span></div></div>)}</div>
       </div>)}
-      {sub==="flags" && (<div style={{...card,padding:"4px 0"}}>
+      {sub==="flags" && (<div style={{...card,padding:"4px 0",overflowX:"auto"}}>
         {flags.map((f,i)=><div key={i} style={{display:"flex",gap:10,padding:"10px 16px",borderBottom:`1px solid ${C.border}`,alignItems:"flex-start"}}><span style={{width:8,height:8,borderRadius:"50%",background:sev(f.severity),marginTop:5,flexShrink:0}}/><div style={{flex:1,minWidth:0}}><div style={{fontSize:12.5,color:C.text}}>{f.issue}</div><div style={{fontSize:11,color:C.text3,fontFamily:MONO}}>{f.flag_date} · {f.account} · {money(f.amount)}{f.vendor?` · ${f.vendor}`:""}</div></div><span style={{fontSize:10,color:sev(f.severity),fontFamily:MONO}}>{f.severity}</span></div>)}
       </div>)}
-      {sub==="dq" && (<div style={{...card,padding:"4px 0"}}>
+      {sub==="dq" && (<div style={{...card,padding:"4px 0",overflowX:"auto"}}>
         {dq.map((d,i)=><div key={i} style={{padding:"10px 16px",borderBottom:`1px solid ${C.border}`}}><div style={{fontSize:12.5,color:C.text,fontWeight:600}}>{d.source} · {d.location}</div><div style={{fontSize:11.5,color:C.text2,marginTop:2}}>{d.issue}{d.detail?` — ${d.detail}`:""}</div><div style={{fontSize:11,color:C.text3,marginTop:2}}>✓ {d.action_taken}</div></div>)}
       </div>)}
     </div>
@@ -7769,12 +7769,12 @@ function IntelligenceView({ user }) {
             <span style={{ fontSize:12, color:C.text3 }}>{memsF.length} of {mems.length}</span>
             {isLeader && <div style={{ marginLeft:"auto" }}><GoldButton small onClick={()=>setAddMem(true)}>+ Add memory</GoldButton></div>}
           </div>
-          <div style={{ ...card, padding:"4px 0" }}>
-            <div style={{ display:"grid", gridTemplateColumns:"1.4fr 1.4fr 0.7fr 0.7fr 0.6fr 0.5fr", padding:"9px 18px", borderBottom:`1px solid ${C.border}` }}>
+          <div style={{ ...card, padding:"4px 0", overflowX:"auto" }}>
+            <div style={{ display:"grid", gridTemplateColumns:"1.4fr 1.4fr 0.7fr 0.7fr 0.6fr 0.5fr",minWidth:600, padding:"9px 18px", borderBottom:`1px solid ${C.border}` }}>
               {["Pattern","Category","Kind","Confidence","Used","On"].map(h=><span key={h} style={{fontSize:10,fontWeight:700,color:C.text3,fontFamily:FONT,textTransform:"uppercase",letterSpacing:"0.06em"}}>{h}</span>)}
             </div>
             {memsF.slice(0,300).map(m=>(
-              <div key={m.id} style={{ display:"grid", gridTemplateColumns:"1.4fr 1.4fr 0.7fr 0.7fr 0.6fr 0.5fr", padding:"10px 18px", borderBottom:`1px solid ${C.border}`, alignItems:"center", opacity:m.active?1:0.45 }}>
+              <div key={m.id} style={{ display:"grid", gridTemplateColumns:"1.4fr 1.4fr 0.7fr 0.7fr 0.6fr 0.5fr",minWidth:600, padding:"10px 18px", borderBottom:`1px solid ${C.border}`, alignItems:"center", opacity:m.active?1:0.45 }}>
                 <span style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:MONO }}>{m.pattern}</span>
                 <span style={{ fontSize:12.5, color:C.text2 }}>{m.category_name}</span>
                 <span style={{ fontSize:11, color:C.text3 }}>{m.kind}</span>
@@ -7790,7 +7790,7 @@ function IntelligenceView({ user }) {
 
       {/* ACTIVITY */}
       {tab==="activity" && (
-        <div style={{ ...card, padding:"4px 0" }}>
+        <div style={{ ...card, padding:"4px 0", overflowX:"auto" }}>
           {acts.length===0 && <div style={{padding:"30px",textAlign:"center",color:C.text3,fontSize:13}}>No activity yet.</div>}
           {acts.map(a=>(
             <div key={a.id} style={{ display:"flex", gap:12, padding:"11px 18px", borderBottom:`1px solid ${C.border}`, alignItems:"flex-start" }}>
@@ -7827,13 +7827,13 @@ function IntelligenceView({ user }) {
               ))}
             </div>
 
-            <div style={{ ...card, padding:"4px 0" }}>
+            <div style={{ ...card, padding:"4px 0", overflowX:"auto" }}>
               <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"12px 18px" }}>
                 <div style={{...lbl, color:review.length?C.amber:C.text3}}>🕯️ Purgatory · {review.length} need your call · {money(reviewTotal)}</div>
               </div>
               {review.length===0 && <div style={{padding:"24px 18px",color:C.text3,fontSize:13,textAlign:"center"}}>Purgatory is empty — every expense is filed.</div>}
               {review.slice(0,250).map(r=>(
-                <div key={r.id} style={{ display:"grid", gridTemplateColumns:"1.6fr 0.6fr 1.3fr 0.6fr", gap:10, padding:"10px 18px", borderTop:`1px solid ${C.border}`, alignItems:"center" }}>
+                <div key={r.id} style={{ display:"grid", gridTemplateColumns:"1.6fr 0.6fr 1.3fr 0.6fr",minWidth:460, gap:10, padding:"10px 18px", borderTop:`1px solid ${C.border}`, alignItems:"center" }}>
                   <div style={{ minWidth:0 }}>
                     <div style={{ fontSize:12.5, fontWeight:600, color:C.text, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{r.vendor||"—"}</div>
                     <div style={{ fontSize:10.5, color:C.text3, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{(r.description||"").slice(0,52)}</div>
