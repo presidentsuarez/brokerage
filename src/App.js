@@ -263,42 +263,47 @@ function StatusBadge({ status }) {
 // ── Auth screens ──────────────────────────────────────────────
 
 
-function BottomNavBar({ activeView, onNav, user }) {
+function BottomNavBar({ activeView, onNav, user, onMenu }) {
   const isAdmin = ["admin","owner"].includes(user?.role);
-  // Show top 5 most important items on bottom nav
-  const items = NAV.filter(n=>{
+  const permitted = NAV.filter(n=>{
     if(n.platformOnly) return user?.email===PLATFORM_ADMIN;
     if(n.recruitGate)  return isAdmin || !!user?.canRecruit;
     if(n.adminOnly)    return isAdmin;
     return true;
-  }).slice(0, 5);
+  });
+  // 4 quick items + a Menu button that opens the full drawer (everything else)
+  const items = permitted.slice(0, 4);
+  const inQuick = items.some(i=>i.id===activeView);
+
+  const cell = (active)=>({
+    flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
+    padding:"10px 4px 8px", background:"transparent", border:"none", cursor:"pointer",
+    color:active?C.gold:C.text3, minHeight:56, position:"relative", transition:"color 0.12s",
+  });
+  const labelStyle = (active)=>({ fontSize:9, fontWeight:active?700:400, fontFamily:FONT, letterSpacing:"0.03em", textTransform:"uppercase" });
 
   return (
     <div style={{
       position:"fixed", bottom:0, left:0, right:0, zIndex:90,
       background:C.surface, borderTop:`1px solid ${C.border}`,
-      display:"flex", paddingBottom:"env(safe-area-inset-bottom,0px)",
-      backdropFilter:"blur(10px)",
+      display:"flex", paddingBottom:"env(safe-area-inset-bottom,0px)", backdropFilter:"blur(10px)",
     }}>
       {items.map(item=>{
         const active = activeView===item.id;
         return (
-          <button key={item.id} onClick={()=>onNav(item.id)} style={{
-            flex:1, display:"flex", flexDirection:"column", alignItems:"center",
-            justifyContent:"center", padding:"10px 4px 8px",
-            background:"transparent", border:"none", cursor:"pointer",
-            color:active?C.gold:C.text3, minHeight:56,
-            transition:"color 0.12s",
-          }}>
+          <button key={item.id} onClick={()=>onNav(item.id)} style={cell(active)}>
             <span style={{ fontSize:20, lineHeight:1, marginBottom:3 }}>{item.icon}</span>
-            <span style={{ fontSize:9, fontWeight:active?700:400, fontFamily:FONT,
-              letterSpacing:"0.03em", textTransform:"uppercase" }}>{item.label}</span>
-            {active && <div style={{ position:"absolute", top:0, left:"50%",
-              transform:"translateX(-50%)", width:24, height:2,
-              background:C.gold, borderRadius:2 }} />}
+            <span style={labelStyle(active)}>{item.label}</span>
+            {active && <div style={{ position:"absolute", top:0, left:"50%", transform:"translateX(-50%)", width:24, height:2, background:C.gold, borderRadius:2 }} />}
           </button>
         );
       })}
+      {/* Menu: opens the full drawer with all remaining options */}
+      <button onClick={onMenu} style={cell(!inQuick)}>
+        <span style={{ fontSize:20, lineHeight:1, marginBottom:3 }}>☰</span>
+        <span style={labelStyle(!inQuick)}>Menu</span>
+        {!inQuick && <div style={{ position:"absolute", top:0, left:"50%", transform:"translateX(-50%)", width:24, height:2, background:C.gold, borderRadius:2 }} />}
+      </button>
     </div>
   );
 }
@@ -343,8 +348,20 @@ function LoginScreen({ onForgot }) {
 
   const submit = async e => {
     e.preventDefault(); setLoading(true); setError("");
-    const { error:err } = await supabase.auth.signInWithPassword({ email, password:pw });
-    if (err) { setError(err.message); setLoading(false); }
+    const creds = { email: email.trim().toLowerCase(), password: pw };
+    const isNetworkErr = (m="") => /load failed|failed to fetch|network|timeout|fetch/i.test(m);
+    let err = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const res = await supabase.auth.signInWithPassword(creds);
+      err = res.error;
+      if (!err) { setError(""); return; }            // success → onAuthStateChange takes over
+      if (!isNetworkErr(err.message)) break;          // real auth error (bad password) → stop, show it
+      await new Promise(r => setTimeout(r, 600 * (attempt + 1))); // transient network → back off & retry
+    }
+    setError(err && isNetworkErr(err.message)
+      ? "Couldn't reach the server. Check your internet connection and try again."
+      : (err ? err.message : "Sign-in failed. Please try again."));
+    setLoading(false);
   };
 
   return (
@@ -8419,7 +8436,7 @@ export default function App() {
           onViewChange={(v)=>setQ({v})}
           onClose={()=>{ setViewAsContact(null); setQ({as:null, v:null}); }} />
       )}
-      {isMobile && <BottomNavBar activeView={view} onNav={setView} user={cu} />}
+      {isMobile && <BottomNavBar activeView={view} onNav={setView} user={cu} onMenu={()=>setMobileMenu(true)} />}
     </div>
   );
 }
