@@ -100,7 +100,7 @@ const NAV = [
   { id:"listings",  label:"Listings",  icon:"📋" },
   { id:"buyers",    label:"Buyers",    icon:"🏠" },
   { id:"leasing",   label:"Leasing",   icon:"🔑" },
-  { id:"recruiting", label:"Recruiting",  icon:"🎯", adminOnly:true },
+  { id:"recruiting", label:"Recruiting",  icon:"🎯", recruitGate:true },
   { id:"applications",label:"Applications",icon:"📥", adminOnly:true },
   { id:"financials",  label:"Financials",  icon:"💵", adminOnly:true },
   { id:"performance", label:"Performance", icon:"📈", adminOnly:true },
@@ -242,6 +242,7 @@ function BottomNavBar({ activeView, onNav, user }) {
   // Show top 5 most important items on bottom nav
   const items = NAV.filter(n=>{
     if(n.platformOnly) return user?.email===PLATFORM_ADMIN;
+    if(n.recruitGate)  return isAdmin || !!user?.canRecruit;
     if(n.adminOnly)    return isAdmin;
     return true;
   }).slice(0, 5);
@@ -499,6 +500,7 @@ function Sidebar({ activeView, onNav, user, onSignOut, collapsed, mobileOpen, on
           overflowY:"auto" }}>
           {NAV.filter(n=>{
             if(n.platformOnly) return user?.email===PLATFORM_ADMIN;
+            if(n.recruitGate)  return isAdmin || !!user?.canRecruit;
             if(n.adminOnly)    return isAdmin;
             return true;
           }).map(item=>{
@@ -5490,6 +5492,14 @@ function RecruitingView({ user }) {
   const [fAssign, setFAssign]= useState("all");
   const [toast, setToast]   = useState(null);
   const [showPlay, setPlay] = useState(false);
+  const [team, setTeam]     = useState([]);
+  const [showTeam, setShowTeam] = useState(false);
+
+  const loadTeam = async () => {
+    const { data } = await supabase.from("recruiting_members")
+      .select("*").eq("org_id", ORG_ID).order("pipeline_role");
+    setTeam(data||[]);
+  };
 
   const load = async () => {
     setLoad(true);
@@ -5499,7 +5509,17 @@ function RecruitingView({ user }) {
     setLeads(data||[]);
     setLoad(false);
   };
-  useEffect(()=>{ load(); },[]);
+  useEffect(()=>{ load(); loadTeam(); },[]);
+
+  const ROLE_RANK = { owner:0, manager:1, assignee:2 };
+  const myRole = (team.find(m=>(m.user_email||"").toLowerCase()===(user.email||"").toLowerCase())||{}).pipeline_role
+                 || (["owner","admin"].includes(user.role) ? "owner" : null);
+  const canManageTeam = ["owner","admin"].includes(user.role) || ["owner","manager"].includes(myRole);
+  // Assignee options = the recruiting team roster
+  const teamOptions = team.map(m=>({ value:m.user_email, label:(m.full_name||m.user_email.split("@")[0])+" · "+m.pipeline_role }));
+  const owners   = team.filter(m=>m.pipeline_role==="owner");
+  const managers = team.filter(m=>m.pipeline_role==="manager");
+  const assigneesList = team.filter(m=>m.pipeline_role==="assignee");
 
   const callers = Array.from(new Set(leads.map(l=>l.assigned_to).filter(Boolean)));
   const brands  = Array.from(new Set(leads.map(l=>l.brand).filter(Boolean))).sort();
@@ -5543,6 +5563,16 @@ function RecruitingView({ user }) {
         ))}
       </div>
 
+      {/* Ownership structure */}
+      <div style={{ display:"flex", flexWrap:"wrap", gap:16, alignItems:"center", background:C.surface, border:`1px solid ${C.border}`, borderRadius:10, padding:"10px 14px", marginBottom:14 }}>
+        <OwnRole emoji="👑" label="Owner" people={owners} />
+        <div style={{ width:1, height:26, background:C.border }} />
+        <OwnRole emoji="🧭" label="Manager" people={managers.length?managers:owners} note={!managers.length} />
+        <div style={{ width:1, height:26, background:C.border }} />
+        <OwnRole emoji="📞" label={`Assignees (${assigneesList.length})`} people={assigneesList} />
+        {canManageTeam && <div style={{ marginLeft:"auto" }}><GoldButton small outline onClick={()=>setShowTeam(true)}>⚙️ Team</GoldButton></div>}
+      </div>
+
       {/* Controls */}
       <div style={{ display:"flex", flexWrap:"wrap", gap:8, alignItems:"center", marginBottom:14 }}>
         <div style={{ display:"flex", gap:4, background:C.surface2, borderRadius:8, padding:3 }}>
@@ -5561,9 +5591,10 @@ function RecruitingView({ user }) {
         <select value={fBrand} onChange={e=>setFBrand(e.target.value)} style={selStyle()}>
           <option value="all">All brands</option>{brands.map(b=><option key={b} value={b}>{b}</option>)}
         </select>
-        {callers.length>0 && (
+        {team.length>0 && (
           <select value={fAssign} onChange={e=>setFAssign(e.target.value)} style={selStyle()}>
-            <option value="all">All callers</option>{callers.map(c=><option key={c} value={c}>{c}</option>)}
+            <option value="all">All assignees</option>
+            {team.map(m=><option key={m.user_email} value={m.user_email}>{m.full_name||m.user_email.split("@")[0]}</option>)}
           </select>
         )}
         <GoldButton small outline onClick={()=>setPlay(true)}>📖 Playbook</GoldButton>
@@ -5619,7 +5650,8 @@ function RecruitingView({ user }) {
       )}
 
       {sel && <RecruitPanel lead={sel} user={user} onClose={()=>setSel(null)}
-        onRefresh={async()=>{ await load(); }} onUpdated={(u)=>setSel(u)} setToast={setToast} callers={callers} />}
+        onRefresh={async()=>{ await load(); }} onUpdated={(u)=>setSel(u)} setToast={setToast} callers={callers} teamOptions={teamOptions} />}
+      {showTeam && <RecruitTeamModal team={team} canManage={canManageTeam} onClose={()=>setShowTeam(false)} onRefresh={loadTeam} setToast={setToast} />}
       {showPlay && <RecruitPlaybook onClose={()=>setPlay(false)} />}
     </div>
   );
@@ -5703,7 +5735,85 @@ Realty ONE Group Advantage`,
   };
 }
 
-function RecruitPanel({ lead, user, onClose, onRefresh, onUpdated, setToast, callers }) {
+function OwnRole({ emoji, label, people, note }) {
+  return (
+    <div style={{ display:"flex", alignItems:"center", gap:8, minWidth:0 }}>
+      <span style={{ fontSize:18 }}>{emoji}</span>
+      <div style={{ minWidth:0 }}>
+        <div style={{ fontSize:9, fontWeight:700, color:C.text3, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.06em" }}>{label}</div>
+        <div style={{ fontSize:12, fontWeight:600, color:C.text, fontFamily:FONT, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+          {people && people.length ? people.map(p=>p.full_name||p.user_email.split("@")[0]).join(", ") : "—"}
+          {note && <span style={{ fontSize:9, color:C.text3, marginLeft:5 }}>(via owner)</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RecruitTeamModal({ team, canManage, onClose, onRefresh, setToast }) {
+  const [staff, setStaff] = useState([]);
+  const [addEmail, setAddEmail] = useState("");
+  const [addRole, setAddRole] = useState("assignee");
+  const [busy, setBusy] = useState(false);
+  useEffect(()=>{
+    supabase.from("user_profiles").select("email,full_name,role").eq("org_id",ORG_ID).in("role",["owner","admin","manager"]).order("full_name")
+      .then(({data})=>setStaff(data||[]));
+  },[]);
+  const inTeam = new Set(team.map(m=>(m.user_email||"").toLowerCase()));
+  const available = staff.filter(s=>!inTeam.has((s.email||"").toLowerCase()));
+  const ROLES=[["owner","👑 Owner"],["manager","🧭 Manager"],["assignee","📞 Assignee"]];
+  const addMember = async () => {
+    if(!addEmail) return; setBusy(true);
+    const s = staff.find(x=>x.email===addEmail);
+    const { error } = await supabase.from("recruiting_members").insert({ org_id:ORG_ID, user_email:addEmail, full_name:s?.full_name||addEmail, pipeline_role:addRole });
+    setBusy(false);
+    if(error){ setToast({msg:error.message,type:"error"}); return; }
+    setAddEmail(""); await onRefresh(); setToast({msg:"Added to recruiting team",type:"success"});
+  };
+  const setRole = async (id,role) => { await supabase.from("recruiting_members").update({pipeline_role:role,updated_at:new Date().toISOString()}).eq("id",id); await onRefresh(); };
+  const remove = async (id) => { await supabase.from("recruiting_members").delete().eq("id",id); await onRefresh(); setToast({msg:"Removed from team",type:"success"}); };
+  return (
+    <Modal title="🎯 Recruiting Team" onClose={onClose} maxWidth={520}>
+      <div style={{ fontSize:12, color:C.text3, fontFamily:FONT, marginBottom:12, lineHeight:1.5 }}>
+        Owners & managers oversee the whole pipeline. Assignees work the leads assigned to them. Everyone listed here can open the Recruiting pipeline.
+      </div>
+      <div style={{ display:"flex", flexDirection:"column", gap:7, marginBottom:canManage?16:0 }}>
+        {team.map(m=>(
+          <div key={m.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 10px", background:C.surface2, borderRadius:8 }}>
+            <Avatar name={m.full_name||m.user_email} email={m.user_email} size={30} />
+            <div style={{ flex:1, minWidth:0 }}>
+              <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:FONT }}>{m.full_name||m.user_email.split("@")[0]}</div>
+              <div style={{ fontSize:10, color:C.text3, fontFamily:FONT, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{m.user_email}</div>
+            </div>
+            {canManage ? (<>
+              <select value={m.pipeline_role} onChange={e=>setRole(m.id,e.target.value)} style={{ fontSize:11, padding:"4px 6px", background:C.surface, border:`1px solid ${C.border2}`, borderRadius:6, color:C.text2, fontFamily:FONT }}>
+                {ROLES.map(([v,l])=><option key={v} value={v}>{l}</option>)}
+              </select>
+              <button onClick={()=>remove(m.id)} style={{ background:"none", border:"none", color:C.text3, cursor:"pointer", fontSize:14 }}>✕</button>
+            </>) : <span style={{ fontSize:11, fontWeight:600, color:C.gold, fontFamily:FONT }}>{m.pipeline_role}</span>}
+          </div>
+        ))}
+      </div>
+      {canManage && (
+        <div style={{ borderTop:`1px solid ${C.border}`, paddingTop:12 }}>
+          <div style={{ fontSize:11, fontWeight:700, color:C.gold, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:8 }}>Add teammate</div>
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+            <select value={addEmail} onChange={e=>setAddEmail(e.target.value)} style={{ flex:"1 1 180px", padding:"8px 10px", background:C.surface2, border:`1.5px solid ${C.border2}`, borderRadius:8, color:C.text, fontSize:12, fontFamily:FONT }}>
+              <option value="">Select a team user…</option>
+              {available.map(s=><option key={s.email} value={s.email}>{s.full_name||s.email} ({s.role})</option>)}
+            </select>
+            <select value={addRole} onChange={e=>setAddRole(e.target.value)} style={{ padding:"8px 10px", background:C.surface2, border:`1.5px solid ${C.border2}`, borderRadius:8, color:C.text, fontSize:12, fontFamily:FONT }}>
+              {ROLES.map(([v,l])=><option key={v} value={v}>{l}</option>)}
+            </select>
+            <GoldButton small onClick={addMember} disabled={busy||!addEmail}>Add</GoldButton>
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+function RecruitPanel({ lead, user, onClose, onRefresh, onUpdated, setToast, callers, teamOptions }) {
   const isMobile = useIsMobile();
   const [tab, setTab] = useState("scripts");
   const [acts, setActs] = useState([]);
@@ -5844,9 +5954,9 @@ function RecruitPanel({ lead, user, onClose, onRefresh, onUpdated, setToast, cal
           {/* Stage + assign + book */}
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:12 }}>
             <Sel label="Stage" value={lead.stage} onChange={v=>patch({stage:v})} options={RECRUIT_STAGES.map(s=>({value:s.id,label:s.label}))} />
-            <Sel label="Assigned caller" value={lead.assigned_to||""} onChange={v=>patch({assigned_to:v||null})}
-              options={[{value:"",label:"Unassigned"}, ...callers.map(c=>({value:c,label:c.split("@")[0]})),
-                {value:user.email,label:"Me ("+user.email.split("@")[0]+")"}]} />
+            <Sel label="Assigned to" value={lead.assigned_to||""} onChange={v=>patch({assigned_to:v||null})}
+              options={[{value:"",label:"Unassigned"}, ...((teamOptions&&teamOptions.length)?teamOptions
+                : [...callers.map(c=>({value:c,label:c.split("@")[0]})), {value:user.email,label:"Me ("+user.email.split("@")[0]+")"}])]} />
           </div>
           <div style={{ display:"flex", gap:8, marginBottom:18 }}>
             <GoldButton small onClick={()=>bookAppt("Javier")}>📅 Book w/ Javier</GoldButton>
@@ -8092,7 +8202,14 @@ export default function App() {
         const STAFF = ["owner","admin","manager"];
         if(data && STAFF.includes(data.role)){
           // Staff (owner / admin / manager) — main app
-          setUserProfile(data);
+          let canRecruit = ["owner","admin"].includes(data.role);
+          let recruitRole = canRecruit ? "owner" : null;
+          try {
+            const { data:rm } = await supabase.from("recruiting_members")
+              .select("pipeline_role").eq("org_id",ORG_ID).ilike("user_email",email).maybeSingle();
+            if(rm){ canRecruit = true; recruitRole = rm.pipeline_role; }
+          } catch(e){ /* ignore */ }
+          setUserProfile({ ...data, canRecruit, recruitRole });
           const hrs = (Date.now()-new Date(data.created_at))/3600000;
           if(hrs<72) setTempBanner(true);
         } else {
