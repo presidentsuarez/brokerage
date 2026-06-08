@@ -113,8 +113,34 @@ const NAV = [
 
 function PrismMark({ size=32 }) {
   return (
-    <img src={`${process.env.PUBLIC_URL}/logo512.png?v=3`} alt="Prism" width={size} height={size}
+    <img src={`${process.env.PUBLIC_URL}/logo512.png?v=3`} alt="Realty ONE Group Advantage" width={size} height={size}
       style={{ width:size, height:size, flexShrink:0, display:"block", borderRadius:size*0.22, objectFit:"cover" }} />
+  );
+}
+
+function BrandWordmark({ variant="sidebar" }) {
+  const ONE = <span style={{ color:C.gold, fontWeight:800 }}>ONE</span>;
+  if(variant==="auth"){
+    return (
+      <div style={{ textAlign:"center" }}>
+        <div style={{ fontFamily:SERIF, fontWeight:700, color:C.text, fontSize:23, letterSpacing:"-0.01em", lineHeight:1.2 }}>
+          Realty {ONE} Group Advantage
+        </div>
+        <div style={{ fontSize:11, color:C.text3, fontFamily:FONT, letterSpacing:"0.10em", textTransform:"uppercase", marginTop:7 }}>
+          Powered by Prism
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div style={{ overflow:"hidden", flex:1 }}>
+      <div style={{ fontSize:14, fontWeight:700, color:C.text, fontFamily:SERIF, letterSpacing:"-0.01em", whiteSpace:"nowrap" }}>
+        Realty {ONE} Group
+      </div>
+      <div style={{ fontSize:8.5, color:C.text3, fontFamily:FONT, whiteSpace:"nowrap", letterSpacing:"0.03em", textTransform:"uppercase" }}>
+        Advantage · Powered by Prism
+      </div>
+    </div>
   );
 }
 
@@ -296,12 +322,10 @@ function AuthCard({ children }) {
       alignItems:"center", justifyContent:"center", padding:24 }}>
       <div style={{ width:"100%", maxWidth:400 }}>
         <div style={{ textAlign:"center", marginBottom:34 }}>
-          <div style={{ display:"flex", justifyContent:"center", marginBottom:14 }}>
-            <PrismMark size={48} />
+          <div style={{ display:"flex", justifyContent:"center", marginBottom:16 }}>
+            <PrismMark size={52} />
           </div>
-          <h1 style={{ fontSize:26, fontWeight:700, fontFamily:SERIF, color:C.text,
-            margin:"0 0 4px", letterSpacing:"-0.02em" }}>{APP_NAME}</h1>
-          <p style={{ fontSize:12, color:C.text3, fontFamily:FONT, margin:0 }}>{ORG_NAME}</p>
+          <BrandWordmark variant="auth" />
         </div>
         <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:28 }}>
           {children}
@@ -480,14 +504,7 @@ function Sidebar({ activeView, onNav, user, onSignOut, collapsed, mobileOpen, on
           display:"flex", alignItems:"center", gap:10,
           borderBottom:`1px solid ${C.border}`, minHeight:56 }}>
           <PrismMark size={26} />
-          {(!collapsed||isMobile) && (
-            <div style={{ overflow:"hidden", flex:1 }}>
-              <div style={{ fontSize:15, fontWeight:700, color:C.text, fontFamily:SERIF,
-                letterSpacing:"-0.01em", whiteSpace:"nowrap" }}>Prism</div>
-              <div style={{ fontSize:9, color:C.text3, fontFamily:FONT, whiteSpace:"nowrap",
-                letterSpacing:"0.04em", textTransform:"uppercase" }}>ROG Advantage</div>
-            </div>
-          )}
+          {(!collapsed||isMobile) && <BrandWordmark variant="sidebar" />}
           {isMobile && (
             <button onClick={onMobileClose} style={{ background:"none", border:"none",
               color:C.text2, fontSize:20, cursor:"pointer", marginLeft:"auto",
