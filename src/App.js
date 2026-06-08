@@ -113,7 +113,7 @@ const NAV = [
 
 function PrismMark({ size=32 }) {
   return (
-    <img src={`${process.env.PUBLIC_URL}/logo512.png?v=3`} alt="Realty ONE Group Advantage" width={size} height={size}
+    <img src={`${process.env.PUBLIC_URL}/logo512.png?v=4`} alt="Realty ONE Group Advantage" width={size} height={size}
       style={{ width:size, height:size, flexShrink:0, display:"block", borderRadius:size*0.22, objectFit:"cover" }} />
   );
 }
