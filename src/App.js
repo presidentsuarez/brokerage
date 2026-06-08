@@ -8197,7 +8197,7 @@ export default function App() {
     if(!session?.user) return;
     const email = session.user.email;
     // Check if team user first
-    supabase.from("user_profiles").select("*").eq("email",email).maybeSingle()
+    supabase.from("user_profiles").select("*").ilike("email",email).maybeSingle()
       .then(async ({data})=>{
         const STAFF = ["owner","admin","manager"];
         if(data && STAFF.includes(data.role)){
