@@ -5859,6 +5859,20 @@ function RecruitPanel({ lead, user, onClose, onRefresh, onUpdated, setToast, sta
   const mail = lead.email ? `mailto:${lead.email}?subject=${encodeURIComponent("Quick note, "+(lead.first_name||"")+" — agent to agent")}` : null;
   const copy = (txt,label)=>{ navigator.clipboard?.writeText(txt); setToast({ msg:(label||"Script")+" copied", type:"success" }); };
 
+  // Actual contact methods — front & center. Supports multiples/categories
+  // (extra entries can live in lead.contact_methods as [{type,label,value}]).
+  const extra = Array.isArray(lead.contact_methods) ? lead.contact_methods : [];
+  const phones = [
+    ...(lead.phone ? [{ label:"Phone", value:lead.phone }] : []),
+    ...extra.filter(c=>c.type==="phone"&&c.value).map(c=>({ label:c.label||"Phone", value:c.value })),
+  ];
+  const emails = [
+    ...(lead.email ? [{ label:"Email", value:lead.email }] : []),
+    ...extra.filter(c=>c.type==="email"&&c.value).map(c=>({ label:c.label||"Email", value:c.value })),
+  ];
+  const miniBtn = (color)=>({ textDecoration:"none", padding:"5px 11px", borderRadius:7, border:`1.5px solid ${color}`, color, background:"transparent", fontSize:11, fontWeight:700, fontFamily:FONT, whiteSpace:"nowrap" });
+  const copyBtn = { background:"none", border:`1px solid ${C.border2}`, borderRadius:7, color:C.text3, cursor:"pointer", fontSize:13, padding:"4px 8px" };
+
   return (
     <div style={{ position:"fixed", inset:0, zIndex:300, display:"flex", justifyContent:"flex-end" }}>
       <div onClick={onClose} style={{ position:"absolute", inset:0, background:"rgba(0,0,0,0.6)" }} />
@@ -5900,6 +5914,37 @@ function RecruitPanel({ lead, user, onClose, onRefresh, onUpdated, setToast, sta
         </div>
 
         <div style={{ padding:"16px 20px" }}>
+          {/* Contact — front & center: actual numbers and emails */}
+          <div style={{ background:C.surface2, border:`1px solid ${C.border2}`, borderRadius:12, padding:"14px 16px", marginBottom:16 }}>
+            <div style={{ fontSize:10, fontWeight:700, color:C.text3, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:12 }}>Contact</div>
+            {phones.length===0 && emails.length===0 && (
+              <div style={{ fontSize:12, color:C.text3, fontFamily:FONT }}>No phone or email on file for this agent.</div>
+            )}
+            {phones.map((p,i)=>(
+              <div key={"p"+i} style={{ display:"flex", alignItems:"center", gap:10, marginBottom:(i<phones.length-1||emails.length)?12:0 }}>
+                <span style={{ fontSize:18 }}>📱</span>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ fontSize:9, color:C.text3, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.05em" }}>{p.label}</div>
+                  <a href={`tel:${p.value.replace(/\D/g,"")}`} onClick={()=>logTouch("call")} style={{ fontSize:17, fontWeight:700, color:C.text, fontFamily:MONO, textDecoration:"none" }}>{p.value}</a>
+                </div>
+                <a href={`tel:${p.value.replace(/\D/g,"")}`} onClick={()=>logTouch("call")} style={miniBtn(C.green)}>Call</a>
+                <a href={`sms:${p.value.replace(/\D/g,"")}`} onClick={()=>logTouch("text")} style={miniBtn(C.blue)}>Text</a>
+                <button onClick={()=>copy(p.value,"Number")} style={copyBtn} title="Copy">⧉</button>
+              </div>
+            ))}
+            {emails.map((e,i)=>(
+              <div key={"e"+i} style={{ display:"flex", alignItems:"center", gap:10, marginBottom:i<emails.length-1?12:0 }}>
+                <span style={{ fontSize:18 }}>✉️</span>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ fontSize:9, color:C.text3, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.05em" }}>{e.label}</div>
+                  <a href={`mailto:${e.value}`} onClick={()=>logTouch("email")} style={{ fontSize:14, fontWeight:600, color:C.gold, fontFamily:FONT, textDecoration:"none", wordBreak:"break-all" }}>{e.value}</a>
+                </div>
+                <a href={`mailto:${e.value}`} onClick={()=>logTouch("email")} style={miniBtn(C.gold)}>Email</a>
+                <button onClick={()=>copy(e.value,"Email")} style={copyBtn} title="Copy">⧉</button>
+              </div>
+            ))}
+          </div>
+
           {/* Money math */}
           <div style={{ background:C.surface2, border:`1px solid ${C.goldBorder}`, borderRadius:12, padding:"14px 16px", marginBottom:16 }}>
             <div style={{ fontSize:10, fontWeight:700, color:C.gold, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.08em", marginBottom:10 }}>The Money Math · {fmt$(mm.gci)} GCI · {mm.units} units</div>
