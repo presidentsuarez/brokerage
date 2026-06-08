@@ -5492,13 +5492,13 @@ function RecruitingView({ user }) {
   const [fAssign, setFAssign]= useState("all");
   const [toast, setToast]   = useState(null);
   const [showPlay, setPlay] = useState(false);
-  const [team, setTeam]     = useState([]);
-  const [showTeam, setShowTeam] = useState(false);
+  const [staff, setStaff]   = useState([]);
 
-  const loadTeam = async () => {
-    const { data } = await supabase.from("recruiting_members")
-      .select("*").eq("org_id", ORG_ID).order("pipeline_role");
-    setTeam(data||[]);
+  const loadStaff = async () => {
+    const { data } = await supabase.from("user_profiles")
+      .select("email,full_name,role").eq("org_id", ORG_ID)
+      .in("role",["owner","admin","manager"]).order("full_name");
+    setStaff(data||[]);
   };
 
   const load = async () => {
@@ -5509,17 +5509,11 @@ function RecruitingView({ user }) {
     setLeads(data||[]);
     setLoad(false);
   };
-  useEffect(()=>{ load(); loadTeam(); },[]);
+  useEffect(()=>{ load(); loadStaff(); },[]);
 
-  const ROLE_RANK = { owner:0, manager:1, assignee:2 };
-  const myRole = (team.find(m=>(m.user_email||"").toLowerCase()===(user.email||"").toLowerCase())||{}).pipeline_role
-                 || (["owner","admin"].includes(user.role) ? "owner" : null);
-  const canManageTeam = ["owner","admin"].includes(user.role) || ["owner","manager"].includes(myRole);
-  // Assignee options = the recruiting team roster
-  const teamOptions = team.map(m=>({ value:m.user_email, label:(m.full_name||m.user_email.split("@")[0])+" · "+m.pipeline_role }));
-  const owners   = team.filter(m=>m.pipeline_role==="owner");
-  const managers = team.filter(m=>m.pipeline_role==="manager");
-  const assigneesList = team.filter(m=>m.pipeline_role==="assignee");
+  // role dropdown options from team users
+  const staffOptions = staff.map(s=>({ value:s.email, label:(s.full_name||s.email.split("@")[0]) }));
+  const nameFor = (email)=> { const s=staff.find(x=>x.email===email); return s?(s.full_name||s.email.split("@")[0]):(email?email.split("@")[0]:"—"); };
 
   const callers = Array.from(new Set(leads.map(l=>l.assigned_to).filter(Boolean)));
   const brands  = Array.from(new Set(leads.map(l=>l.brand).filter(Boolean))).sort();
@@ -5528,7 +5522,8 @@ function RecruitingView({ user }) {
     if(fStage!=="all" && l.stage!==fStage) return false;
     if(fTemp!=="all"  && l.temperature!==fTemp) return false;
     if(fBrand!=="all" && l.brand!==fBrand) return false;
-    if(fAssign!=="all" && (l.assigned_to||"")!==fAssign) return false;
+    if(fAssign==="__unassigned"){ if(l.assigned_to) return false; }
+    else if(fAssign!=="all" && (l.assigned_to||"")!==fAssign) return false;
     if(q){
       const hay=`${l.full_name} ${l.current_brokerage} ${l.brand} ${l.city} ${l.email}`.toLowerCase();
       if(!hay.includes(q.toLowerCase())) return false;
@@ -5563,16 +5558,6 @@ function RecruitingView({ user }) {
         ))}
       </div>
 
-      {/* Ownership structure */}
-      <div style={{ display:"flex", flexWrap:"wrap", gap:16, alignItems:"center", background:C.surface, border:`1px solid ${C.border}`, borderRadius:10, padding:"10px 14px", marginBottom:14 }}>
-        <OwnRole emoji="👑" label="Owner" people={owners} />
-        <div style={{ width:1, height:26, background:C.border }} />
-        <OwnRole emoji="🧭" label="Manager" people={managers.length?managers:owners} note={!managers.length} />
-        <div style={{ width:1, height:26, background:C.border }} />
-        <OwnRole emoji="📞" label={`Assignees (${assigneesList.length})`} people={assigneesList} />
-        {canManageTeam && <div style={{ marginLeft:"auto" }}><GoldButton small outline onClick={()=>setShowTeam(true)}>⚙️ Team</GoldButton></div>}
-      </div>
-
       {/* Controls */}
       <div style={{ display:"flex", flexWrap:"wrap", gap:8, alignItems:"center", marginBottom:14 }}>
         <div style={{ display:"flex", gap:4, background:C.surface2, borderRadius:8, padding:3 }}>
@@ -5591,10 +5576,11 @@ function RecruitingView({ user }) {
         <select value={fBrand} onChange={e=>setFBrand(e.target.value)} style={selStyle()}>
           <option value="all">All brands</option>{brands.map(b=><option key={b} value={b}>{b}</option>)}
         </select>
-        {team.length>0 && (
+        {staff.length>0 && (
           <select value={fAssign} onChange={e=>setFAssign(e.target.value)} style={selStyle()}>
             <option value="all">All assignees</option>
-            {team.map(m=><option key={m.user_email} value={m.user_email}>{m.full_name||m.user_email.split("@")[0]}</option>)}
+            <option value="__unassigned">Unassigned</option>
+            {staff.map(s=><option key={s.email} value={s.email}>{s.full_name||s.email.split("@")[0]}</option>)}
           </select>
         )}
         <GoldButton small outline onClick={()=>setPlay(true)}>📖 Playbook</GoldButton>
@@ -5650,8 +5636,7 @@ function RecruitingView({ user }) {
       )}
 
       {sel && <RecruitPanel lead={sel} user={user} onClose={()=>setSel(null)}
-        onRefresh={async()=>{ await load(); }} onUpdated={(u)=>setSel(u)} setToast={setToast} callers={callers} teamOptions={teamOptions} />}
-      {showTeam && <RecruitTeamModal team={team} canManage={canManageTeam} onClose={()=>setShowTeam(false)} onRefresh={loadTeam} setToast={setToast} />}
+        onRefresh={async()=>{ await load(); }} onUpdated={(u)=>setSel(u)} setToast={setToast} staffOptions={staffOptions} nameFor={nameFor} />}
       {showPlay && <RecruitPlaybook onClose={()=>setPlay(false)} />}
     </div>
   );
@@ -5813,7 +5798,7 @@ function RecruitTeamModal({ team, canManage, onClose, onRefresh, setToast }) {
   );
 }
 
-function RecruitPanel({ lead, user, onClose, onRefresh, onUpdated, setToast, callers, teamOptions }) {
+function RecruitPanel({ lead, user, onClose, onRefresh, onUpdated, setToast, staffOptions, nameFor }) {
   const isMobile = useIsMobile();
   const [tab, setTab] = useState("scripts");
   const [acts, setActs] = useState([]);
@@ -5951,12 +5936,22 @@ function RecruitPanel({ lead, user, onClose, onRefresh, onUpdated, setToast, cal
             ))}
           </div>
 
-          {/* Stage + assign + book */}
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:12 }}>
-            <Sel label="Stage" value={lead.stage} onChange={v=>patch({stage:v})} options={RECRUIT_STAGES.map(s=>({value:s.id,label:s.label}))} />
-            <Sel label="Assigned to" value={lead.assigned_to||""} onChange={v=>patch({assigned_to:v||null})}
-              options={[{value:"",label:"Unassigned"}, ...((teamOptions&&teamOptions.length)?teamOptions
-                : [...callers.map(c=>({value:c,label:c.split("@")[0]})), {value:user.email,label:"Me ("+user.email.split("@")[0]+")"}])]} />
+          {/* Stage + delegation */}
+          <div style={{ marginBottom:12 }}>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:10 }}>
+              <Sel label="Stage" value={lead.stage} onChange={v=>patch({stage:v})} options={RECRUIT_STAGES.map(s=>({value:s.id,label:s.label}))} />
+              <Sel label="👑 Owner" value={lead.owner_email||""} onChange={v=>patch({owner_email:v||null})}
+                options={[{value:"",label:"—"}, ...staffOptions]} />
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+              <Sel label="🧭 Manager" value={lead.manager_email||""} onChange={v=>patch({manager_email:v||null})}
+                options={[{value:"",label:"—"}, ...staffOptions]} />
+              <Sel label="📞 Assignee" value={lead.assigned_to||""} onChange={v=>patch({assigned_to:v||null})}
+                options={[{value:"",label:"Unassigned"}, ...staffOptions]} />
+            </div>
+            <div style={{ fontSize:10, color:C.text3, fontFamily:FONT, marginTop:8 }}>
+              📍 Source: {lead.source||"—"}
+            </div>
           </div>
           <div style={{ display:"flex", gap:8, marginBottom:18 }}>
             <GoldButton small onClick={()=>bookAppt("Javier")}>📅 Book w/ Javier</GoldButton>
