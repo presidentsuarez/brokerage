@@ -97,6 +97,8 @@ const NAV = [
   { id:"contacts",  label:"Contacts",  icon:"👤" },
   { id:"tasks",     label:"Tasks",     icon:"✅" },
   { id:"calendar",  label:"Calendar",  icon:"📅" },
+  { id:"listings",  label:"Listings",  icon:"📋" },
+  { id:"buyers",    label:"Buyers",    icon:"🏠" },
   { id:"leasing",   label:"Leasing",   icon:"🔑" },
   { id:"recruiting", label:"Recruiting",  icon:"🎯", adminOnly:true },
   { id:"applications",label:"Applications",icon:"📥", adminOnly:true },
@@ -4863,75 +4865,117 @@ function RobotsView({ user, deals, contacts, tasks }) {
 
 
 // ════════════════════════════════════════════════════════════
-// LEASING VIEW — tenant / leasing opportunity pipeline (team)
+// PIPELINE ENGINE — Listings / Buyers / Leasing (team-wide)
+// One component, three boards. Cards link properties + contacts.
 // ════════════════════════════════════════════════════════════
 
-const LEASE_STAGES = [
-  { id:"New Inquiry",       label:"New Inquiry",  color:C.text2,  bg:C.surface2 },
-  { id:"Showing Scheduled", label:"Showing",      color:C.blue,   bg:"rgba(59,130,246,0.10)" },
-  { id:"Application",       label:"Application",  color:C.amber,  bg:"rgba(245,158,11,0.10)" },
-  { id:"Approved",          label:"Approved",     color:C.purple, bg:"rgba(168,85,247,0.10)" },
-  { id:"Lease Signed",      label:"Signed",       color:C.green,  bg:"rgba(34,197,94,0.10)" },
-  { id:"Lost",              label:"Lost",         color:C.red,    bg:"rgba(239,68,68,0.10)" },
-];
-const LEASE_SOURCES = ["Zillow","Apartments.com","Website","Referral","Walk-in","Sign Call","Social","MLS","Other"];
+const PIPELINE_CONFIG = {
+  listing: {
+    emoji:"📋", name:"Listings", noun:"Listing", priceLabel:"List Price", dateLabel:"List Date",
+    titleHint:"Property address", roles:["Seller","Co-Seller","Attorney","Other"],
+    stages:[
+      { id:"Prospect",       label:"Prospect",       emoji:"🌱", color:C.text2 },
+      { id:"Listing Appt",   label:"Listing Appt",   emoji:"📅", color:C.blue },
+      { id:"Signed",         label:"Signed",         emoji:"✍️", color:C.purple },
+      { id:"Active",         label:"Active",         emoji:"🏡", color:C.amber },
+      { id:"Under Contract", label:"Under Contract", emoji:"🤝", color:C.gold },
+      { id:"Closed",         label:"Closed",         emoji:"🎉", color:C.green },
+      { id:"Lost",           label:"Lost",           emoji:"💤", color:C.red },
+    ],
+  },
+  buyer: {
+    emoji:"🏠", name:"Buyers", noun:"Buyer", priceLabel:"Budget", dateLabel:"Target Close",
+    titleHint:"Buyer name", roles:["Buyer","Co-Buyer","Lender","Attorney","Other"],
+    stages:[
+      { id:"New Lead",       label:"New Lead",       emoji:"🌱", color:C.text2 },
+      { id:"Searching",      label:"Searching",      emoji:"🔎", color:C.blue },
+      { id:"Pre-Approved",   label:"Pre-Approved",   emoji:"💰", color:C.purple },
+      { id:"Offer Made",     label:"Offer Made",     emoji:"📑", color:C.amber },
+      { id:"Under Contract", label:"Under Contract", emoji:"🤝", color:C.gold },
+      { id:"Closed",         label:"Closed",         emoji:"🎉", color:C.green },
+      { id:"Lost",           label:"Lost",           emoji:"💤", color:C.red },
+    ],
+  },
+  leasing: {
+    emoji:"🔑", name:"Leasing", noun:"Lease", priceLabel:"Monthly Rent", dateLabel:"Move-in",
+    titleHint:"Tenant name", roles:["Tenant","Co-Tenant","Guarantor","Other"],
+    stages:[
+      { id:"New Inquiry",    label:"New Inquiry",    emoji:"📨", color:C.text2 },
+      { id:"Showing",        label:"Showing",        emoji:"👀", color:C.blue },
+      { id:"Application",    label:"Application",    emoji:"📝", color:C.amber },
+      { id:"Approved",       label:"Approved",       emoji:"👍", color:C.purple },
+      { id:"Signed",         label:"Signed",         emoji:"🎉", color:C.green },
+      { id:"Lost",           label:"Lost",           emoji:"💤", color:C.red },
+    ],
+  },
+};
+const CARD_EMOJIS = ["🏡","🏠","🏘️","🔑","📋","💎","⭐","🔥","🌊","🌴","🏙️","💰","📈","🤝","🛎️","🏖️"];
 
-function leaseFmt$(n){ return n==null||n===""?"—":"$"+Math.round(Number(n)).toLocaleString(); }
-function leaseFmtDate(d){ return d ? new Date(d+"T00:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "—"; }
+function pipe$(n){ return n==null||n===""?"—":"$"+Math.round(Number(n)).toLocaleString(); }
+function pipeDate(d){ return d ? new Date(d+"T00:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "—"; }
 
-function LeasingView({ user }) {
+function PipelineView({ pipeline, user }) {
   const isMobile = useIsMobile();
-  const [leads, setLeads] = useState([]);
+  const cfg = PIPELINE_CONFIG[pipeline];
+  const [cards, setCards] = useState([]);
+  const [linksByCard, setLinks] = useState({});
+  const [contacts, setContacts] = useState([]);
+  const [deals, setDeals] = useState([]);
   const [loading, setLoad] = useState(true);
   const [sel, setSel] = useState(null);
   const [mode, setMode] = useState("pipeline");
   const [q, setQ] = useState("");
-  const [fStage, setFStage] = useState("all");
   const [fAssign, setFAssign] = useState("all");
   const [showNew, setShowNew] = useState(false);
   const [toast, setToast] = useState(null);
 
   const load = async () => {
     setLoad(true);
-    const data = await fetchAllRows(()=>supabase.from("leasing_leads")
-      .select("*").eq("org_id", ORG_ID).order("created_at",{ascending:false}));
-    setLeads(data||[]);
-    setLoad(false);
+    const [cs, lk, ct, dl] = await Promise.all([
+      fetchAllRows(()=>supabase.from("pipeline_cards").select("*").eq("org_id",ORG_ID).eq("pipeline",pipeline).order("updated_at",{ascending:false})),
+      fetchAllRows(()=>supabase.from("pipeline_card_contacts").select("*, contacts(id,full_name,email,phone,contact_type)").eq("org_id",ORG_ID)),
+      fetchAllRows(()=>supabase.from("contacts").select("id,full_name,email,phone,contact_type").eq("org_id",ORG_ID).order("full_name")),
+      fetchAllRows(()=>supabase.from("deals").select("id,address,city,state,zip,price,property_type,bedrooms,bathrooms,sqft").eq("org_id",ORG_ID).order("created_at",{ascending:false})),
+    ]);
+    const map={}; (lk||[]).forEach(l=>{ (map[l.card_id]=map[l.card_id]||[]).push(l); });
+    setCards(cs||[]); setLinks(map); setContacts(ct||[]); setDeals(dl||[]); setLoad(false);
   };
-  useEffect(()=>{ load(); },[]);
+  useEffect(()=>{ load(); /* eslint-disable-next-line */ },[pipeline]);
 
-  const callers = Array.from(new Set(leads.map(l=>l.assigned_to).filter(Boolean)));
-  const filtered = leads.filter(l=>{
-    if(fStage!=="all" && l.stage!==fStage) return false;
-    if(fAssign!=="all" && (l.assigned_to||"")!==fAssign) return false;
+  const assignees = Array.from(new Set(cards.map(c=>c.assigned_to).filter(Boolean)));
+  const cardTitle = (c)=> c.title || c.property_address || (linksByCard[c.id]?.[0]?.contacts?.full_name) || "(untitled)";
+  const filtered = cards.filter(c=>{
+    if(fAssign!=="all" && (c.assigned_to||"")!==fAssign) return false;
     if(q){
-      const hay=`${l.tenant_name} ${l.property_address} ${l.property_city} ${l.tenant_email} ${l.tenant_phone}`.toLowerCase();
+      const names=(linksByCard[c.id]||[]).map(l=>l.contacts?.full_name||"").join(" ");
+      const hay=`${cardTitle(c)} ${c.property_address} ${c.property_city} ${names}`.toLowerCase();
       if(!hay.includes(q.toLowerCase())) return false;
     }
     return true;
   });
 
-  const activeStages = ["New Inquiry","Showing Scheduled","Application","Approved"];
+  const openStages = cfg.stages.filter(s=>!["Closed","Signed","Lost"].includes(s.id)).map(s=>s.id);
+  const wonId = pipeline==="leasing" ? "Signed" : "Closed";
   const stat = {
-    total: leads.length,
-    active: leads.filter(l=>activeStages.includes(l.stage)).length,
-    showings: leads.filter(l=>l.stage==="Showing Scheduled").length,
-    signed: leads.filter(l=>l.stage==="Lease Signed").length,
+    total: cards.length,
+    active: cards.filter(c=>openStages.includes(c.stage)).length,
+    won: cards.filter(c=>c.stage===wonId).length,
+    value: cards.filter(c=>openStages.includes(c.stage)).reduce((a,c)=>a+(Number(c.price)||0),0),
   };
 
   return (
-    <div style={{ padding:isMobile?"12px":"20px 24px", maxWidth:1280 }}>
+    <div style={{ padding:isMobile?"12px":"20px 24px", maxWidth:1320 }}>
       {toast && <Toast message={toast.msg} type={toast.type} onDone={()=>setToast(null)} />}
 
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(130px,1fr))", gap:10, marginBottom:16 }}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(140px,1fr))", gap:10, marginBottom:16 }}>
         {[
-          { l:"Total Opportunities", v:stat.total,    c:C.gold },
-          { l:"Active Pipeline",     v:stat.active,   c:C.blue },
-          { l:"Showings Scheduled",  v:stat.showings, c:C.amber },
-          { l:"Leases Signed",       v:stat.signed,   c:C.green },
+          { l:"Total "+cfg.name,  v:stat.total,  c:C.gold },
+          { l:"Active Pipeline",  v:stat.active, c:C.blue },
+          { l:pipeline==="leasing"?"Signed":"Closed", v:stat.won, c:C.green },
+          { l:"Active "+(pipeline==="leasing"?"Rent/mo":"Value"), v:pipe$(stat.value), c:C.amber, small:true },
         ].map(s=>(
           <div key={s.l} style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:10, padding:"13px 14px" }}>
-            <div style={{ fontSize:22, fontWeight:700, color:s.c, fontFamily:SERIF }}>{s.v}</div>
+            <div style={{ fontSize:s.small?17:22, fontWeight:700, color:s.c, fontFamily:s.small?MONO:SERIF }}>{s.v}</div>
             <div style={{ fontSize:10, fontWeight:700, color:C.text2, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.07em", marginTop:2 }}>{s.l}</div>
           </div>
         ))}
@@ -4939,49 +4983,43 @@ function LeasingView({ user }) {
 
       <div style={{ display:"flex", flexWrap:"wrap", gap:8, alignItems:"center", marginBottom:14 }}>
         <div style={{ display:"flex", gap:4, background:C.surface2, borderRadius:8, padding:3 }}>
-          {[["pipeline","Pipeline"],["list","List"]].map(([v,l])=>(
+          {[["pipeline","Board"],["list","List"]].map(([v,l])=>(
             <button key={v} onClick={()=>setMode(v)} style={{ padding:"6px 14px", borderRadius:6, border:"none",
-              background:mode===v?C.gold:"transparent", color:mode===v?"#0a0a0a":C.text2,
-              fontSize:12, fontWeight:600, fontFamily:FONT, cursor:"pointer" }}>{l}</button>
+              background:mode===v?C.gold:"transparent", color:mode===v?"#0a0a0a":C.text2, fontSize:12, fontWeight:600, fontFamily:FONT, cursor:"pointer" }}>{l}</button>
           ))}
         </div>
-        <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search tenant, property, city…"
-          style={{ flex:"1 1 200px", minWidth:160, padding:"8px 12px", background:C.surface2,
-            border:`1.5px solid ${C.border2}`, borderRadius:8, color:C.text, fontSize:13, fontFamily:FONT, outline:"none" }} />
-        <select value={fStage} onChange={e=>setFStage(e.target.value)} style={leaseSelStyle()}>
-          <option value="all">All stages</option>{LEASE_STAGES.map(s=><option key={s.id} value={s.id}>{s.label}</option>)}
-        </select>
-        {callers.length>0 && (
-          <select value={fAssign} onChange={e=>setFAssign(e.target.value)} style={leaseSelStyle()}>
-            <option value="all">All agents</option>{callers.map(c=><option key={c} value={c}>{c.split("@")[0]}</option>)}
+        <input value={q} onChange={e=>setQ(e.target.value)} placeholder={`Search ${cfg.name.toLowerCase()}…`}
+          style={{ flex:"1 1 200px", minWidth:160, padding:"8px 12px", background:C.surface2, border:`1.5px solid ${C.border2}`, borderRadius:8, color:C.text, fontSize:13, fontFamily:FONT, outline:"none" }} />
+        {assignees.length>0 && (
+          <select value={fAssign} onChange={e=>setFAssign(e.target.value)} style={pipeSelStyle()}>
+            <option value="all">All agents</option>{assignees.map(c=><option key={c} value={c}>{c.split("@")[0]}</option>)}
           </select>
         )}
-        <GoldButton small onClick={()=>setShowNew(true)}>＋ New opportunity</GoldButton>
+        <GoldButton small onClick={()=>setShowNew(true)}>{cfg.emoji} New {cfg.noun}</GoldButton>
       </div>
 
       {loading ? (
-        <div style={{ padding:"40px 0", textAlign:"center", color:C.text3, fontSize:13, fontFamily:FONT }}>Loading opportunities…</div>
-      ) : leads.length===0 ? (
+        <div style={{ padding:"40px 0", textAlign:"center", color:C.text3, fontSize:13, fontFamily:FONT }}>Loading {cfg.name.toLowerCase()}…</div>
+      ) : cards.length===0 ? (
         <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:"44px 16px", textAlign:"center" }}>
-          <div style={{ fontSize:30, marginBottom:10 }}>🔑</div>
-          <div style={{ fontSize:14, color:C.text2, fontFamily:FONT, marginBottom:14 }}>No leasing opportunities yet.</div>
-          <GoldButton small onClick={()=>setShowNew(true)}>＋ Add the first one</GoldButton>
+          <div style={{ fontSize:34, marginBottom:10 }}>{cfg.emoji}</div>
+          <div style={{ fontSize:14, color:C.text2, fontFamily:FONT, marginBottom:14 }}>No {cfg.name.toLowerCase()} yet.</div>
+          <GoldButton small onClick={()=>setShowNew(true)}>{cfg.emoji} Add the first {cfg.noun.toLowerCase()}</GoldButton>
         </div>
       ) : mode==="pipeline" ? (
         <div style={{ display:"flex", gap:12, overflowX:"auto", paddingBottom:12, WebkitOverflowScrolling:"touch" }}>
-          {LEASE_STAGES.map(st=>{
-            const col = filtered.filter(l=>l.stage===st.id);
-            const colRent = col.reduce((a,l)=>a+(Number(l.monthly_rent)||0),0);
+          {cfg.stages.map(st=>{
+            const col = filtered.filter(c=>c.stage===st.id);
+            const colVal = col.reduce((a,c)=>a+(Number(c.price)||0),0);
             return (
-              <div key={st.id} style={{ flex:"0 0 270px", width:270 }}>
-                <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between",
-                  padding:"6px 4px", marginBottom:8, borderBottom:`2px solid ${st.color}` }}>
-                  <span style={{ fontSize:12, fontWeight:700, color:st.color, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.05em" }}>{st.label}</span>
+              <div key={st.id} style={{ flex:"0 0 274px", width:274 }}>
+                <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"6px 4px", marginBottom:6, borderBottom:`2px solid ${st.color}` }}>
+                  <span style={{ fontSize:12, fontWeight:700, color:st.color, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.04em" }}>{st.emoji} {st.label}</span>
                   <span style={{ fontSize:12, fontWeight:700, color:C.text3, fontFamily:MONO }}>{col.length}</span>
                 </div>
-                {colRent>0 && <div style={{ fontSize:10, color:C.text3, fontFamily:MONO, padding:"0 4px 6px" }}>{leaseFmt$(colRent)}/mo</div>}
+                {colVal>0 && <div style={{ fontSize:10, color:C.text3, fontFamily:MONO, padding:"0 4px 6px" }}>{pipe$(colVal)}</div>}
                 <div style={{ display:"flex", flexDirection:"column", gap:8, minHeight:60 }}>
-                  {col.map(l=><LeaseCard key={l.id} lead={l} onClick={()=>setSel(l)} />)}
+                  {col.map(c=><PipeCard key={c.id} card={c} cfg={cfg} links={linksByCard[c.id]||[]} title={cardTitle(c)} onClick={()=>setSel(c)} />)}
                 </div>
               </div>
             );
@@ -4989,242 +5027,352 @@ function LeasingView({ user }) {
         </div>
       ) : (
         <div style={{ display:"flex", flexDirection:"column", gap:7 }}>
-          <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>{filtered.length} of {leads.length}</div>
-          {filtered.map(l=>{
-            const stg=LEASE_STAGES.find(s=>s.id===l.stage)||LEASE_STAGES[0];
+          <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>{filtered.length} of {cards.length}</div>
+          {filtered.map(c=>{
+            const stg=cfg.stages.find(s=>s.id===c.stage)||cfg.stages[0];
             return (
-              <div key={l.id} onClick={()=>setSel(l)}
-                style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:10, padding:"11px 14px",
-                  cursor:"pointer", display:"flex", alignItems:"center", gap:12 }}
-                onMouseEnter={e=>e.currentTarget.style.borderColor=C.goldBorder}
-                onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}>
-                <Avatar name={l.tenant_name||"?"} email={l.tenant_email} size={36} />
+              <div key={c.id} onClick={()=>setSel(c)} style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:10, padding:"11px 14px", cursor:"pointer", display:"flex", alignItems:"center", gap:12 }}
+                onMouseEnter={e=>e.currentTarget.style.borderColor=C.goldBorder} onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}>
+                <span style={{ fontSize:22 }}>{c.emoji||cfg.emoji}</span>
                 <div style={{ flex:1, minWidth:0 }}>
-                  <div style={{ fontSize:13, fontWeight:700, color:C.text, fontFamily:FONT }}>{l.tenant_name||"(no name)"}</div>
+                  <div style={{ fontSize:13, fontWeight:700, color:C.text, fontFamily:FONT }}>{cardTitle(c)}</div>
                   <div style={{ fontSize:11, color:C.text2, fontFamily:FONT, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
-                    {l.property_address||"—"}{l.property_city?`, ${l.property_city}`:""} · {leaseFmt$(l.monthly_rent)}/mo</div>
+                    {(linksByCard[c.id]||[]).map(l=>l.contacts?.full_name).filter(Boolean).join(", ")||c.property_address||"—"} · {pipe$(c.price)}</div>
                 </div>
-                <span style={{ fontSize:10, fontWeight:700, color:stg.color, background:stg.bg, borderRadius:10, padding:"3px 9px", whiteSpace:"nowrap" }}>{stg.label}</span>
+                <span style={{ fontSize:10, fontWeight:700, color:stg.color, fontFamily:FONT, whiteSpace:"nowrap" }}>{stg.emoji} {stg.label}</span>
               </div>
             );
           })}
         </div>
       )}
 
-      {sel && <LeasePanel lead={sel} user={user} callers={callers}
+      {sel && <PipePanel card={sel} cfg={cfg} pipeline={pipeline} user={user} contacts={contacts} deals={deals}
+        links={linksByCard[sel.id]||[]} assignees={assignees}
         onClose={()=>setSel(null)} onRefresh={load} onUpdated={u=>setSel(u)} setToast={setToast} />}
-      {showNew && <LeaseCreateModal user={user} onClose={()=>setShowNew(false)}
-        onCreated={async()=>{ setShowNew(false); await load(); setToast({msg:"Opportunity added",type:"success"}); }} />}
+      {showNew && <PipeCreateModal cfg={cfg} pipeline={pipeline} user={user} contacts={contacts} deals={deals}
+        onClose={()=>setShowNew(false)} onCreated={async()=>{ setShowNew(false); await load(); setToast({msg:`${cfg.noun} added`,type:"success"}); }} setToast={setToast} />}
     </div>
   );
 }
 
-function leaseSelStyle(){
-  return { padding:"8px 10px", background:C.surface2, border:`1.5px solid ${C.border2}`,
-    borderRadius:8, color:C.text, fontSize:12, fontFamily:FONT, outline:"none", maxWidth:170 };
-}
+function pipeSelStyle(){ return { padding:"8px 10px", background:C.surface2, border:`1.5px solid ${C.border2}`, borderRadius:8, color:C.text, fontSize:12, fontFamily:FONT, outline:"none", maxWidth:170 }; }
 
-function LeaseCard({ lead, onClick }) {
+function PipeCard({ card, cfg, links, title, onClick }) {
+  const names = links.map(l=>l.contacts?.full_name).filter(Boolean);
   return (
     <div onClick={onClick} style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:10, padding:"11px 12px", cursor:"pointer" }}
-      onMouseEnter={e=>e.currentTarget.style.borderColor=C.goldBorder}
-      onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}>
-      <div style={{ fontSize:13, fontWeight:700, color:C.text, fontFamily:FONT, marginBottom:3 }}>{lead.tenant_name||"(no name)"}</div>
-      <div style={{ fontSize:11, color:C.text2, fontFamily:FONT, marginBottom:5, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
-        {lead.property_address||"No property yet"}{lead.unit?` · ${lead.unit}`:""}</div>
-      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-        <span style={{ fontSize:11, color:C.gold, fontFamily:MONO }}>{leaseFmt$(lead.monthly_rent)}/mo</span>
-        {lead.desired_move_in && <span style={{ fontSize:10, color:C.text3, fontFamily:FONT }}>→ {leaseFmtDate(lead.desired_move_in)}</span>}
+      onMouseEnter={e=>e.currentTarget.style.borderColor=C.goldBorder} onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}>
+      <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4 }}>
+        <span style={{ fontSize:18 }}>{card.emoji||cfg.emoji}</span>
+        <span style={{ fontSize:13, fontWeight:700, color:C.text, fontFamily:FONT, flex:1, minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{title}</span>
       </div>
-      {lead.assigned_to && <div style={{ fontSize:9, color:C.text3, fontFamily:FONT, marginTop:5 }}>👤 {lead.assigned_to.split("@")[0]}</div>}
+      {names.length>0 && <div style={{ fontSize:11, color:C.text2, fontFamily:FONT, marginBottom:3, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>👤 {names.join(", ")}</div>}
+      {card.property_address && title!==card.property_address && <div style={{ fontSize:10, color:C.text3, fontFamily:FONT, marginBottom:3, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>📍 {card.property_address}</div>}
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:3 }}>
+        <span style={{ fontSize:11, color:C.gold, fontFamily:MONO }}>{pipe$(card.price)}{cfg.priceLabel==="Monthly Rent"?"/mo":""}</span>
+        {card.target_date && <span style={{ fontSize:10, color:C.text3, fontFamily:FONT }}>📆 {pipeDate(card.target_date)}</span>}
+      </div>
+      {card.assigned_to && <div style={{ fontSize:9, color:C.text3, fontFamily:FONT, marginTop:5 }}>🧑‍💼 {card.assigned_to.split("@")[0]}</div>}
     </div>
   );
 }
 
-// Shared field set used by both the create modal and the edit panel
-function LeaseForm({ form, set, isMobile }) {
-  const grid2 = { display:"grid", gridTemplateColumns:isMobile?"1fr":"1fr 1fr", gap:10 };
-  return (
-    <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-      <div style={{ fontSize:10, fontWeight:700, color:C.gold, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.07em" }}>Tenant</div>
-      <Field label="Tenant name" value={form.tenant_name} onChange={v=>set("tenant_name",v)} />
-      <div style={grid2}>
-        <Field label="Phone" value={form.tenant_phone} onChange={v=>set("tenant_phone",v)} />
-        <Field label="Email" value={form.tenant_email} onChange={v=>set("tenant_email",v)} />
-      </div>
-      <div style={grid2}>
-        <Field label="Occupants" type="number" value={form.occupants} onChange={v=>set("occupants",v)} />
-        <Field label="Pets" value={form.pets} onChange={v=>set("pets",v)} placeholder="e.g. 1 dog, 30lb" />
-      </div>
-      <div style={grid2}>
-        <Field label="Budget min" type="number" value={form.budget_min} onChange={v=>set("budget_min",v)} />
-        <Field label="Budget max" type="number" value={form.budget_max} onChange={v=>set("budget_max",v)} />
-      </div>
-
-      <div style={{ fontSize:10, fontWeight:700, color:C.gold, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.07em", marginTop:4 }}>Property</div>
-      <Field label="Address" value={form.property_address} onChange={v=>set("property_address",v)} />
-      <div style={grid2}>
-        <Field label="City" value={form.property_city} onChange={v=>set("property_city",v)} />
-        <Field label="Unit" value={form.unit} onChange={v=>set("unit",v)} />
-      </div>
-      <div style={grid2}>
-        <Field label="Beds" type="number" value={form.bedrooms} onChange={v=>set("bedrooms",v)} />
-        <Field label="Baths" type="number" value={form.bathrooms} onChange={v=>set("bathrooms",v)} />
-      </div>
-      <div style={grid2}>
-        <Field label="Monthly rent" type="number" value={form.monthly_rent} onChange={v=>set("monthly_rent",v)} />
-        <Field label="Security deposit" type="number" value={form.security_deposit} onChange={v=>set("security_deposit",v)} />
-      </div>
-
-      <div style={{ fontSize:10, fontWeight:700, color:C.gold, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.07em", marginTop:4 }}>Lease</div>
-      <div style={grid2}>
-        <Field label="Desired move-in" type="date" value={form.desired_move_in} onChange={v=>set("desired_move_in",v)} />
-        <Field label="Term (months)" type="number" value={form.lease_term_months} onChange={v=>set("lease_term_months",v)} />
-      </div>
-      <div style={grid2}>
-        <Sel label="Source" value={form.source||""} onChange={v=>set("source",v)} options={[{value:"",label:"—"},...LEASE_SOURCES.map(s=>({value:s,label:s}))]} />
-        <Sel label="Stage" value={form.stage} onChange={v=>set("stage",v)} options={LEASE_STAGES.map(s=>({value:s.id,label:s.label}))} />
-      </div>
-    </div>
-  );
-}
-
-const LEASE_BLANK = {
-  tenant_name:"", tenant_phone:"", tenant_email:"", occupants:"", pets:"",
-  budget_min:"", budget_max:"", property_address:"", property_city:"", unit:"",
-  bedrooms:"", bathrooms:"", monthly_rent:"", security_deposit:"",
-  desired_move_in:"", lease_term_months:"", source:"", stage:"New Inquiry",
-};
-function leasePayload(form, extra){
-  const numFields=["occupants","budget_min","budget_max","bedrooms","bathrooms","monthly_rent","security_deposit","lease_term_months"];
-  const out={ ...extra };
-  for(const [k,v] of Object.entries(form)){
-    if(numFields.includes(k)) out[k] = v===""||v==null ? null : Number(v);
-    else if(k==="desired_move_in") out[k] = v||null;
-    else out[k] = v===""?null:v;
-  }
-  return out;
-}
-
-function LeaseCreateModal({ user, onClose, onCreated }) {
-  const isMobile = useIsMobile();
-  const [form, setForm] = useState({ ...LEASE_BLANK });
-  const [saving, setSaving] = useState(false);
-  const set = (k,v)=>setForm(f=>({...f,[k]:v}));
-  const save = async () => {
-    setSaving(true);
-    const payload = leasePayload(form, { org_id:ORG_ID, assigned_to:user.email, created_by:user.email });
-    const { error } = await supabase.from("leasing_leads").insert(payload);
-    setSaving(false);
-    if(error){ alert("Could not save: "+error.message); return; }
-    onCreated();
+// ── Contact picker (search existing 218 contacts OR create new) ──
+function ContactPicker({ onPick, onClose }) {
+  const [q, setQ] = useState("");
+  const [hits, setHits] = useState([]);
+  const [creating, setCreating] = useState(false);
+  const [nf, setNf] = useState({ full_name:"", phone:"", email:"" });
+  useEffect(()=>{
+    let active=true;
+    (async()=>{
+      if(q.trim().length<2){ setHits([]); return; }
+      const { data } = await supabase.from("contacts").select("id,full_name,email,phone,contact_type")
+        .eq("org_id",ORG_ID).ilike("full_name",`%${q.trim()}%`).order("full_name").limit(20);
+      if(active) setHits(data||[]);
+    })();
+    return ()=>{active=false;};
+  },[q]);
+  const createNew = async () => {
+    if(!nf.full_name.trim()) return;
+    const { data, error } = await supabase.from("contacts").insert({
+      org_id:ORG_ID, full_name:nf.full_name.trim(), phone:nf.phone||null, email:nf.email||null,
+      contact_type:"Client", source:"Pipeline" }).select().single();
+    if(error){ alert(error.message); return; }
+    onPick(data);
   };
   return (
-    <Modal title="New Leasing Opportunity" onClose={onClose} maxWidth={560}>
-      <LeaseForm form={form} set={set} isMobile={isMobile} />
-      <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:18 }}>
-        <GoldButton outline small onClick={onClose}>Cancel</GoldButton>
-        <GoldButton small onClick={save} disabled={saving||!form.tenant_name.trim()}>{saving?"Saving…":"Add opportunity"}</GoldButton>
-      </div>
+    <Modal title="Add Contact" onClose={onClose} maxWidth={440}>
+      {!creating ? (
+        <div>
+          <input autoFocus value={q} onChange={e=>setQ(e.target.value)} placeholder="Search contacts by name…"
+            style={{ width:"100%", padding:"10px 12px", background:C.surface2, border:`1.5px solid ${C.border2}`, borderRadius:8, color:C.text, fontSize:14, fontFamily:FONT, outline:"none", boxSizing:"border-box" }} />
+          <div style={{ marginTop:10, maxHeight:280, overflowY:"auto", display:"flex", flexDirection:"column", gap:6 }}>
+            {hits.map(c=>(
+              <div key={c.id} onClick={()=>onPick(c)} style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 10px", background:C.surface2, borderRadius:8, cursor:"pointer" }}>
+                <Avatar name={c.full_name} email={c.email} size={30} />
+                <div style={{ flex:1 }}>
+                  <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:FONT }}>{c.full_name}</div>
+                  <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>{c.contact_type}{c.phone?` · ${c.phone}`:""}</div>
+                </div>
+              </div>
+            ))}
+            {q.trim().length>=2 && hits.length===0 && <div style={{ fontSize:12, color:C.text3, fontFamily:FONT, padding:"6px 2px" }}>No matches.</div>}
+          </div>
+          <div style={{ marginTop:12 }}><GoldButton small outline onClick={()=>setCreating(true)}>＋ Create new contact</GoldButton></div>
+        </div>
+      ) : (
+        <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+          <Field label="Full name" value={nf.full_name} onChange={v=>setNf(s=>({...s,full_name:v}))} autoFocus />
+          <Field label="Phone" value={nf.phone} onChange={v=>setNf(s=>({...s,phone:v}))} />
+          <Field label="Email" value={nf.email} onChange={v=>setNf(s=>({...s,email:v}))} />
+          <div style={{ display:"flex", gap:8, justifyContent:"flex-end" }}>
+            <GoldButton small outline onClick={()=>setCreating(false)}>Back</GoldButton>
+            <GoldButton small onClick={createNew} disabled={!nf.full_name.trim()}>Create & add</GoldButton>
+          </div>
+        </div>
+      )}
     </Modal>
   );
 }
 
-function LeasePanel({ lead, user, callers, onClose, onRefresh, onUpdated, setToast }) {
+// ── Property fields (shared) ──
+function PropertyFields({ form, set, deals, isMobile }) {
+  const grid2={ display:"grid", gridTemplateColumns:isMobile?"1fr":"1fr 1fr", gap:10 };
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+      {deals.length>0 && (
+        <Sel label="Link existing property" value={form.property_deal_id||""} onChange={id=>{
+          if(!id){ set("property_deal_id",""); return; }
+          const d=deals.find(x=>x.id===id); if(!d) return;
+          set("property_deal_id",id); set("property_address",d.address||""); set("property_city",d.city||"");
+          set("property_zip",d.zip||""); set("bedrooms",d.bedrooms??""); set("bathrooms",d.bathrooms??"");
+          set("sqft",d.sqft??""); if(d.price) set("price",d.price);
+        }} options={[{value:"",label:"— New / not linked —"}, ...deals.map(d=>({value:d.id,label:`${d.address||"(no address)"}${d.city?`, ${d.city}`:""}`}))]} />
+      )}
+      <Field label="Property address" value={form.property_address} onChange={v=>set("property_address",v)} />
+      <div style={grid2}>
+        <Field label="City" value={form.property_city} onChange={v=>set("property_city",v)} />
+        <Field label="Beds / Baths" value={form._bb||""} onChange={v=>set("_bb",v)} placeholder="3 / 2" />
+      </div>
+    </div>
+  );
+}
+
+const PIPE_BLANK = { title:"", emoji:"", property_deal_id:"", property_address:"", property_city:"", property_zip:"",
+  bedrooms:"", bathrooms:"", sqft:"", price:"", target_date:"", source:"", _bb:"" };
+function pipePayload(form, cfg, extra){
+  const numF=["bedrooms","bathrooms","sqft","price"];
+  const out={ ...extra };
+  // parse "beds / baths" helper
+  let f={...form};
+  if(f._bb){ const m=String(f._bb).split("/"); f.bedrooms=m[0]?.trim()||f.bedrooms; f.bathrooms=m[1]?.trim()||f.bathrooms; }
+  delete f._bb;
+  for(const [k,v] of Object.entries(f)){
+    if(numF.includes(k)) out[k]= v===""||v==null?null:Number(v);
+    else if(k==="target_date") out[k]= v||null;
+    else if(k==="property_deal_id") out[k]= v||null;
+    else out[k]= v===""?null:v;
+  }
+  return out;
+}
+
+function PipeCreateModal({ cfg, pipeline, user, contacts, deals, onClose, onCreated, setToast }) {
+  const isMobile = useIsMobile();
+  const [form, setForm] = useState({ ...PIPE_BLANK, emoji:cfg.emoji, stage:cfg.stages[0].id });
+  const [picked, setPicked] = useState(null); // primary contact
+  const [showPick, setShowPick] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const set=(k,v)=>setForm(f=>({...f,[k]:v}));
+
+  const save = async () => {
+    setSaving(true);
+    const payload = pipePayload(form, cfg, { org_id:ORG_ID, pipeline, stage:form.stage, assigned_to:user.email, created_by:user.email });
+    const { data, error } = await supabase.from("pipeline_cards").insert(payload).select().single();
+    if(error){ setSaving(false); alert(error.message); return; }
+    if(picked){
+      await supabase.from("pipeline_card_contacts").insert({ card_id:data.id, org_id:ORG_ID, contact_id:picked.id, role:cfg.roles[0] });
+    }
+    setSaving(false); onCreated();
+  };
+
+  return (
+    <Modal title={`${cfg.emoji} New ${cfg.noun}`} onClose={onClose} maxWidth={540}>
+      <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+        <div style={{ display:"flex", gap:10, alignItems:"flex-end" }}>
+          <div>
+            <div style={{ fontSize:11, fontWeight:600, color:C.text2, fontFamily:FONT, marginBottom:4 }}>Emoji</div>
+            <select value={form.emoji} onChange={e=>set("emoji",e.target.value)} style={{ fontSize:20, padding:"6px 8px", background:C.surface2, border:`1.5px solid ${C.border2}`, borderRadius:8, cursor:"pointer" }}>
+              {[cfg.emoji,...CARD_EMOJIS.filter(e=>e!==cfg.emoji)].map(e=><option key={e} value={e}>{e}</option>)}
+            </select>
+          </div>
+          <div style={{ flex:1 }}><Field label="Title" value={form.title} onChange={v=>set("title",v)} placeholder={cfg.titleHint} autoFocus /></div>
+        </div>
+
+        {/* Primary contact */}
+        <div>
+          <div style={{ fontSize:11, fontWeight:600, color:C.text2, fontFamily:FONT, marginBottom:4 }}>{cfg.roles[0]}</div>
+          {picked ? (
+            <div style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 10px", background:C.surface2, borderRadius:8 }}>
+              <Avatar name={picked.full_name} email={picked.email} size={28} />
+              <span style={{ flex:1, fontSize:13, color:C.text, fontFamily:FONT }}>{picked.full_name}</span>
+              <button onClick={()=>setPicked(null)} style={{ background:"none", border:"none", color:C.text3, cursor:"pointer", fontSize:16 }}>✕</button>
+            </div>
+          ) : <GoldButton small outline onClick={()=>setShowPick(true)}>＋ Add {cfg.roles[0].toLowerCase()}</GoldButton>}
+        </div>
+
+        <PropertyFields form={form} set={set} deals={deals} isMobile={isMobile} />
+        <div style={{ display:"grid", gridTemplateColumns:isMobile?"1fr":"1fr 1fr", gap:10 }}>
+          <Field label={cfg.priceLabel} type="number" value={form.price} onChange={v=>set("price",v)} />
+          <Field label={cfg.dateLabel} type="date" value={form.target_date} onChange={v=>set("target_date",v)} />
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:isMobile?"1fr":"1fr 1fr", gap:10 }}>
+          <Sel label="Source" value={form.source||""} onChange={v=>set("source",v)} options={[{value:"",label:"—"},...["Zillow","Website","Referral","Sign Call","Open House","Social","MLS","Past Client","Other"].map(s=>({value:s,label:s}))]} />
+          <Sel label="Stage" value={form.stage} onChange={v=>set("stage",v)} options={cfg.stages.map(s=>({value:s.id,label:`${s.emoji} ${s.label}`}))} />
+        </div>
+      </div>
+      <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:18 }}>
+        <GoldButton outline small onClick={onClose}>Cancel</GoldButton>
+        <GoldButton small onClick={save} disabled={saving||(!form.title.trim() && !picked && !form.property_address.trim())}>{saving?"Saving…":`Add ${cfg.noun.toLowerCase()}`}</GoldButton>
+      </div>
+      {showPick && <ContactPicker onClose={()=>setShowPick(false)} onPick={c=>{ setPicked(c); setShowPick(false); }} />}
+    </Modal>
+  );
+}
+
+function PipePanel({ card, cfg, pipeline, user, contacts, deals, links:initLinks, assignees, onClose, onRefresh, onUpdated, setToast }) {
   const isMobile = useIsMobile();
   const [tab, setTab] = useState("details");
   const [edit, setEdit] = useState(false);
-  const [form, setForm] = useState(()=>{ const f={...LEASE_BLANK}; for(const k of Object.keys(f)) f[k]=lead[k]??f[k]; return f; });
+  const [links, setLinks] = useState(initLinks);
   const [acts, setActs] = useState([]);
   const [note, setNote] = useState("");
-  const set = (k,v)=>setForm(f=>({...f,[k]:v}));
+  const [showPick, setShowPick] = useState(false);
+  const [form, setForm] = useState(()=>{ const f={...PIPE_BLANK,emoji:card.emoji||cfg.emoji}; for(const k of Object.keys(f)) if(k!=="_bb") f[k]=card[k]??f[k]; f._bb=[card.bedrooms,card.bathrooms].filter(x=>x!=null&&x!=="").join(" / "); return f; });
+  const set=(k,v)=>setForm(f=>({...f,[k]:v}));
 
+  const reloadLinks = async () => {
+    const { data } = await supabase.from("pipeline_card_contacts").select("*, contacts(id,full_name,email,phone,contact_type)").eq("card_id",card.id);
+    setLinks(data||[]);
+  };
   const loadActs = async () => {
-    const { data } = await supabase.from("leasing_activities")
-      .select("*").eq("lead_id", lead.id).order("created_at",{ascending:false});
+    const { data } = await supabase.from("pipeline_card_activities").select("*").eq("card_id",card.id).order("created_at",{ascending:false});
     setActs(data||[]);
   };
-  useEffect(()=>{ loadActs(); },[lead.id]);
+  useEffect(()=>{ reloadLinks(); loadActs(); /* eslint-disable-next-line */ },[card.id]);
 
   const patch = async (fields) => {
-    await supabase.from("leasing_leads").update({ ...fields, updated_at:new Date().toISOString() }).eq("id", lead.id);
-    onUpdated({ ...lead, ...fields }); onRefresh();
+    await supabase.from("pipeline_cards").update({ ...fields, updated_at:new Date().toISOString() }).eq("id",card.id);
+    onUpdated({ ...card, ...fields }); onRefresh();
   };
-  const saveEdit = async () => {
-    const payload = leasePayload(form, {});
-    await patch(payload); setEdit(false);
-    setToast({ msg:"Saved", type:"success" });
+  const saveEdit = async () => { await patch(pipePayload(form, cfg, {})); setEdit(false); setToast({msg:"Saved",type:"success"}); };
+  const addContact = async (c) => {
+    setShowPick(false);
+    const { error } = await supabase.from("pipeline_card_contacts").insert({ card_id:card.id, org_id:ORG_ID, contact_id:c.id, role:cfg.roles[0] });
+    if(error && !error.message.includes("duplicate")){ alert(error.message); return; }
+    await reloadLinks(); onRefresh();
   };
+  const removeContact = async (linkId) => { await supabase.from("pipeline_card_contacts").delete().eq("id",linkId); await reloadLinks(); onRefresh(); };
+  const setRole = async (linkId, role) => { await supabase.from("pipeline_card_contacts").update({role}).eq("id",linkId); await reloadLinks(); };
   const logTouch = async (channel) => {
-    await supabase.from("leasing_activities").insert({ lead_id:lead.id, org_id:ORG_ID, activity_type:channel, channel, content:channel, created_by:user.email });
-    await patch({ last_contacted_at:new Date().toISOString(), touch_count:(lead.touch_count||0)+1 });
-    await loadActs();
-    setToast({ msg:`Logged ${channel}`, type:"success" });
+    await supabase.from("pipeline_card_activities").insert({ card_id:card.id, org_id:ORG_ID, activity_type:channel, channel, content:channel, created_by:user.email });
+    await patch({ last_contacted_at:new Date().toISOString(), touch_count:(card.touch_count||0)+1 }); await loadActs();
+    setToast({msg:`Logged ${channel}`,type:"success"});
   };
   const addNote = async () => {
     if(!note.trim()) return;
-    await supabase.from("leasing_activities").insert({ lead_id:lead.id, org_id:ORG_ID, activity_type:"note", content:note.trim(), created_by:user.email });
-    setNote(""); await loadActs(); setToast({ msg:"Note added", type:"success" });
+    await supabase.from("pipeline_card_activities").insert({ card_id:card.id, org_id:ORG_ID, activity_type:"note", content:note.trim(), created_by:user.email });
+    setNote(""); await loadActs(); setToast({msg:"Note added",type:"success"});
   };
 
-  const tel  = lead.tenant_phone ? `tel:${lead.tenant_phone.replace(/\D/g,"")}` : null;
-  const sms  = lead.tenant_phone ? `sms:${lead.tenant_phone.replace(/\D/g,"")}` : null;
-  const mail = lead.tenant_email ? `mailto:${lead.tenant_email}` : null;
-  const stg = LEASE_STAGES.find(s=>s.id===lead.stage)||LEASE_STAGES[0];
+  const primary = links[0]?.contacts;
+  const tel  = primary?.phone ? `tel:${primary.phone.replace(/\D/g,"")}` : null;
+  const sms  = primary?.phone ? `sms:${primary.phone.replace(/\D/g,"")}` : null;
+  const mail = primary?.email ? `mailto:${primary.email}` : null;
+  const stg = cfg.stages.find(s=>s.id===card.stage)||cfg.stages[0];
+  const title = card.title || card.property_address || primary?.full_name || "(untitled)";
 
-  const Row=({l,v})=>(
-    <div style={{ display:"flex", justifyContent:"space-between", padding:"7px 0", borderBottom:`1px solid ${C.border}` }}>
-      <span style={{ fontSize:12, color:C.text3, fontFamily:FONT }}>{l}</span>
-      <span style={{ fontSize:12, color:C.text, fontFamily:FONT, fontWeight:600, textAlign:"right" }}>{v}</span>
-    </div>
-  );
+  const Row=({l,v})=>(<div style={{ display:"flex", justifyContent:"space-between", padding:"7px 0", borderBottom:`1px solid ${C.border}` }}>
+    <span style={{ fontSize:12, color:C.text3, fontFamily:FONT }}>{l}</span>
+    <span style={{ fontSize:12, color:C.text, fontFamily:FONT, fontWeight:600, textAlign:"right" }}>{v}</span></div>);
 
   return (
     <div style={{ position:"fixed", inset:0, zIndex:300, display:"flex", justifyContent:"flex-end" }}>
       <div onClick={onClose} style={{ position:"absolute", inset:0, background:"rgba(0,0,0,0.6)" }} />
-      <div style={{ position:"relative", width:isMobile?"100%":500, maxWidth:"100%", height:"100%",
-        background:C.surface, borderLeft:`1px solid ${C.border}`, overflowY:"auto", animation:"slideLeft 0.2s ease" }}>
+      <div style={{ position:"relative", width:isMobile?"100%":510, maxWidth:"100%", height:"100%", background:C.surface, borderLeft:`1px solid ${C.border}`, overflowY:"auto", animation:"slideLeft 0.2s ease" }}>
         <style>{`@keyframes slideLeft{from{transform:translateX(30px);opacity:0}to{transform:translateX(0);opacity:1}}`}</style>
 
         <div style={{ padding:"18px 20px", borderBottom:`1px solid ${C.border}`, position:"sticky", top:0, background:C.surface, zIndex:2 }}>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
-            <div style={{ display:"flex", gap:12 }}>
-              <Avatar name={lead.tenant_name||"?"} email={lead.tenant_email} size={46} />
+            <div style={{ display:"flex", gap:12, alignItems:"center" }}>
+              <span style={{ fontSize:34 }}>{card.emoji||cfg.emoji}</span>
               <div>
-                <div style={{ fontSize:17, fontWeight:700, color:C.text, fontFamily:SERIF }}>{lead.tenant_name||"(no name)"}</div>
-                <div style={{ fontSize:12, color:C.text2, fontFamily:FONT }}>{lead.property_address||"No property yet"}</div>
-                <span style={{ fontSize:10, fontWeight:700, color:stg.color, background:stg.bg, borderRadius:10, padding:"2px 8px", marginTop:4, display:"inline-block" }}>{stg.label}</span>
+                <div style={{ fontSize:17, fontWeight:700, color:C.text, fontFamily:SERIF }}>{title}</div>
+                <div style={{ fontSize:12, color:C.text2, fontFamily:FONT }}>{cfg.emoji} {cfg.noun} · {pipe$(card.price)}{cfg.priceLabel==="Monthly Rent"?"/mo":""}</div>
+                <span style={{ fontSize:10, fontWeight:700, color:stg.color, fontFamily:FONT, marginTop:3, display:"inline-block" }}>{stg.emoji} {stg.label}</span>
               </div>
             </div>
             <button onClick={onClose} style={{ background:"none", border:"none", color:C.text2, fontSize:22, cursor:"pointer" }}>✕</button>
           </div>
-          <div style={{ display:"flex", gap:8, marginTop:14, flexWrap:"wrap" }}>
-            {tel && <a href={tel} onClick={()=>logTouch("call")} style={leaseQa(C.green)}>📞 Call</a>}
-            {sms && <a href={sms} onClick={()=>logTouch("text")} style={leaseQa(C.blue)}>💬 Text</a>}
-            {mail && <a href={mail} onClick={()=>logTouch("email")} style={leaseQa(C.gold)}>✉️ Email</a>}
-          </div>
+          {(tel||sms||mail) && (
+            <div style={{ display:"flex", gap:8, marginTop:14, flexWrap:"wrap" }}>
+              {tel && <a href={tel} onClick={()=>logTouch("call")} style={pipeQa(C.green)}>📞 Call</a>}
+              {sms && <a href={sms} onClick={()=>logTouch("text")} style={pipeQa(C.blue)}>💬 Text</a>}
+              {mail && <a href={mail} onClick={()=>logTouch("email")} style={pipeQa(C.gold)}>✉️ Email</a>}
+            </div>
+          )}
         </div>
 
         <div style={{ padding:"16px 20px" }}>
-          {/* Stage + assign */}
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:16 }}>
-            <Sel label="Stage" value={lead.stage} onChange={v=>patch({stage:v})} options={LEASE_STAGES.map(s=>({value:s.id,label:s.label}))} />
-            <Sel label="Assigned to" value={lead.assigned_to||""} onChange={v=>patch({assigned_to:v||null})}
-              options={[{value:"",label:"Unassigned"}, {value:user.email,label:"Me ("+user.email.split("@")[0]+")"},
-                ...callers.filter(c=>c!==user.email).map(c=>({value:c,label:c.split("@")[0]}))]} />
+            <Sel label="Stage" value={card.stage} onChange={v=>patch({stage:v})} options={cfg.stages.map(s=>({value:s.id,label:`${s.emoji} ${s.label}`}))} />
+            <Sel label="Assigned to" value={card.assigned_to||""} onChange={v=>patch({assigned_to:v||null})}
+              options={[{value:"",label:"Unassigned"},{value:user.email,label:"Me ("+user.email.split("@")[0]+")"},...assignees.filter(a=>a!==user.email).map(a=>({value:a,label:a.split("@")[0]}))]} />
+          </div>
+
+          {/* Contacts section */}
+          <div style={{ marginBottom:16 }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
+              <span style={{ fontSize:11, fontWeight:700, color:C.gold, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.06em" }}>👥 Contacts</span>
+              <GoldButton small outline onClick={()=>setShowPick(true)}>＋ Add</GoldButton>
+            </div>
+            {links.length===0 ? <div style={{ fontSize:12, color:C.text3, fontFamily:FONT }}>No contacts linked yet.</div> :
+              <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+                {links.map(l=>(
+                  <div key={l.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"7px 10px", background:C.surface2, borderRadius:8 }}>
+                    <Avatar name={l.contacts?.full_name||"?"} email={l.contacts?.email} size={28} />
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:FONT }}>{l.contacts?.full_name}</div>
+                      {l.contacts?.phone && <div style={{ fontSize:10, color:C.text3, fontFamily:FONT }}>{l.contacts.phone}</div>}
+                    </div>
+                    <select value={l.role||cfg.roles[0]} onChange={e=>setRole(l.id,e.target.value)} style={{ fontSize:10, padding:"3px 5px", background:C.surface, border:`1px solid ${C.border2}`, borderRadius:6, color:C.text2, fontFamily:FONT }}>
+                      {cfg.roles.map(r=><option key={r} value={r}>{r}</option>)}
+                    </select>
+                    <button onClick={()=>removeContact(l.id)} style={{ background:"none", border:"none", color:C.text3, cursor:"pointer", fontSize:14 }}>✕</button>
+                  </div>
+                ))}
+              </div>}
           </div>
 
           <div style={{ display:"flex", gap:5, marginBottom:12, borderBottom:`1px solid ${C.border}` }}>
             {[["details","Details"],["activity",`Activity (${acts.length})`],["notes","Notes"]].map(([v,l])=>(
-              <button key={v} onClick={()=>setTab(v)} style={{ padding:"8px 12px", border:"none", background:"none",
-                color:tab===v?C.gold:C.text2, borderBottom:tab===v?`2px solid ${C.gold}`:"2px solid transparent",
-                fontSize:12, fontWeight:600, fontFamily:FONT, cursor:"pointer", marginBottom:-1 }}>{l}</button>
+              <button key={v} onClick={()=>setTab(v)} style={{ padding:"8px 12px", border:"none", background:"none", color:tab===v?C.gold:C.text2, borderBottom:tab===v?`2px solid ${C.gold}`:"2px solid transparent", fontSize:12, fontWeight:600, fontFamily:FONT, cursor:"pointer", marginBottom:-1 }}>{l}</button>
             ))}
           </div>
 
           {tab==="details" && (edit ? (
             <div>
-              <LeaseForm form={form} set={set} isMobile={isMobile} />
+              <div style={{ display:"flex", gap:10, alignItems:"flex-end", marginBottom:10 }}>
+                <div><div style={{ fontSize:11, fontWeight:600, color:C.text2, fontFamily:FONT, marginBottom:4 }}>Emoji</div>
+                  <select value={form.emoji} onChange={e=>set("emoji",e.target.value)} style={{ fontSize:20, padding:"6px 8px", background:C.surface2, border:`1.5px solid ${C.border2}`, borderRadius:8 }}>
+                    {[cfg.emoji,...CARD_EMOJIS.filter(e=>e!==cfg.emoji)].map(e=><option key={e} value={e}>{e}</option>)}</select></div>
+                <div style={{ flex:1 }}><Field label="Title" value={form.title} onChange={v=>set("title",v)} placeholder={cfg.titleHint} /></div>
+              </div>
+              <PropertyFields form={form} set={set} deals={deals} isMobile={isMobile} />
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginTop:10 }}>
+                <Field label={cfg.priceLabel} type="number" value={form.price} onChange={v=>set("price",v)} />
+                <Field label={cfg.dateLabel} type="date" value={form.target_date} onChange={v=>set("target_date",v)} />
+              </div>
               <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:14 }}>
                 <GoldButton outline small onClick={()=>setEdit(false)}>Cancel</GoldButton>
                 <GoldButton small onClick={saveEdit}>Save changes</GoldButton>
@@ -5232,59 +5380,43 @@ function LeasePanel({ lead, user, callers, onClose, onRefresh, onUpdated, setToa
             </div>
           ) : (
             <div>
-              <div style={{ display:"flex", justifyContent:"flex-end", marginBottom:6 }}>
-                <GoldButton outline small onClick={()=>setEdit(true)}>✎ Edit</GoldButton>
-              </div>
-              <Row l="Monthly rent" v={leaseFmt$(lead.monthly_rent)} />
-              <Row l="Security deposit" v={leaseFmt$(lead.security_deposit)} />
-              <Row l="Property" v={`${lead.property_address||"—"}${lead.unit?` · ${lead.unit}`:""}`} />
-              <Row l="City" v={lead.property_city||"—"} />
-              <Row l="Beds / Baths" v={`${lead.bedrooms??"—"} / ${lead.bathrooms??"—"}`} />
-              <Row l="Desired move-in" v={leaseFmtDate(lead.desired_move_in)} />
-              <Row l="Lease term" v={lead.lease_term_months?`${lead.lease_term_months} mo`:"—"} />
-              <Row l="Budget" v={lead.budget_min||lead.budget_max?`${leaseFmt$(lead.budget_min)} – ${leaseFmt$(lead.budget_max)}`:"—"} />
-              <Row l="Occupants" v={lead.occupants??"—"} />
-              <Row l="Pets" v={lead.pets||"—"} />
-              <Row l="Source" v={lead.source||"—"} />
-              <Row l="Phone" v={lead.tenant_phone||"—"} />
-              <Row l="Email" v={lead.tenant_email||"—"} />
+              <div style={{ display:"flex", justifyContent:"flex-end", marginBottom:6 }}><GoldButton outline small onClick={()=>setEdit(true)}>✎ Edit</GoldButton></div>
+              <Row l={cfg.priceLabel} v={pipe$(card.price)+(cfg.priceLabel==="Monthly Rent"?"/mo":"")} />
+              <Row l="Property" v={card.property_address||"—"} />
+              <Row l="City" v={card.property_city||"—"} />
+              <Row l="Beds / Baths" v={`${card.bedrooms??"—"} / ${card.bathrooms??"—"}`} />
+              <Row l={cfg.dateLabel} v={pipeDate(card.target_date)} />
+              <Row l="Source" v={card.source||"—"} />
+              {card.property_deal_id && <Row l="Linked property" v="✓ Deal record" />}
             </div>
           ))}
 
           {tab==="activity" && (
             <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
               {acts.length===0 ? <div style={{ fontSize:12, color:C.text3, fontFamily:FONT, padding:"12px 0" }}>No activity yet — use the call/text/email buttons above.</div> :
-                acts.map(a=>(
-                  <div key={a.id} style={{ display:"flex", gap:10, padding:"8px 0", borderBottom:`1px solid ${C.border}` }}>
-                    <span style={{ fontSize:14 }}>{a.activity_type==="call"?"📞":a.activity_type==="text"?"💬":a.activity_type==="email"?"✉️":a.activity_type==="note"?"📝":"•"}</span>
-                    <div style={{ flex:1 }}>
-                      <div style={{ fontSize:12, color:C.text, fontFamily:FONT }}>{a.content}</div>
-                      <div style={{ fontSize:10, color:C.text3, fontFamily:FONT }}>{a.created_by?.split("@")[0]} · {new Date(a.created_at).toLocaleString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"})}</div>
-                    </div>
-                  </div>
-                ))}
+                acts.map(a=>(<div key={a.id} style={{ display:"flex", gap:10, padding:"8px 0", borderBottom:`1px solid ${C.border}` }}>
+                  <span style={{ fontSize:14 }}>{a.activity_type==="call"?"📞":a.activity_type==="text"?"💬":a.activity_type==="email"?"✉️":a.activity_type==="note"?"📝":"•"}</span>
+                  <div style={{ flex:1 }}><div style={{ fontSize:12, color:C.text, fontFamily:FONT }}>{a.content}</div>
+                    <div style={{ fontSize:10, color:C.text3, fontFamily:FONT }}>{a.created_by?.split("@")[0]} · {new Date(a.created_at).toLocaleString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"})}</div></div>
+                </div>))}
             </div>
           )}
 
           {tab==="notes" && (
             <div>
-              <textarea value={note} onChange={e=>setNote(e.target.value)} placeholder="Add a note about this opportunity…"
-                style={{ width:"100%", minHeight:90, padding:"10px 12px", background:C.surface2, border:`1.5px solid ${C.border2}`,
-                  borderRadius:8, color:C.text, fontSize:13, fontFamily:FONT, outline:"none", boxSizing:"border-box", resize:"vertical" }} />
+              <textarea value={note} onChange={e=>setNote(e.target.value)} placeholder="Add a note…"
+                style={{ width:"100%", minHeight:90, padding:"10px 12px", background:C.surface2, border:`1.5px solid ${C.border2}`, borderRadius:8, color:C.text, fontSize:13, fontFamily:FONT, outline:"none", boxSizing:"border-box", resize:"vertical" }} />
               <div style={{ marginTop:8 }}><GoldButton small onClick={addNote} disabled={!note.trim()}>Add note</GoldButton></div>
-              {lead.notes && <div style={{ marginTop:14, fontSize:12, color:C.text2, fontFamily:FONT, whiteSpace:"pre-wrap" }}>{lead.notes}</div>}
+              {card.notes && <div style={{ marginTop:14, fontSize:12, color:C.text2, fontFamily:FONT, whiteSpace:"pre-wrap" }}>{card.notes}</div>}
             </div>
           )}
         </div>
       </div>
+      {showPick && <ContactPicker onClose={()=>setShowPick(false)} onPick={addContact} />}
     </div>
   );
 }
-function leaseQa(color){
-  return { flex:1, textAlign:"center", textDecoration:"none", padding:"9px 10px", borderRadius:8,
-    border:`1.5px solid ${color}`, color:color, background:"transparent", fontSize:12, fontWeight:700,
-    fontFamily:FONT, cursor:"pointer", whiteSpace:"nowrap" };
-}
+function pipeQa(color){ return { flex:1, textAlign:"center", textDecoration:"none", padding:"9px 10px", borderRadius:8, border:`1.5px solid ${color}`, color:color, background:"transparent", fontSize:12, fontWeight:700, fontFamily:FONT, cursor:"pointer", whiteSpace:"nowrap" }; }
 
 // ════════════════════════════════════════════════════════════
 // RECRUITING VIEW — Admin/Owner only (agent recruiting pipeline)
@@ -8037,6 +8169,8 @@ export default function App() {
     settings:["Settings","Account & org"],
     robots:  ["Ari", "Business Unit Leader · ROGA"],
     calendar:   ["Calendar",   "Realty One Group Advantage"],
+    listings:   ["Listings Pipeline", "Seller-side opportunities"],
+    buyers:     ["Buyers Pipeline", "Buyer-side opportunities"],
     leasing:    ["Leasing Pipeline", "Tenant & rental opportunities"],
     applications:["Applications", "Agent Onboarding Queue"],
     recruiting:["Recruiting Pipeline", "Producing-agent prospects · Admin only"],
@@ -8089,7 +8223,9 @@ export default function App() {
           {view==="notepad"  &&<NotesView     user={cu} />}
           {view==="robots"   &&<RobotsView    user={cu} deals={deals} contacts={contacts} tasks={tasks} />}
           {view==="calendar"   &&<CalendarView    user={cu} />}
-          {view==="leasing"    &&<LeasingView     user={cu} />}
+          {view==="listings"   &&<PipelineView pipeline="listing" user={cu} />}
+          {view==="buyers"     &&<PipelineView pipeline="buyer"   user={cu} />}
+          {view==="leasing"    &&<PipelineView pipeline="leasing" user={cu} />}
           {view==="applications"&&<ApplicationsView user={cu} />}
           {view==="recruiting"  &&<RecruitingView   user={cu} />}
           {view==="financials"  &&<FinancialsView   user={cu} />}
