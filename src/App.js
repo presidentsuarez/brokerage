@@ -607,10 +607,10 @@ function TopBar({ title, subtitle, onToggleSidebar, actions, theme, onToggleThem
     <div style={{ height:56, background:C.surface, borderBottom:`1px solid ${C.border}`,
       display:"flex", alignItems:"center", padding:"0 16px 0 12px", gap:12,
       position:"sticky", top:0, zIndex:50 }}>
-      <button onClick={onToggleSidebar} style={{
-        background:"none", border:"none", color:C.text2, cursor:"pointer",
-        fontSize:18, padding:"8px", borderRadius:8, lineHeight:1,
-        minWidth:40, minHeight:40, display:"flex", alignItems:"center", justifyContent:"center" }}>☰</button>
+      <button onClick={onToggleSidebar} aria-label="Open menu" title="Menu" style={{
+        background:C.surface2, border:`1px solid ${C.border2}`, color:C.text, cursor:"pointer",
+        fontSize:18, padding:"7px 12px", borderRadius:8, lineHeight:1, flexShrink:0,
+        minWidth:42, minHeight:40, display:"flex", alignItems:"center", justifyContent:"center" }}>☰</button>
       <div style={{ flex:1, minWidth:0 }}>
         <div style={{ fontSize:14, fontWeight:700, color:C.text, fontFamily:SERIF,
           letterSpacing:"-0.01em", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{title}</div>
