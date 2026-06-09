@@ -4243,13 +4243,14 @@ function PlanningView({ user, onRefresh }) {
   const [inits,setInits]       = useState([]);
   const [rocks,setRocks]       = useState([]);
   const [projects,setProjects] = useState([]);
+  const [tasks,setTasks]       = useState([]);
   const [members,setMembers]   = useState([]);
   const [myId,setMyId]         = useState(null);
 
+  const [tab,setTab]           = useState("initiatives");
   const [selInit,setSelInit]   = useState(null);
   const [selRock,setSelRock]   = useState(null);
   const [selProj,setSelProj]   = useState(null);
-  const [projTasks,setProjTasks] = useState([]);
   const [openTask,setOpenTask] = useState(null);
 
   const [modal,setModal]   = useState(null);
@@ -4257,6 +4258,12 @@ function PlanningView({ user, onRefresh }) {
   const [form,setForm]     = useState({});
   const set = (k,v)=>setForm(f=>({...f,[k]:v}));
 
+  const SUBNAV = [
+    { key:"initiatives", icon:"\ud83c\udfaf", label:"Initiatives" },
+    { key:"rocks",       icon:"\ud83e\udea8", label:"Rocks" },
+    { key:"projects",    icon:"\ud83d\uddc2\ufe0f", label:"Projects" },
+    { key:"tasks",       icon:"\u2705", label:"Tasks" },
+  ];
   const INIT_STATUS = [{value:"active",label:"Active"},{value:"dormant",label:"Dormant"},{value:"achieved",label:"Achieved"},{value:"killed",label:"Killed"}];
   const ROCK_STATUS = [{value:"on_track",label:"On Track"},{value:"at_risk",label:"At Risk"},{value:"off_track",label:"Off Track"},{value:"done",label:"Done"}];
   const PROJ_STATUS = [{value:"active",label:"Active"},{value:"on_hold",label:"On Hold"},{value:"done",label:"Done"}];
@@ -4265,13 +4272,14 @@ function PlanningView({ user, onRefresh }) {
 
   const load = async () => {
     setLoading(true);
-    const [i,r,p,m] = await Promise.all([
+    const [i,r,p,t,m] = await Promise.all([
       supabase.from("initiatives").select("*").eq("org_id",ORG_ID).order("priority",{ascending:false}).order("created_at"),
       supabase.from("rocks").select("*").eq("org_id",ORG_ID).order("created_at"),
       supabase.from("projects").select("*").eq("org_id",ORG_ID).order("created_at"),
+      supabase.from("tasks").select("*").eq("org_id",ORG_ID).not("project_id","is",null).order("created_at",{ascending:false}),
       supabase.from("user_profiles").select("id, full_name, email").order("full_name"),
     ]);
-    setInits(i.data||[]); setRocks(r.data||[]); setProjects(p.data||[]); setMembers(m.data||[]);
+    setInits(i.data||[]); setRocks(r.data||[]); setProjects(p.data||[]); setTasks(t.data||[]); setMembers(m.data||[]);
     setLoading(false);
   };
   useEffect(()=>{ load(); },[]);
@@ -4281,23 +4289,21 @@ function PlanningView({ user, onRefresh }) {
     if(data) setMyId(data.id);
   })(); },[user]);
 
-  const reloadTasks = async (pid) => {
-    const { data } = await supabase.from("tasks").select("*").eq("project_id",pid).order("created_at",{ascending:false});
-    setProjTasks(data||[]);
-  };
-  useEffect(()=>{ if(selProj) reloadTasks(selProj.id); else setProjTasks([]); },[selProj]);
-
   const initiativeById = id => inits.find(x=>x.id===id);
   const rockById       = id => rocks.find(x=>x.id===id);
+  const projectById    = id => projects.find(x=>x.id===id);
   const rocksFor    = id => rocks.filter(r=>r.initiative_id===id);
   const projForInit = id => projects.filter(p=>p.initiative_id===id && !p.rock_id);
   const projForRock = id => projects.filter(p=>p.rock_id===id);
+  const tasksForProj= id => tasks.filter(t=>t.project_id===id && !t.parent_task_id);
 
-  const openModal = (type) => {
+  const goTab = (k) => { setTab(k); setSelInit(null); setSelRock(null); setSelProj(null); };
+
+  const openModal = (type, ctx={}) => {
     if(type==="init") setForm({name:"",description:"",horizon_label:"",status:"active",mission_link:"",priority:0});
-    if(type==="rock") setForm({title:"",description:"",status:"on_track",quarter:"",due_date:"",progress:0,priority:0});
-    if(type==="proj") setForm({name:"",description:"",status:"active",rock_id:selRock?selRock.id:""});
-    if(type==="task") setForm({title:"",description:"",priority:"normal",due_date:"",start_date:""});
+    if(type==="rock") setForm({title:"",description:"",status:"on_track",quarter:"",due_date:"",progress:0,priority:0, initiative_id:ctx.initiative_id||(selInit?selInit.id:"")});
+    if(type==="proj") setForm({name:"",description:"",status:"active", initiative_id:ctx.initiative_id||(selInit?selInit.id:""), rock_id:ctx.rock_id||(selRock?selRock.id:"")});
+    if(type==="task") setForm({title:"",description:"",priority:"normal",due_date:"",start_date:"", project_id:ctx.project_id||(selProj?selProj.id:"")});
     setModal(type);
   };
 
@@ -4309,19 +4315,18 @@ function PlanningView({ user, onRefresh }) {
         if(!form.name.trim()){ setSaving(false); return; }
         await supabase.from("initiatives").insert({ org_id:ORG_ID, ...owner, name:form.name.trim(), description:form.description||null, horizon_label:form.horizon_label||null, status:form.status, mission_link:form.mission_link||null, priority:Number(form.priority)||0 });
       } else if(modal==="rock"){
-        if(!form.title.trim()){ setSaving(false); return; }
-        await supabase.from("rocks").insert({ org_id:ORG_ID, ...owner, initiative_id:selInit.id, title:form.title.trim(), description:form.description||null, status:form.status, quarter:form.quarter||null, due_date:form.due_date||null, progress:Number(form.progress)||0, priority:Number(form.priority)||0 });
+        if(!form.title.trim()||!form.initiative_id){ setSaving(false); return; }
+        await supabase.from("rocks").insert({ org_id:ORG_ID, ...owner, initiative_id:form.initiative_id, title:form.title.trim(), description:form.description||null, status:form.status, quarter:form.quarter||null, due_date:form.due_date||null, progress:Number(form.progress)||0, priority:Number(form.priority)||0 });
       } else if(modal==="proj"){
         if(!form.name.trim()){ setSaving(false); return; }
         const rk = form.rock_id ? rocks.find(r=>r.id===form.rock_id) : null;
-        const initId = rk ? rk.initiative_id : (selInit?selInit.id:null);
+        const initId = rk ? rk.initiative_id : (form.initiative_id||null);
         await supabase.from("projects").insert({ org_id:ORG_ID, ...owner, initiative_id:initId, rock_id:form.rock_id||null, name:form.name.trim(), description:form.description||null, status:form.status });
       } else if(modal==="task"){
-        if(!form.title.trim()){ setSaving(false); return; }
-        await supabase.from("tasks").insert({ org_id:ORG_ID, project_id:selProj.id, title:form.title.trim(), description:form.description||null, priority:form.priority, due_date:form.due_date||null, start_date:form.start_date||null, status:"todo", progress:0, created_by:creatorLabel(user) });
+        if(!form.title.trim()||!form.project_id){ setSaving(false); return; }
+        await supabase.from("tasks").insert({ org_id:ORG_ID, project_id:form.project_id, title:form.title.trim(), description:form.description||null, priority:form.priority, due_date:form.due_date||null, start_date:form.start_date||null, status:"todo", progress:0, created_by:creatorLabel(user) });
       }
       setModal(null); await load();
-      if(selProj) await reloadTasks(selProj.id);
     } catch(e){ alert("Save failed: "+(e.message||e)); }
     setSaving(false);
   };
@@ -4335,24 +4340,19 @@ function PlanningView({ user, onRefresh }) {
     if(table==="projects"){ setSelProj(null); }
     load();
   };
-
-  // task handlers for the modal
-  const taskUpdate = async (id,updates) => { await supabase.from("tasks").update(updates).eq("id",id); if(selProj) reloadTasks(selProj.id); };
-  const taskDelete = async (id) => { await supabase.from("tasks").delete().eq("id",id); if(selProj) reloadTasks(selProj.id); setOpenTask(t=>t&&t.id===id?null:t); };
-  const taskAddSub = async (title) => { await supabase.from("tasks").insert({ org_id:ORG_ID, project_id:selProj.id, parent_task_id:openTask.id, title, status:"todo", priority:"normal", progress:0, created_by:creatorLabel(user) }); if(selProj) reloadTasks(selProj.id); };
-  const quickToggle = async (t) => { const u = t.status==="done"?{status:"todo",completed_at:null}:{status:"done",progress:100,completed_at:new Date().toISOString()}; await supabase.from("tasks").update(u).eq("id",t.id); if(selProj) reloadTasks(selProj.id); };
+  const taskUpdate = async (id,updates) => { await supabase.from("tasks").update(updates).eq("id",id); load(); };
+  const taskDelete = async (id) => { await supabase.from("tasks").delete().eq("id",id); setOpenTask(t=>t&&t.id===id?null:t); load(); };
+  const taskAddSub = async (title) => { await supabase.from("tasks").insert({ org_id:ORG_ID, project_id:openTask.project_id, parent_task_id:openTask.id, title, status:"todo", priority:"normal", progress:0, created_by:creatorLabel(user) }); load(); };
+  const quickToggle = async (t) => { const u = t.status==="done"?{status:"todo",completed_at:null}:{status:"done",progress:100,completed_at:new Date().toISOString()}; await supabase.from("tasks").update(u).eq("id",t.id); load(); };
 
   const crumbBtn = (active)=>({ background:"none", border:"none", padding:0, cursor:"pointer", fontFamily:FONT, fontSize:13, color:active?C.gold:C.text2, fontWeight:active?700:500 });
-  const Pill = ({status})=>(
-    <span style={{ fontSize:10, fontWeight:700, fontFamily:FONT, letterSpacing:"0.04em", textTransform:"uppercase", padding:"2px 8px", borderRadius:20, color:SCOLOR[status]||C.text3, background:(SCOLOR[status]||C.text3)+"22" }}>{(status||"").replace(/_/g," ")}</span>
-  );
+  const Pill = ({status})=>(<span style={{ fontSize:10, fontWeight:700, fontFamily:FONT, letterSpacing:"0.04em", textTransform:"uppercase", padding:"2px 8px", borderRadius:20, color:SCOLOR[status]||C.text3, background:(SCOLOR[status]||C.text3)+"22" }}>{(status||"").replace(/_/g," ")}</span>);
   const hdr = { fontSize:11, fontWeight:700, color:C.text2, fontFamily:FONT, letterSpacing:"0.08em", textTransform:"uppercase" };
   const cardWrap = { background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden", marginBottom:16 };
 
   const Row = ({ onClick, children }) => (
     <div onClick={onClick} style={{ display:"flex", alignItems:"center", gap:12, padding:"12px 18px", borderBottom:`1px solid ${C.border}`, cursor:onClick?"pointer":"default" }}
-      onMouseEnter={e=>{ if(onClick) e.currentTarget.style.background=C.surface2; }}
-      onMouseLeave={e=>{ e.currentTarget.style.background="transparent"; }}>{children}</div>
+      onMouseEnter={e=>{ if(onClick) e.currentTarget.style.background=C.surface2; }} onMouseLeave={e=>{ e.currentTarget.style.background="transparent"; }}>{children}</div>
   );
   const SectionCard = ({ title, count, onAdd, addLabel, empty, children }) => (
     <div style={cardWrap}>
@@ -4365,13 +4365,11 @@ function PlanningView({ user, onRefresh }) {
         : children}
     </div>
   );
-
-  // Suarez-matched project row: numbered badge, parent chips, description, standalone tag, status
   const ProjectRow = ({ p, i }) => {
     const parentRock = p.rock_id ? rockById(p.rock_id) : null;
     const parentInit = p.initiative_id ? initiativeById(p.initiative_id) : (parentRock?.initiative_id ? initiativeById(parentRock.initiative_id) : null);
     return (
-      <div key={p.id} onClick={()=>setSelProj(p)} style={{ padding:"12px 18px", borderBottom:`1px solid ${C.border}`, display:"flex", alignItems:"flex-start", gap:12, cursor:"pointer" }}
+      <div onClick={()=>{ setSelProj(p); }} style={{ padding:"12px 18px", borderBottom:`1px solid ${C.border}`, display:"flex", alignItems:"flex-start", gap:12, cursor:"pointer" }}
         onMouseEnter={e=>{ e.currentTarget.style.background=C.surface2; }} onMouseLeave={e=>{ e.currentTarget.style.background="transparent"; }}>
         <div style={{ width:26, height:26, borderRadius:7, background:`linear-gradient(135deg, ${C.gold}, ${C.goldLight})`, color:"#0a0a0a", display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:800, fontFamily:SERIF, flexShrink:0 }}>{i+1}</div>
         <div style={{ flex:1, minWidth:0 }}>
@@ -4386,133 +4384,200 @@ function PlanningView({ user, onRefresh }) {
           {p.description && <div style={{ fontSize:11, color:C.text3, marginTop:2, lineHeight:1.45, fontFamily:FONT }}>{p.description}</div>}
           {!parentInit && !parentRock && <div style={{ fontSize:9, color:C.text3, fontWeight:700, marginTop:3, letterSpacing:"0.04em", textTransform:"uppercase", fontFamily:FONT }}>Standalone</div>}
         </div>
+        <span style={{ fontSize:10.5, color:C.text3, fontFamily:FONT, flexShrink:0 }}>{tasksForProj(p.id).length} tasks</span>
         {p.status && <span style={{ fontSize:9, fontWeight:800, color:C.text2, background:C.surface2, border:`1px solid ${C.border2}`, borderRadius:5, padding:"3px 8px", letterSpacing:"0.04em", textTransform:"uppercase", flexShrink:0, fontFamily:FONT }}>{p.status}</span>}
       </div>
     );
   };
-
-  // Suarez-matched task row: priority dot, title, due date, clickable -> modal
-  const TaskRow = ({ t }) => (
-    <div style={{ display:"flex", alignItems:"center", gap:12, padding:"11px 18px", borderBottom:`1px solid ${C.border}`, cursor:"pointer" }}
-      onClick={()=>setOpenTask(t)}
-      onMouseEnter={e=>{ e.currentTarget.style.background=C.surface2; }} onMouseLeave={e=>{ e.currentTarget.style.background="transparent"; }}>
-      <button onClick={e=>{ e.stopPropagation(); quickToggle(t); }} style={{ width:18, height:18, borderRadius:4, flexShrink:0, cursor:"pointer", padding:0, border:`2px solid ${t.status==="done"?C.gold:C.border2}`, background:t.status==="done"?C.gold:"transparent", display:"flex", alignItems:"center", justifyContent:"center" }}>
-        {t.status==="done"&&<span style={{ fontSize:9, color:"#0a0a0a", fontWeight:900 }}>{"\u2713"}</span>}
-      </button>
-      <div style={{ flex:1, minWidth:0 }}>
-        <div style={{ fontSize:13, fontWeight:500, fontFamily:FONT, color:t.status==="done"?C.text3:C.text, textDecoration:t.status==="done"?"line-through":"none" }}>{t.title}</div>
-        {t.assigned_to && <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>{t.assigned_to}</div>}
+  const TaskRow = ({ t, showProject }) => {
+    const pj = showProject && t.project_id ? projectById(t.project_id) : null;
+    return (
+      <div style={{ display:"flex", alignItems:"center", gap:12, padding:"11px 18px", borderBottom:`1px solid ${C.border}`, cursor:"pointer" }}
+        onClick={()=>setOpenTask(t)} onMouseEnter={e=>{ e.currentTarget.style.background=C.surface2; }} onMouseLeave={e=>{ e.currentTarget.style.background="transparent"; }}>
+        <button onClick={e=>{ e.stopPropagation(); quickToggle(t); }} style={{ width:18, height:18, borderRadius:4, flexShrink:0, cursor:"pointer", padding:0, border:`2px solid ${t.status==="done"?C.gold:C.border2}`, background:t.status==="done"?C.gold:"transparent", display:"flex", alignItems:"center", justifyContent:"center" }}>
+          {t.status==="done"&&<span style={{ fontSize:9, color:"#0a0a0a", fontWeight:900 }}>{"\u2713"}</span>}
+        </button>
+        <div style={{ flex:1, minWidth:0 }}>
+          {pj && <div style={{ fontSize:9.5, fontWeight:700, color:C.blue, fontFamily:FONT, marginBottom:2 }}>{"\ud83d\uddc2\ufe0f"} {pj.name}</div>}
+          <div style={{ fontSize:13, fontWeight:500, fontFamily:FONT, color:t.status==="done"?C.text3:C.text, textDecoration:t.status==="done"?"line-through":"none" }}>{t.title}</div>
+          {t.assigned_to && <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>{t.assigned_to}</div>}
+        </div>
+        {typeof t.progress==="number" && t.progress>0 && t.status!=="done" && <span style={{ fontSize:11, color:C.text3, fontFamily:MONO }}>{t.progress}%</span>}
+        <div style={{ width:7, height:7, borderRadius:"50%", background:PCOL[t.priority]||C.text3, flexShrink:0 }} />
+        {t.due_date && <span style={{ fontSize:11, color:C.text3, fontFamily:MONO }}>{t.due_date}</span>}
       </div>
-      {typeof t.progress==="number" && t.progress>0 && t.status!=="done" && <span style={{ fontSize:11, color:C.text3, fontFamily:MONO }}>{t.progress}%</span>}
-      <div style={{ width:7, height:7, borderRadius:"50%", background:PCOL[t.priority]||C.text3, flexShrink:0 }} />
-      {t.due_date && <span style={{ fontSize:11, color:C.text3, fontFamily:MONO }}>{t.due_date}</span>}
-    </div>
-  );
+    );
+  };
+
+  // ── sub-navigation (the side menu) ──
+  const SubNav = () => {
+    if(isMobile){
+      return (
+        <div style={{ display:"flex", gap:8, overflowX:"auto", padding:"0 0 14px", marginBottom:4 }}>
+          {SUBNAV.map(n=>{ const a=tab===n.key; return (
+            <button key={n.key} onClick={()=>goTab(n.key)} style={{ flexShrink:0, display:"flex", alignItems:"center", gap:6, padding:"8px 14px", borderRadius:20, border:`1px solid ${a?C.goldBorder:C.border2}`, background:a?C.goldDim:"transparent", color:a?C.gold:C.text2, fontSize:13, fontWeight:a?700:500, fontFamily:FONT, cursor:"pointer", whiteSpace:"nowrap" }}>
+              <span>{n.icon}</span>{n.label}
+            </button>); })}
+        </div>
+      );
+    }
+    return (
+      <div style={{ width:172, flexShrink:0, paddingRight:16 }}>
+        <div style={{ fontSize:10, fontWeight:800, color:C.text3, letterSpacing:"0.1em", textTransform:"uppercase", fontFamily:FONT, padding:"4px 10px 8px" }}>Planning</div>
+        {SUBNAV.map(n=>{ const a=tab===n.key; return (
+          <button key={n.key} onClick={()=>goTab(n.key)} style={{ width:"100%", display:"flex", alignItems:"center", gap:10, padding:"9px 12px", marginBottom:2, borderRadius:8, border:"none", background:a?C.goldDim:"transparent", color:a?C.gold:C.text2, fontSize:13.5, fontWeight:a?700:500, fontFamily:FONT, cursor:"pointer", textAlign:"left" }}
+            onMouseEnter={e=>{ if(!a) e.currentTarget.style.background=C.surface2; }} onMouseLeave={e=>{ if(!a) e.currentTarget.style.background="transparent"; }}>
+            <span style={{ fontSize:15 }}>{n.icon}</span>{n.label}
+          </button>); })}
+      </div>
+    );
+  };
 
   if(loading) return <div style={{ padding:"40px 24px", textAlign:"center", color:C.text3, fontFamily:FONT, fontSize:13 }}>Loading planning\u2026</div>;
 
-  const topTasks = projTasks.filter(t=>!t.parent_task_id);
+  const InitiativeDetail = ({ it }) => (
+    <>
+      <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:14 }}>
+        <button onClick={()=>setSelInit(null)} style={crumbBtn(false)}>{"\u2039"} Initiatives</button>
+        <span style={{color:C.text3}}>{"\u203a"}</span><span style={{color:C.gold,fontWeight:700,fontFamily:FONT,fontSize:13}}>{it.name}</span>
+      </div>
+      <div style={{ ...cardWrap, padding:"16px 18px" }}>
+        <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:12 }}>
+          <div style={{ flex:1 }}>
+            <div style={{ fontFamily:SERIF, fontSize:20, color:C.text, marginBottom:4 }}>{it.name}</div>
+            {it.description && <div style={{ fontSize:13, color:C.text2, fontFamily:FONT, marginBottom:6 }}>{it.description}</div>}
+            {it.horizon_label && <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>Horizon: {it.horizon_label}</div>}
+          </div>
+          <div style={{ display:"flex", flexDirection:"column", gap:8, alignItems:"flex-end" }}>
+            <Sel value={it.status} onChange={v=>{ setStatus("initiatives",it.id,v); setSelInit({...it,status:v}); }} options={INIT_STATUS} />
+            <button onClick={()=>del("initiatives",it.id)} style={{ background:"none", border:"none", color:C.red, fontSize:11, fontFamily:FONT, cursor:"pointer", padding:0 }}>Delete</button>
+          </div>
+        </div>
+      </div>
+      <SectionCard title="Rocks" count={rocksFor(it.id).length} onAdd={()=>openModal("rock",{initiative_id:it.id})} addLabel="Add Rock" empty="No rocks under this initiative yet.">
+        {rocksFor(it.id).map(rk=>(
+          <Row key={rk.id} onClick={()=>{ setTab("rocks"); setSelRock(rk); }}>
+            <div style={{ flex:1 }}>
+              <div style={{ fontSize:14, fontWeight:600, color:C.text, fontFamily:FONT }}>{rk.title}</div>
+              <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>{rk.quarter||"\u2014"} \u00b7 {projForRock(rk.id).length} projects</div>
+            </div>
+            {typeof rk.progress==="number" && <span style={{ fontSize:11, color:C.text3, fontFamily:MONO }}>{rk.progress}%</span>}
+            <Pill status={rk.status} />
+          </Row>
+        ))}
+      </SectionCard>
+      <SectionCard title="Projects (directly under initiative)" count={projForInit(it.id).length} onAdd={()=>openModal("proj",{initiative_id:it.id})} addLabel="Add Project" empty="No standalone projects under this initiative.">
+        {projForInit(it.id).map((pj,idx)=><ProjectRow key={pj.id} p={pj} i={idx} />)}
+      </SectionCard>
+    </>
+  );
+
+  const RockDetail = ({ rk }) => (
+    <>
+      <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:14 }}>
+        <button onClick={()=>setSelRock(null)} style={crumbBtn(false)}>{"\u2039"} Rocks</button>
+        <span style={{color:C.text3}}>{"\u203a"}</span><span style={{color:C.gold,fontWeight:700,fontFamily:FONT,fontSize:13}}>{rk.title}</span>
+      </div>
+      <div style={{ ...cardWrap, padding:"16px 18px" }}>
+        <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:12 }}>
+          <div style={{ flex:1 }}>
+            <div style={{ fontFamily:SERIF, fontSize:18, color:C.text, marginBottom:4 }}>{rk.title}</div>
+            {rk.initiative_id && initiativeById(rk.initiative_id) && <div style={{ fontSize:11, color:C.blue, fontFamily:FONT, marginBottom:4 }}>{"\ud83c\udfaf"} {initiativeById(rk.initiative_id).name}</div>}
+            {rk.description && <div style={{ fontSize:13, color:C.text2, fontFamily:FONT }}>{rk.description}</div>}
+            <div style={{ fontSize:11, color:C.text3, fontFamily:FONT, marginTop:6 }}>{rk.quarter||"No quarter"}{rk.due_date?` \u00b7 due ${rk.due_date}`:""} \u00b7 {rk.progress||0}%</div>
+          </div>
+          <div style={{ display:"flex", flexDirection:"column", gap:8, alignItems:"flex-end" }}>
+            <Sel value={rk.status} onChange={v=>{ setStatus("rocks",rk.id,v); setSelRock({...rk,status:v}); }} options={ROCK_STATUS} />
+            <button onClick={()=>del("rocks",rk.id)} style={{ background:"none", border:"none", color:C.red, fontSize:11, fontFamily:FONT, cursor:"pointer", padding:0 }}>Delete</button>
+          </div>
+        </div>
+      </div>
+      <SectionCard title="Projects" count={projForRock(rk.id).length} onAdd={()=>openModal("proj",{initiative_id:rk.initiative_id,rock_id:rk.id})} addLabel="Add Project" empty="No projects under this rock yet.">
+        {projForRock(rk.id).map((pj,idx)=><ProjectRow key={pj.id} p={pj} i={idx} />)}
+      </SectionCard>
+    </>
+  );
+
+  const ProjectDetail = ({ pj }) => (
+    <>
+      <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:14 }}>
+        <button onClick={()=>setSelProj(null)} style={crumbBtn(false)}>{"\u2039"} Projects</button>
+        <span style={{color:C.text3}}>{"\u203a"}</span><span style={{color:C.gold,fontWeight:700,fontFamily:FONT,fontSize:13}}>{pj.name}</span>
+      </div>
+      <div style={{ ...cardWrap, padding:"16px 18px" }}>
+        <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:12 }}>
+          <div style={{ flex:1 }}>
+            <div style={{ fontFamily:SERIF, fontSize:18, color:C.text, marginBottom:4 }}>{pj.name}</div>
+            {pj.description && <div style={{ fontSize:13, color:C.text2, fontFamily:FONT }}>{pj.description}</div>}
+          </div>
+          <div style={{ display:"flex", flexDirection:"column", gap:8, alignItems:"flex-end" }}>
+            <Sel value={pj.status} onChange={v=>{ setStatus("projects",pj.id,v); setSelProj({...pj,status:v}); }} options={PROJ_STATUS} />
+            <button onClick={()=>del("projects",pj.id)} style={{ background:"none", border:"none", color:C.red, fontSize:11, fontFamily:FONT, cursor:"pointer", padding:0 }}>Delete</button>
+          </div>
+        </div>
+      </div>
+      <SectionCard title="Tasks" count={tasksForProj(pj.id).length} onAdd={()=>openModal("task",{project_id:pj.id})} addLabel="Add Task" empty="No tasks on this project yet.">
+        {tasksForProj(pj.id).map(t=><TaskRow key={t.id} t={t} />)}
+      </SectionCard>
+    </>
+  );
+
+  let body;
+  if(tab==="initiatives"){
+    body = selInit ? <InitiativeDetail it={selInit} /> : (
+      <SectionCard title="Initiatives" count={inits.length} onAdd={()=>openModal("init")} addLabel="Add Initiative" empty="No initiatives yet. Add your first strategic initiative.">
+        {inits.map(it=>(
+          <Row key={it.id} onClick={()=>setSelInit(it)}>
+            <div style={{ flex:1 }}>
+              <div style={{ fontSize:14, fontWeight:600, color:C.text, fontFamily:FONT }}>{it.name}</div>
+              {it.horizon_label && <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>{it.horizon_label}</div>}
+            </div>
+            <span style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>{rocksFor(it.id).length} rocks \u00b7 {projForInit(it.id).length} projects</span>
+            <Pill status={it.status} />
+          </Row>
+        ))}
+      </SectionCard>
+    );
+  } else if(tab==="rocks"){
+    body = selRock ? <RockDetail rk={selRock} /> : (
+      <SectionCard title="Rocks" count={rocks.length} onAdd={()=>openModal("rock")} addLabel="Add Rock" empty="No rocks yet. Rocks are quarterly priorities under an initiative.">
+        {rocks.map(rk=>(
+          <Row key={rk.id} onClick={()=>setSelRock(rk)}>
+            <div style={{ flex:1 }}>
+              {rk.initiative_id && initiativeById(rk.initiative_id) && <div style={{ fontSize:9.5, fontWeight:700, color:C.blue, fontFamily:FONT, marginBottom:2 }}>{"\ud83c\udfaf"} {initiativeById(rk.initiative_id).name}</div>}
+              <div style={{ fontSize:14, fontWeight:600, color:C.text, fontFamily:FONT }}>{rk.title}</div>
+              <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>{rk.quarter||"\u2014"} \u00b7 {projForRock(rk.id).length} projects</div>
+            </div>
+            {typeof rk.progress==="number" && <span style={{ fontSize:11, color:C.text3, fontFamily:MONO }}>{rk.progress}%</span>}
+            <Pill status={rk.status} />
+          </Row>
+        ))}
+      </SectionCard>
+    );
+  } else if(tab==="projects"){
+    body = selProj ? <ProjectDetail pj={selProj} /> : (
+      <SectionCard title="Projects" count={projects.length} onAdd={()=>openModal("proj")} addLabel="Add Project" empty="No projects yet.">
+        {projects.map((pj,idx)=><ProjectRow key={pj.id} p={pj} i={idx} />)}
+      </SectionCard>
+    );
+  } else { // tasks
+    const topTasks = tasks.filter(t=>!t.parent_task_id);
+    body = (
+      <SectionCard title="Tasks" count={topTasks.length} onAdd={()=>openModal("task")} addLabel="Add Task" empty="No tasks yet. Tasks live under a project.">
+        {topTasks.map(t=><TaskRow key={t.id} t={t} showProject />)}
+      </SectionCard>
+    );
+  }
 
   return (
     <div style={{ padding:"20px 24px" }}>
-      <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap", marginBottom:18 }}>
-        <button onClick={()=>{setSelInit(null);setSelRock(null);setSelProj(null);}} style={crumbBtn(!selInit)}>Initiatives</button>
-        {selInit && <><span style={{color:C.text3}}>{"\u203a"}</span><button onClick={()=>{setSelRock(null);setSelProj(null);}} style={crumbBtn(selInit&&!selRock&&!selProj)}>{selInit.name}</button></>}
-        {selRock && <><span style={{color:C.text3}}>{"\u203a"}</span><button onClick={()=>setSelProj(null)} style={crumbBtn(selRock&&!selProj)}>{selRock.title}</button></>}
-        {selProj && <><span style={{color:C.text3}}>{"\u203a"}</span><span style={{color:C.gold,fontWeight:700,fontFamily:FONT,fontSize:13}}>{selProj.name}</span></>}
+      <div style={{ display:isMobile?"block":"flex", alignItems:"flex-start" }}>
+        <SubNav />
+        <div style={{ flex:1, minWidth:0 }}>{body}</div>
       </div>
 
-      {!selInit && (
-        <SectionCard title="Initiatives" count={inits.length} onAdd={()=>openModal("init")} addLabel="Add Initiative" empty="No initiatives yet. Add your first strategic initiative.">
-          {inits.map(it=>(
-            <Row key={it.id} onClick={()=>setSelInit(it)}>
-              <div style={{ flex:1 }}>
-                <div style={{ fontSize:14, fontWeight:600, color:C.text, fontFamily:FONT }}>{it.name}</div>
-                {it.horizon_label && <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>{it.horizon_label}</div>}
-              </div>
-              <span style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>{rocksFor(it.id).length} rocks \u00b7 {projForInit(it.id).length} projects</span>
-              <Pill status={it.status} />
-            </Row>
-          ))}
-        </SectionCard>
-      )}
-
-      {selInit && !selRock && !selProj && (
-        <>
-          <div style={{ ...cardWrap, padding:"16px 18px" }}>
-            <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:12 }}>
-              <div style={{ flex:1 }}>
-                <div style={{ fontFamily:SERIF, fontSize:20, color:C.text, marginBottom:4 }}>{selInit.name}</div>
-                {selInit.description && <div style={{ fontSize:13, color:C.text2, fontFamily:FONT, marginBottom:6 }}>{selInit.description}</div>}
-                {selInit.mission_link && <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>Mission link: {selInit.mission_link}</div>}
-              </div>
-              <div style={{ display:"flex", flexDirection:"column", gap:8, alignItems:"flex-end" }}>
-                <Sel value={selInit.status} onChange={v=>{ setStatus("initiatives",selInit.id,v); setSelInit({...selInit,status:v}); }} options={INIT_STATUS} />
-                <button onClick={()=>del("initiatives",selInit.id)} style={{ background:"none", border:"none", color:C.red, fontSize:11, fontFamily:FONT, cursor:"pointer", padding:0 }}>Delete</button>
-              </div>
-            </div>
-          </div>
-          <SectionCard title="Rocks" count={rocksFor(selInit.id).length} onAdd={()=>openModal("rock")} addLabel="Add Rock" empty="No rocks under this initiative yet.">
-            {rocksFor(selInit.id).map(rk=>(
-              <Row key={rk.id} onClick={()=>setSelRock(rk)}>
-                <div style={{ flex:1 }}>
-                  <div style={{ fontSize:14, fontWeight:600, color:C.text, fontFamily:FONT }}>{rk.title}</div>
-                  <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>{rk.quarter||"\u2014"} \u00b7 {projForRock(rk.id).length} projects</div>
-                </div>
-                {typeof rk.progress==="number" && <span style={{ fontSize:11, color:C.text3, fontFamily:MONO }}>{rk.progress}%</span>}
-                <Pill status={rk.status} />
-              </Row>
-            ))}
-          </SectionCard>
-          <SectionCard title="Projects (directly under initiative)" count={projForInit(selInit.id).length} onAdd={()=>openModal("proj")} addLabel="Add Project" empty="No standalone projects under this initiative.">
-            {projForInit(selInit.id).map((pj,idx)=><ProjectRow key={pj.id} p={pj} i={idx} />)}
-          </SectionCard>
-        </>
-      )}
-
-      {selRock && !selProj && (
-        <>
-          <div style={{ ...cardWrap, padding:"16px 18px" }}>
-            <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:12 }}>
-              <div style={{ flex:1 }}>
-                <div style={{ fontFamily:SERIF, fontSize:18, color:C.text, marginBottom:4 }}>{selRock.title}</div>
-                {selRock.description && <div style={{ fontSize:13, color:C.text2, fontFamily:FONT }}>{selRock.description}</div>}
-                <div style={{ fontSize:11, color:C.text3, fontFamily:FONT, marginTop:6 }}>{selRock.quarter||"No quarter"}{selRock.due_date?` \u00b7 due ${selRock.due_date}`:""} \u00b7 {selRock.progress||0}%</div>
-              </div>
-              <div style={{ display:"flex", flexDirection:"column", gap:8, alignItems:"flex-end" }}>
-                <Sel value={selRock.status} onChange={v=>{ setStatus("rocks",selRock.id,v); setSelRock({...selRock,status:v}); }} options={ROCK_STATUS} />
-                <button onClick={()=>del("rocks",selRock.id)} style={{ background:"none", border:"none", color:C.red, fontSize:11, fontFamily:FONT, cursor:"pointer", padding:0 }}>Delete</button>
-              </div>
-            </div>
-          </div>
-          <SectionCard title="Projects" count={projForRock(selRock.id).length} onAdd={()=>openModal("proj")} addLabel="Add Project" empty="No projects under this rock yet.">
-            {projForRock(selRock.id).map((pj,idx)=><ProjectRow key={pj.id} p={pj} i={idx} />)}
-          </SectionCard>
-        </>
-      )}
-
-      {selProj && (
-        <>
-          <div style={{ ...cardWrap, padding:"16px 18px" }}>
-            <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:12 }}>
-              <div style={{ flex:1 }}>
-                <div style={{ fontFamily:SERIF, fontSize:18, color:C.text, marginBottom:4 }}>{selProj.name}</div>
-                {selProj.description && <div style={{ fontSize:13, color:C.text2, fontFamily:FONT }}>{selProj.description}</div>}
-              </div>
-              <div style={{ display:"flex", flexDirection:"column", gap:8, alignItems:"flex-end" }}>
-                <Sel value={selProj.status} onChange={v=>{ setStatus("projects",selProj.id,v); setSelProj({...selProj,status:v}); }} options={PROJ_STATUS} />
-                <button onClick={()=>del("projects",selProj.id)} style={{ background:"none", border:"none", color:C.red, fontSize:11, fontFamily:FONT, cursor:"pointer", padding:0 }}>Delete</button>
-              </div>
-            </div>
-          </div>
-          <SectionCard title="Tasks" count={topTasks.length} onAdd={()=>openModal("task")} addLabel="Add Task" empty="No tasks on this project yet.">
-            {topTasks.map(t=><TaskRow key={t.id} t={t} />)}
-          </SectionCard>
-        </>
-      )}
-
       {openTask && (
-        <PlanTaskModal task={projTasks.find(t=>t.id===openTask.id)||openTask} allTasks={projTasks} members={members}
+        <PlanTaskModal task={tasks.find(t=>t.id===openTask.id)||openTask} allTasks={tasks} members={members}
           onClose={()=>setOpenTask(null)} onUpdate={taskUpdate} onDelete={taskDelete} onAddSub={taskAddSub} />
       )}
 
@@ -4537,7 +4602,8 @@ function PlanningView({ user, onRefresh }) {
       {modal==="rock" && (
         <Modal title="New Rock" onClose={()=>setModal(null)} maxWidth={460}>
           <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
-            <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>Under initiative: <b style={{color:C.text2}}>{selInit?.name}</b></div>
+            <Sel label="Initiative" value={form.initiative_id} onChange={v=>set("initiative_id",v)}
+              options={[{value:"",label:"\u2014 Select an initiative \u2014"}, ...inits.map(it=>({value:it.id,label:it.name}))]} />
             <Field label="Title" value={form.title} onChange={v=>set("title",v)} placeholder="e.g. Close 10 listings this quarter" autoFocus />
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
               <Sel label="Status" value={form.status} onChange={v=>set("status",v)} options={ROCK_STATUS} />
@@ -4549,7 +4615,7 @@ function PlanningView({ user, onRefresh }) {
             </div>
             <Field label="Description" value={form.description} onChange={v=>set("description",v)} placeholder="Optional" />
             <div style={{ display:"flex", gap:10, paddingTop:4 }}>
-              <GoldButton onClick={save} disabled={saving||!(form.title||"").trim()}>{saving?"Saving\u2026":"Add Rock"}</GoldButton>
+              <GoldButton onClick={save} disabled={saving||!(form.title||"").trim()||!form.initiative_id}>{saving?"Saving\u2026":"Add Rock"}</GoldButton>
               <GoldButton onClick={()=>setModal(null)} outline>Cancel</GoldButton>
             </div>
           </div>
@@ -4558,10 +4624,11 @@ function PlanningView({ user, onRefresh }) {
       {modal==="proj" && (
         <Modal title="New Project" onClose={()=>setModal(null)} maxWidth={460}>
           <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
-            <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>Under initiative: <b style={{color:C.text2}}>{selInit?.name}</b></div>
-            <Field label="Name" value={form.name} onChange={v=>set("name",v)} placeholder="e.g. Launch referral program" autoFocus />
+            <Sel label="Initiative" value={form.initiative_id} onChange={v=>{ set("initiative_id",v); set("rock_id",""); }}
+              options={[{value:"",label:"\u2014 Select an initiative \u2014"}, ...inits.map(it=>({value:it.id,label:it.name}))]} />
             <Sel label="Attach to Rock (optional \u2014 inherits its initiative)" value={form.rock_id} onChange={v=>set("rock_id",v)}
-              options={[{value:"",label:"\u2014 None (directly under initiative) \u2014"}, ...rocksFor(selInit?.id).map(r=>({value:r.id,label:r.title}))]} />
+              options={[{value:"",label:"\u2014 None (directly under initiative) \u2014"}, ...rocksFor(form.initiative_id).map(r=>({value:r.id,label:r.title}))]} />
+            <Field label="Name" value={form.name} onChange={v=>set("name",v)} placeholder="e.g. Launch referral program" autoFocus />
             <Sel label="Status" value={form.status} onChange={v=>set("status",v)} options={PROJ_STATUS} />
             <Field label="Description" value={form.description} onChange={v=>set("description",v)} placeholder="Optional" />
             <div style={{ display:"flex", gap:10, paddingTop:4 }}>
@@ -4574,7 +4641,8 @@ function PlanningView({ user, onRefresh }) {
       {modal==="task" && (
         <Modal title="New Task" onClose={()=>setModal(null)} maxWidth={440}>
           <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
-            <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>On project: <b style={{color:C.text2}}>{selProj?.name}</b></div>
+            <Sel label="Project" value={form.project_id} onChange={v=>set("project_id",v)}
+              options={[{value:"",label:"\u2014 Select a project \u2014"}, ...projects.map(p=>({value:p.id,label:p.name}))]} />
             <Field label="Title" value={form.title} onChange={v=>set("title",v)} placeholder="e.g. Draft program terms" autoFocus />
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
               <Sel label="Priority" value={form.priority} onChange={v=>set("priority",v)} options={[{value:"low",label:"Low"},{value:"normal",label:"Normal"},{value:"high",label:"High"},{value:"urgent",label:"Urgent"}]} />
@@ -4582,7 +4650,7 @@ function PlanningView({ user, onRefresh }) {
             </div>
             <Field label="Description" value={form.description} onChange={v=>set("description",v)} placeholder="Optional" />
             <div style={{ display:"flex", gap:10, paddingTop:4 }}>
-              <GoldButton onClick={save} disabled={saving||!(form.title||"").trim()}>{saving?"Saving\u2026":"Add Task"}</GoldButton>
+              <GoldButton onClick={save} disabled={saving||!(form.title||"").trim()||!form.project_id}>{saving?"Saving\u2026":"Add Task"}</GoldButton>
               <GoldButton onClick={()=>setModal(null)} outline>Cancel</GoldButton>
             </div>
           </div>
