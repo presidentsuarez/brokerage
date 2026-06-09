@@ -96,6 +96,7 @@ const NAV = [
   { id:"deals",     label:"Deals",     icon:"🏘️" },
   { id:"contacts",  label:"Contacts",  icon:"👤" },
   { id:"tasks",     label:"Tasks",     icon:"✅" },
+  { id:"planning",  label:"Planning",  icon:"🧭" },
   { id:"calendar",  label:"Calendar",  icon:"📅" },
   { id:"listings",  label:"Listings",  icon:"📋" },
   { id:"buyers",    label:"Buyers",    icon:"🏠" },
@@ -4109,6 +4110,353 @@ function TasksView({ user, tasks, onRefresh }) {
   );
 }
 
+
+
+function PlanningView({ user, onRefresh }) {
+  const isMobile = useIsMobile();
+  const [loading,setLoading]   = useState(true);
+  const [inits,setInits]       = useState([]);
+  const [rocks,setRocks]       = useState([]);
+  const [projects,setProjects] = useState([]);
+  const [myId,setMyId]         = useState(null);
+
+  const [selInit,setSelInit]   = useState(null);
+  const [selRock,setSelRock]   = useState(null);
+  const [selProj,setSelProj]   = useState(null);
+  const [projTasks,setProjTasks] = useState([]);
+
+  const [modal,setModal]   = useState(null);
+  const [saving,setSaving] = useState(false);
+  const [form,setForm]     = useState({});
+  const set = (k,v)=>setForm(f=>({...f,[k]:v}));
+
+  const INIT_STATUS = [{value:"active",label:"Active"},{value:"dormant",label:"Dormant"},{value:"achieved",label:"Achieved"},{value:"killed",label:"Killed"}];
+  const ROCK_STATUS = [{value:"on_track",label:"On Track"},{value:"at_risk",label:"At Risk"},{value:"off_track",label:"Off Track"},{value:"done",label:"Done"}];
+  const PROJ_STATUS = [{value:"active",label:"Active"},{value:"on_hold",label:"On Hold"},{value:"done",label:"Done"}];
+  const SCOLOR = { active:C.green, dormant:C.text3, achieved:C.gold, killed:C.red, on_track:C.green, at_risk:C.amber, off_track:C.red, done:C.blue, on_hold:C.text3 };
+
+  const load = async () => {
+    setLoading(true);
+    const [i,r,p] = await Promise.all([
+      supabase.from("initiatives").select("*").eq("org_id",ORG_ID).order("priority",{ascending:false}).order("created_at"),
+      supabase.from("rocks").select("*").eq("org_id",ORG_ID).order("created_at"),
+      supabase.from("projects").select("*").eq("org_id",ORG_ID).order("created_at"),
+    ]);
+    setInits(i.data||[]); setRocks(r.data||[]); setProjects(p.data||[]);
+    setLoading(false);
+  };
+  useEffect(()=>{ load(); },[]);
+  useEffect(()=>{ (async()=>{
+    if(!user?.email) return;
+    const { data } = await supabase.from("user_profiles").select("id").ilike("email",user.email).maybeSingle();
+    if(data) setMyId(data.id);
+  })(); },[user]);
+
+  const reloadTasks = async (pid) => {
+    const { data } = await supabase.from("tasks").select("*").eq("project_id",pid).order("created_at",{ascending:false});
+    setProjTasks(data||[]);
+  };
+  useEffect(()=>{ if(selProj) reloadTasks(selProj.id); else setProjTasks([]); },[selProj]);
+
+  const rocksFor    = id => rocks.filter(r=>r.initiative_id===id);
+  const projForInit = id => projects.filter(p=>p.initiative_id===id && !p.rock_id);
+  const projForRock = id => projects.filter(p=>p.rock_id===id);
+
+  const openModal = (type) => {
+    if(type==="init") setForm({name:"",description:"",horizon_label:"",status:"active",mission_link:"",priority:0});
+    if(type==="rock") setForm({title:"",description:"",status:"on_track",quarter:"",due_date:"",progress:0,priority:0});
+    if(type==="proj") setForm({name:"",description:"",status:"active",rock_id:selRock?selRock.id:""});
+    if(type==="task") setForm({title:"",description:"",priority:"medium",due_date:"",assigned_to:user?.email||""});
+    setModal(type);
+  };
+
+  const save = async () => {
+    setSaving(true);
+    const owner = myId ? { owner_user_id:myId } : {};
+    try {
+      if(modal==="init"){
+        if(!form.name.trim()) { setSaving(false); return; }
+        await supabase.from("initiatives").insert({ org_id:ORG_ID, ...owner,
+          name:form.name.trim(), description:form.description||null, horizon_label:form.horizon_label||null,
+          status:form.status, mission_link:form.mission_link||null, priority:Number(form.priority)||0 });
+      } else if(modal==="rock"){
+        if(!form.title.trim()) { setSaving(false); return; }
+        await supabase.from("rocks").insert({ org_id:ORG_ID, ...owner, initiative_id:selInit.id,
+          title:form.title.trim(), description:form.description||null, status:form.status,
+          quarter:form.quarter||null, due_date:form.due_date||null,
+          progress:Number(form.progress)||0, priority:Number(form.priority)||0 });
+      } else if(modal==="proj"){
+        if(!form.name.trim()) { setSaving(false); return; }
+        const rk = form.rock_id ? rocks.find(r=>r.id===form.rock_id) : null;
+        const initId = rk ? rk.initiative_id : (selInit?selInit.id:null);
+        await supabase.from("projects").insert({ org_id:ORG_ID, ...owner,
+          initiative_id:initId, rock_id:form.rock_id||null,
+          name:form.name.trim(), description:form.description||null, status:form.status });
+      } else if(modal==="task"){
+        if(!form.title.trim()) { setSaving(false); return; }
+        await supabase.from("tasks").insert({ org_id:ORG_ID, project_id:selProj.id,
+          title:form.title.trim(), description:form.description||null, priority:form.priority,
+          due_date:form.due_date||null, status:"open", assigned_to:form.assigned_to||null,
+          created_by:creatorLabel(user) });
+      }
+      setModal(null);
+      await load();
+      if(selProj) await reloadTasks(selProj.id);
+    } catch(e){ alert("Save failed: "+(e.message||e)); }
+    setSaving(false);
+  };
+
+  const setStatus = async (table,id,status) => { await supabase.from(table).update({status}).eq("id",id); load(); };
+  const del = async (table,id) => {
+    if(!window.confirm("Delete this? Anything nested under it is unlinked, not deleted.")) return;
+    await supabase.from(table).delete().eq("id",id);
+    if(table==="initiatives"){ setSelInit(null); setSelRock(null); setSelProj(null); }
+    if(table==="rocks"){ setSelRock(null); setSelProj(null); }
+    if(table==="projects"){ setSelProj(null); }
+    load();
+  };
+  const toggleTask = async (t) => {
+    await supabase.from("tasks").update({status:t.status==="done"?"open":"done"}).eq("id",t.id);
+    if(selProj) reloadTasks(selProj.id);
+  };
+
+  const crumbBtn = (active)=>({ background:"none", border:"none", padding:0, cursor:"pointer", fontFamily:FONT, fontSize:13, color:active?C.gold:C.text2, fontWeight:active?700:500 });
+  const Pill = ({status})=>(
+    <span style={{ fontSize:10, fontWeight:700, fontFamily:FONT, letterSpacing:"0.04em", textTransform:"uppercase",
+      padding:"2px 8px", borderRadius:20, color:SCOLOR[status]||C.text3, background:(SCOLOR[status]||C.text3)+"22" }}>{(status||"").replace(/_/g," ")}</span>
+  );
+  const hdr = { fontSize:11, fontWeight:700, color:C.text2, fontFamily:FONT, letterSpacing:"0.08em", textTransform:"uppercase" };
+  const cardWrap = { background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden", marginBottom:16 };
+
+  const Row = ({ onClick, children, dim }) => (
+    <div onClick={onClick} style={{ display:"flex", alignItems:"center", gap:12, padding:"12px 18px",
+      borderBottom:`1px solid ${C.border}`, cursor:onClick?"pointer":"default", opacity:dim?0.6:1 }}
+      onMouseEnter={e=>{ if(onClick) e.currentTarget.style.background=C.surface2; }}
+      onMouseLeave={e=>{ e.currentTarget.style.background="transparent"; }}>{children}</div>
+  );
+
+  const SectionCard = ({ title, count, onAdd, addLabel, empty, children }) => (
+    <div style={cardWrap}>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"11px 18px", borderBottom:`1px solid ${C.border}` }}>
+        <span style={hdr}>{title} {typeof count==="number"?`\u00b7 ${count}`:""}</span>
+        {onAdd && <GoldButton onClick={onAdd} small>+ {addLabel}</GoldButton>}
+      </div>
+      {(!children || (Array.isArray(children)&&children.length===0))
+        ? <div style={{ padding:"28px 18px", textAlign:"center", color:C.text3, fontSize:13, fontFamily:FONT }}>{empty}</div>
+        : children}
+    </div>
+  );
+
+  if(loading) return <div style={{ padding:"40px 24px", textAlign:"center", color:C.text3, fontFamily:FONT, fontSize:13 }}>Loading planning\u2026</div>;
+
+  return (
+    <div style={{ padding:"20px 24px" }}>
+      <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap", marginBottom:18 }}>
+        <button onClick={()=>{setSelInit(null);setSelRock(null);setSelProj(null);}} style={crumbBtn(!selInit)}>Initiatives</button>
+        {selInit && <><span style={{color:C.text3}}>{"\u203a"}</span><button onClick={()=>{setSelRock(null);setSelProj(null);}} style={crumbBtn(selInit&&!selRock&&!selProj)}>{selInit.name}</button></>}
+        {selRock && <><span style={{color:C.text3}}>{"\u203a"}</span><button onClick={()=>setSelProj(null)} style={crumbBtn(selRock&&!selProj)}>{selRock.title}</button></>}
+        {selProj && <><span style={{color:C.text3}}>{"\u203a"}</span><span style={{color:C.gold,fontWeight:700,fontFamily:FONT,fontSize:13}}>{selProj.name}</span></>}
+      </div>
+
+      {/* LEVEL 1 — INITIATIVES */}
+      {!selInit && (
+        <SectionCard title="Initiatives" count={inits.length} onAdd={()=>openModal("init")} addLabel="Add Initiative"
+          empty="No initiatives yet. Add your first strategic initiative.">
+          {inits.map(it=>(
+            <Row key={it.id} onClick={()=>setSelInit(it)}>
+              <div style={{ flex:1 }}>
+                <div style={{ fontSize:14, fontWeight:600, color:C.text, fontFamily:FONT }}>{it.name}</div>
+                {it.horizon_label && <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>{it.horizon_label}</div>}
+              </div>
+              <span style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>{rocksFor(it.id).length} rocks \u00b7 {projForInit(it.id).length} projects</span>
+              <Pill status={it.status} />
+            </Row>
+          ))}
+        </SectionCard>
+      )}
+
+      {/* LEVEL 2 — INITIATIVE DETAIL: ROCKS + DIRECT PROJECTS */}
+      {selInit && !selRock && !selProj && (
+        <>
+          <div style={{ ...cardWrap, padding:"16px 18px" }}>
+            <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:12 }}>
+              <div style={{ flex:1 }}>
+                <div style={{ fontFamily:SERIF, fontSize:20, color:C.text, marginBottom:4 }}>{selInit.name}</div>
+                {selInit.description && <div style={{ fontSize:13, color:C.text2, fontFamily:FONT, marginBottom:6 }}>{selInit.description}</div>}
+                {selInit.mission_link && <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>Mission link: {selInit.mission_link}</div>}
+              </div>
+              <div style={{ display:"flex", flexDirection:"column", gap:8, alignItems:"flex-end" }}>
+                <Sel value={selInit.status} onChange={v=>{ setStatus("initiatives",selInit.id,v); setSelInit({...selInit,status:v}); }} options={INIT_STATUS} />
+                <button onClick={()=>del("initiatives",selInit.id)} style={{ background:"none", border:"none", color:C.red, fontSize:11, fontFamily:FONT, cursor:"pointer", padding:0 }}>Delete</button>
+              </div>
+            </div>
+          </div>
+          <SectionCard title="Rocks" count={rocksFor(selInit.id).length} onAdd={()=>openModal("rock")} addLabel="Add Rock"
+            empty="No rocks under this initiative yet.">
+            {rocksFor(selInit.id).map(rk=>(
+              <Row key={rk.id} onClick={()=>setSelRock(rk)}>
+                <div style={{ flex:1 }}>
+                  <div style={{ fontSize:14, fontWeight:600, color:C.text, fontFamily:FONT }}>{rk.title}</div>
+                  <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>{rk.quarter||"\u2014"} \u00b7 {projForRock(rk.id).length} projects</div>
+                </div>
+                {typeof rk.progress==="number" && <span style={{ fontSize:11, color:C.text3, fontFamily:MONO }}>{rk.progress}%</span>}
+                <Pill status={rk.status} />
+              </Row>
+            ))}
+          </SectionCard>
+          <SectionCard title="Projects (directly under initiative)" count={projForInit(selInit.id).length} onAdd={()=>openModal("proj")} addLabel="Add Project"
+            empty="No standalone projects under this initiative.">
+            {projForInit(selInit.id).map(pj=>(
+              <Row key={pj.id} onClick={()=>setSelProj(pj)}>
+                <div style={{ flex:1 }}><div style={{ fontSize:14, fontWeight:600, color:C.text, fontFamily:FONT }}>{pj.name}</div></div>
+                <Pill status={pj.status} />
+              </Row>
+            ))}
+          </SectionCard>
+        </>
+      )}
+
+      {/* LEVEL 3 — ROCK DETAIL: PROJECTS */}
+      {selRock && !selProj && (
+        <>
+          <div style={{ ...cardWrap, padding:"16px 18px" }}>
+            <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:12 }}>
+              <div style={{ flex:1 }}>
+                <div style={{ fontFamily:SERIF, fontSize:18, color:C.text, marginBottom:4 }}>{selRock.title}</div>
+                {selRock.description && <div style={{ fontSize:13, color:C.text2, fontFamily:FONT }}>{selRock.description}</div>}
+                <div style={{ fontSize:11, color:C.text3, fontFamily:FONT, marginTop:6 }}>{selRock.quarter||"No quarter"}{selRock.due_date?` \u00b7 due ${selRock.due_date}`:""} \u00b7 {selRock.progress||0}%</div>
+              </div>
+              <div style={{ display:"flex", flexDirection:"column", gap:8, alignItems:"flex-end" }}>
+                <Sel value={selRock.status} onChange={v=>{ setStatus("rocks",selRock.id,v); setSelRock({...selRock,status:v}); }} options={ROCK_STATUS} />
+                <button onClick={()=>del("rocks",selRock.id)} style={{ background:"none", border:"none", color:C.red, fontSize:11, fontFamily:FONT, cursor:"pointer", padding:0 }}>Delete</button>
+              </div>
+            </div>
+          </div>
+          <SectionCard title="Projects" count={projForRock(selRock.id).length} onAdd={()=>openModal("proj")} addLabel="Add Project"
+            empty="No projects under this rock yet.">
+            {projForRock(selRock.id).map(pj=>(
+              <Row key={pj.id} onClick={()=>setSelProj(pj)}>
+                <div style={{ flex:1 }}><div style={{ fontSize:14, fontWeight:600, color:C.text, fontFamily:FONT }}>{pj.name}</div></div>
+                <Pill status={pj.status} />
+              </Row>
+            ))}
+          </SectionCard>
+        </>
+      )}
+
+      {/* LEVEL 4 — PROJECT DETAIL: TASKS */}
+      {selProj && (
+        <>
+          <div style={{ ...cardWrap, padding:"16px 18px" }}>
+            <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:12 }}>
+              <div style={{ flex:1 }}>
+                <div style={{ fontFamily:SERIF, fontSize:18, color:C.text, marginBottom:4 }}>{selProj.name}</div>
+                {selProj.description && <div style={{ fontSize:13, color:C.text2, fontFamily:FONT }}>{selProj.description}</div>}
+              </div>
+              <div style={{ display:"flex", flexDirection:"column", gap:8, alignItems:"flex-end" }}>
+                <Sel value={selProj.status} onChange={v=>{ setStatus("projects",selProj.id,v); setSelProj({...selProj,status:v}); }} options={PROJ_STATUS} />
+                <button onClick={()=>del("projects",selProj.id)} style={{ background:"none", border:"none", color:C.red, fontSize:11, fontFamily:FONT, cursor:"pointer", padding:0 }}>Delete</button>
+              </div>
+            </div>
+          </div>
+          <SectionCard title="Tasks" count={projTasks.length} onAdd={()=>openModal("task")} addLabel="Add Task"
+            empty="No tasks on this project yet.">
+            {projTasks.map(t=>(
+              <Row key={t.id}>
+                <button onClick={()=>toggleTask(t)} style={{ width:18, height:18, borderRadius:4, flexShrink:0, cursor:"pointer", padding:0,
+                  border:`2px solid ${t.status==="done"?C.gold:C.border2}`, background:t.status==="done"?C.gold:"transparent",
+                  display:"flex", alignItems:"center", justifyContent:"center" }}>
+                  {t.status==="done"&&<span style={{ fontSize:9, color:"#0a0a0a", fontWeight:900 }}>{"\u2713"}</span>}
+                </button>
+                <div style={{ flex:1 }}>
+                  <div style={{ fontSize:13, fontWeight:500, fontFamily:FONT, color:t.status==="done"?C.text3:C.text, textDecoration:t.status==="done"?"line-through":"none" }}>{t.title}</div>
+                  {t.description&&<div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>{t.description}</div>}
+                </div>
+                {t.due_date&&<span style={{ fontSize:11, color:C.text3, fontFamily:MONO }}>{t.due_date}</span>}
+              </Row>
+            ))}
+          </SectionCard>
+        </>
+      )}
+
+      {/* MODALS */}
+      {modal==="init" && (
+        <Modal title="New Initiative" onClose={()=>setModal(null)} maxWidth={460}>
+          <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+            <Field label="Name" value={form.name} onChange={v=>set("name",v)} placeholder="e.g. Dominate Tampa luxury market" autoFocus />
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+              <Field label="Horizon" value={form.horizon_label} onChange={v=>set("horizon_label",v)} placeholder="e.g. 3-year" />
+              <Sel label="Status" value={form.status} onChange={v=>set("status",v)} options={INIT_STATUS} />
+            </div>
+            <Field label="Priority (number)" value={form.priority} onChange={v=>set("priority",v)} type="text" placeholder="0" />
+            <Field label="Mission link" value={form.mission_link} onChange={v=>set("mission_link",v)} placeholder="Optional" />
+            <Field label="Description" value={form.description} onChange={v=>set("description",v)} placeholder="Optional" />
+            <div style={{ display:"flex", gap:10, paddingTop:4 }}>
+              <GoldButton onClick={save} disabled={saving||!(form.name||"").trim()}>{saving?"Saving\u2026":"Add Initiative"}</GoldButton>
+              <GoldButton onClick={()=>setModal(null)} outline>Cancel</GoldButton>
+            </div>
+          </div>
+        </Modal>
+      )}
+      {modal==="rock" && (
+        <Modal title="New Rock" onClose={()=>setModal(null)} maxWidth={460}>
+          <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+            <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>Under initiative: <b style={{color:C.text2}}>{selInit?.name}</b></div>
+            <Field label="Title" value={form.title} onChange={v=>set("title",v)} placeholder="e.g. Close 10 listings this quarter" autoFocus />
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+              <Sel label="Status" value={form.status} onChange={v=>set("status",v)} options={ROCK_STATUS} />
+              <Field label="Quarter" value={form.quarter} onChange={v=>set("quarter",v)} placeholder="e.g. Q3 2026" />
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+              <Field label="Due date" value={form.due_date} onChange={v=>set("due_date",v)} type="date" />
+              <Field label="Progress %" value={form.progress} onChange={v=>set("progress",v)} placeholder="0" />
+            </div>
+            <Field label="Description" value={form.description} onChange={v=>set("description",v)} placeholder="Optional" />
+            <div style={{ display:"flex", gap:10, paddingTop:4 }}>
+              <GoldButton onClick={save} disabled={saving||!(form.title||"").trim()}>{saving?"Saving\u2026":"Add Rock"}</GoldButton>
+              <GoldButton onClick={()=>setModal(null)} outline>Cancel</GoldButton>
+            </div>
+          </div>
+        </Modal>
+      )}
+      {modal==="proj" && (
+        <Modal title="New Project" onClose={()=>setModal(null)} maxWidth={460}>
+          <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+            <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>Under initiative: <b style={{color:C.text2}}>{selInit?.name}</b></div>
+            <Field label="Name" value={form.name} onChange={v=>set("name",v)} placeholder="e.g. Launch referral program" autoFocus />
+            <Sel label="Attach to Rock (optional \u2014 inherits its initiative)" value={form.rock_id}
+              onChange={v=>set("rock_id",v)}
+              options={[{value:"",label:"\u2014 None (directly under initiative) \u2014"}, ...rocksFor(selInit?.id).map(r=>({value:r.id,label:r.title}))]} />
+            <Sel label="Status" value={form.status} onChange={v=>set("status",v)} options={PROJ_STATUS} />
+            <Field label="Description" value={form.description} onChange={v=>set("description",v)} placeholder="Optional" />
+            <div style={{ display:"flex", gap:10, paddingTop:4 }}>
+              <GoldButton onClick={save} disabled={saving||!(form.name||"").trim()}>{saving?"Saving\u2026":"Add Project"}</GoldButton>
+              <GoldButton onClick={()=>setModal(null)} outline>Cancel</GoldButton>
+            </div>
+          </div>
+        </Modal>
+      )}
+      {modal==="task" && (
+        <Modal title="New Task" onClose={()=>setModal(null)} maxWidth={440}>
+          <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+            <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>On project: <b style={{color:C.text2}}>{selProj?.name}</b></div>
+            <Field label="Title" value={form.title} onChange={v=>set("title",v)} placeholder="e.g. Draft program terms" autoFocus />
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+              <Sel label="Priority" value={form.priority} onChange={v=>set("priority",v)} options={[{value:"high",label:"High"},{value:"medium",label:"Medium"},{value:"low",label:"Low"}]} />
+              <Field label="Due date" value={form.due_date} onChange={v=>set("due_date",v)} type="date" />
+            </div>
+            <Field label="Assigned to" value={form.assigned_to} onChange={v=>set("assigned_to",v)} placeholder="email" />
+            <Field label="Description" value={form.description} onChange={v=>set("description",v)} placeholder="Optional" />
+            <div style={{ display:"flex", gap:10, paddingTop:4 }}>
+              <GoldButton onClick={save} disabled={saving||!(form.title||"").trim()}>{saving?"Saving\u2026":"Add Task"}</GoldButton>
+              <GoldButton onClick={()=>setModal(null)} outline>Cancel</GoldButton>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
 
 
 function NotesView({ user }) {
@@ -8410,6 +8758,7 @@ export default function App() {
           {view==="deals"    &&<DealsView     user={cu} deals={deals}    onRefresh={loadData} />}
           {view==="contacts" &&<ContactsView  user={cu} contacts={contacts} onRefresh={loadData} />}
           {view==="tasks"    &&<TasksView     user={cu} tasks={tasks}    onRefresh={loadData} />}
+          {view==="planning" &&<PlanningView  user={cu} onRefresh={loadData} />}
           {view==="settings" &&<SettingsView  user={cu} onProfileSaved={onProfileSaved} theme={theme} onToggleTheme={toggleTheme} />}
           {view==="notepad"  &&<NotesView     user={cu} />}
           {view==="robots"   &&<RobotsView    user={cu} deals={deals} contacts={contacts} tasks={tasks} />}
