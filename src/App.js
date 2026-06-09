@@ -4112,18 +4112,145 @@ function TasksView({ user, tasks, onRefresh }) {
 
 
 
+function PlanTaskModal({ task, allTasks, members, onClose, onUpdate, onDelete, onAddSub }) {
+  const [form,setForm] = useState({
+    title:task.title||"", description:task.description||"", status:task.status||"todo",
+    priority:task.priority||"normal", start_date:task.start_date||"", due_date:task.due_date||"",
+    assignee_ids:Array.isArray(task.assignee_ids)?task.assignee_ids:[], progress:task.progress||0 });
+  const [newSub,setNewSub] = useState("");
+  const [newComment,setNewComment] = useState("");
+  const [comments,setComments] = useState(task.comments||[]);
+  const [pickerOpen,setPickerOpen] = useState(false);
+  const subtasks = allTasks.filter(t=>t.parent_task_id===task.id);
+
+  const save = (updates) => { setForm({...form,...updates}); onUpdate(task.id,updates); };
+  const onStatus = (next) => {
+    const u = next==="done" ? { status:"done", progress:100, completed_at:new Date().toISOString() }
+                            : { status:next, completed_at:null };
+    save(u);
+  };
+  const toggleAssignee = (uid) => {
+    const cur = Array.isArray(form.assignee_ids)?form.assignee_ids:[];
+    const next = cur.includes(uid)?cur.filter(x=>x!==uid):[...cur,uid];
+    const names = members.filter(m=>next.includes(m.id)).map(m=>m.full_name||m.email||"\u2014");
+    save({ assignee_ids:next, assigned_to:names.join(", ") });
+  };
+  const selected = members.filter(m=>Array.isArray(form.assignee_ids)&&form.assignee_ids.includes(m.id));
+  const addComment = async () => {
+    if(!newComment.trim()) return;
+    const updated = [...comments,{text:newComment,date:new Date().toISOString()}];
+    setComments(updated); setNewComment("");
+    onUpdate(task.id,{comments:updated});
+  };
+  const fmtDate = d => d ? new Date(d).toLocaleString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}) : "";
+
+  const inp = { width:"100%", padding:"8px 12px", fontSize:13, fontFamily:FONT, border:`1px solid ${C.border2}`,
+    borderRadius:7, outline:"none", background:C.surface2, color:C.text, boxSizing:"border-box" };
+  const lbl = { display:"block", fontSize:10, fontWeight:700, color:C.text2, marginBottom:3, textTransform:"uppercase", letterSpacing:"0.06em", fontFamily:FONT };
+
+  return (
+    <div onClick={onClose} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.6)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:1000, padding:12 }}>
+      <div onClick={e=>e.stopPropagation()} style={{ background:C.surface, borderRadius:16, maxWidth:620, width:"100%", maxHeight:"90vh", overflow:"auto", padding:24, border:`1px solid ${C.border}` }}>
+        <div style={{ marginBottom:16 }}>
+          <input value={form.title} onChange={e=>setForm({...form,title:e.target.value})} onBlur={()=>save({title:form.title})}
+            style={{ width:"100%", border:"none", background:"transparent", fontSize:18, fontWeight:700, color:C.text, fontFamily:SERIF, outline:"none" }} />
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:14 }}>
+          <div><label style={lbl}>Status</label>
+            <select value={form.status} onChange={e=>onStatus(e.target.value)} style={{...inp,cursor:"pointer"}}>
+              <option value="todo">To Do</option><option value="in-progress">In Progress</option><option value="review">Review</option><option value="done">Done</option>
+            </select></div>
+          <div><label style={lbl}>Priority</label>
+            <select value={form.priority} onChange={e=>save({priority:e.target.value})} style={{...inp,cursor:"pointer"}}>
+              <option value="low">Low</option><option value="normal">Normal</option><option value="high">High</option><option value="urgent">Urgent</option>
+            </select></div>
+          <div><label style={lbl}>Start</label><input type="date" value={form.start_date||""} onChange={e=>save({start_date:e.target.value||null})} style={inp} /></div>
+          <div><label style={lbl}>Due</label><input type="date" value={form.due_date||""} onChange={e=>save({due_date:e.target.value||null})} style={inp} /></div>
+        </div>
+        <div style={{ marginBottom:14, position:"relative" }}>
+          <label style={lbl}>Assignee{selected.length>1?"s":""}</label>
+          <div onClick={()=>setPickerOpen(v=>!v)} style={{...inp, cursor:"pointer", minHeight:36, display:"flex", flexWrap:"wrap", gap:6, alignItems:"center" }}>
+            {selected.length===0 ? <span style={{ color:C.text3, fontSize:13 }}>Unassigned</span>
+              : selected.map(m=>(
+                <span key={m.id} style={{ display:"inline-flex", alignItems:"center", gap:5, background:C.goldDim, color:C.gold, border:`1px solid ${C.goldBorder}`, borderRadius:20, padding:"2px 8px", fontSize:11, fontWeight:700, fontFamily:FONT }}>
+                  {m.full_name||m.email}
+                  <button onClick={e=>{e.stopPropagation();toggleAssignee(m.id);}} style={{ background:"transparent", border:"none", color:C.gold, fontSize:12, cursor:"pointer", padding:0, lineHeight:1 }}>{"\u00d7"}</button>
+                </span>))}
+          </div>
+          {pickerOpen && (
+            <div style={{ position:"absolute", top:"100%", left:0, right:0, marginTop:4, background:C.surface, border:`1px solid ${C.border2}`, borderRadius:8, zIndex:5, maxHeight:220, overflow:"auto", boxShadow:"0 8px 24px rgba(0,0,0,0.4)" }}>
+              {members.map(m=>{ const sel=form.assignee_ids.includes(m.id); return (
+                <button key={m.id} onClick={()=>toggleAssignee(m.id)} style={{ width:"100%", display:"flex", alignItems:"center", gap:10, padding:"9px 12px", border:"none", background:sel?C.goldDim:"transparent", cursor:"pointer", textAlign:"left", borderBottom:`1px solid ${C.border}`, fontSize:13, color:sel?C.gold:C.text, fontWeight:sel?700:500, fontFamily:FONT }}>
+                  <span style={{ width:16, height:16, borderRadius:4, border:`2px solid ${sel?C.gold:C.border2}`, background:sel?C.gold:"transparent", flexShrink:0 }} />
+                  {m.full_name||m.email}
+                </button>); })}
+            </div>
+          )}
+        </div>
+        <div style={{ marginBottom:14 }}>
+          <label style={lbl}>Progress \u00b7 {form.progress}%</label>
+          <input type="range" min="0" max="100" step="5" value={form.progress}
+            onChange={e=>setForm({...form,progress:Number(e.target.value)})}
+            onMouseUp={()=>save({progress:form.progress})} onTouchEnd={()=>save({progress:form.progress})}
+            style={{ width:"100%", accentColor:C.gold }} />
+        </div>
+        <div style={{ marginBottom:14 }}>
+          <label style={lbl}>Description</label>
+          <textarea value={form.description} onChange={e=>setForm({...form,description:e.target.value})} onBlur={()=>save({description:form.description})}
+            rows={3} style={{...inp, resize:"vertical", fontFamily:FONT }} />
+        </div>
+        <div style={{ marginBottom:14 }}>
+          <label style={lbl}>Subtasks ({subtasks.length})</label>
+          {subtasks.map(st=>(
+            <div key={st.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"6px 0", borderBottom:`1px solid ${C.border}` }}>
+              <button onClick={()=>onUpdate(st.id,{status:st.status==="done"?"todo":"done"})} style={{ width:16, height:16, borderRadius:4, border:`2px solid ${st.status==="done"?C.gold:C.border2}`, background:st.status==="done"?C.gold:"transparent", cursor:"pointer", flexShrink:0 }}>
+                {st.status==="done"&&<span style={{ color:"#0a0a0a", fontSize:9, fontWeight:900 }}>{"\u2713"}</span>}
+              </button>
+              <span style={{ flex:1, fontSize:12, color:C.text, fontFamily:FONT, textDecoration:st.status==="done"?"line-through":"none" }}>{st.title}</span>
+              <button onClick={()=>onDelete(st.id)} style={{ background:"none", border:"none", cursor:"pointer", fontSize:11, color:C.red }}>{"\u2715"}</button>
+            </div>
+          ))}
+          <div style={{ display:"flex", gap:6, marginTop:8 }}>
+            <input value={newSub} onChange={e=>setNewSub(e.target.value)} onKeyDown={e=>{ if(e.key==="Enter"&&newSub.trim()){ onAddSub(newSub.trim()); setNewSub(""); } }} placeholder="Add subtask\u2026" style={{...inp, flex:1 }} />
+            <GoldButton small onClick={()=>{ if(newSub.trim()){ onAddSub(newSub.trim()); setNewSub(""); } }} disabled={!newSub.trim()}>+</GoldButton>
+          </div>
+        </div>
+        <div style={{ marginBottom:14 }}>
+          <label style={lbl}>Comments ({comments.length})</label>
+          {comments.map((c,i)=>(
+            <div key={i} style={{ background:C.surface2, borderRadius:8, padding:"8px 12px", marginBottom:6 }}>
+              <div style={{ fontSize:12, color:C.text, fontFamily:FONT }}>{c.text}</div>
+              <div style={{ fontSize:9, color:C.text3, marginTop:3, fontFamily:MONO }}>{fmtDate(c.date)}</div>
+            </div>
+          ))}
+          <div style={{ display:"flex", gap:6, marginTop:6 }}>
+            <input value={newComment} onChange={e=>setNewComment(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addComment()} placeholder="Add comment\u2026" style={{...inp, flex:1 }} />
+            <GoldButton small onClick={addComment} disabled={!newComment.trim()}>+</GoldButton>
+          </div>
+        </div>
+        <div style={{ display:"flex", justifyContent:"space-between", gap:8, marginTop:16, paddingTop:16, borderTop:`1px solid ${C.border}` }}>
+          <GoldButton danger onClick={()=>{ if(window.confirm("Delete task?")){ onDelete(task.id); onClose(); } }}>Delete</GoldButton>
+          <GoldButton onClick={onClose}>Done</GoldButton>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PlanningView({ user, onRefresh }) {
   const isMobile = useIsMobile();
   const [loading,setLoading]   = useState(true);
   const [inits,setInits]       = useState([]);
   const [rocks,setRocks]       = useState([]);
   const [projects,setProjects] = useState([]);
+  const [members,setMembers]   = useState([]);
   const [myId,setMyId]         = useState(null);
 
   const [selInit,setSelInit]   = useState(null);
   const [selRock,setSelRock]   = useState(null);
   const [selProj,setSelProj]   = useState(null);
   const [projTasks,setProjTasks] = useState([]);
+  const [openTask,setOpenTask] = useState(null);
 
   const [modal,setModal]   = useState(null);
   const [saving,setSaving] = useState(false);
@@ -4134,15 +4261,17 @@ function PlanningView({ user, onRefresh }) {
   const ROCK_STATUS = [{value:"on_track",label:"On Track"},{value:"at_risk",label:"At Risk"},{value:"off_track",label:"Off Track"},{value:"done",label:"Done"}];
   const PROJ_STATUS = [{value:"active",label:"Active"},{value:"on_hold",label:"On Hold"},{value:"done",label:"Done"}];
   const SCOLOR = { active:C.green, dormant:C.text3, achieved:C.gold, killed:C.red, on_track:C.green, at_risk:C.amber, off_track:C.red, done:C.blue, on_hold:C.text3 };
+  const PCOL = { urgent:C.red, high:C.amber, normal:C.blue, low:C.text3 };
 
   const load = async () => {
     setLoading(true);
-    const [i,r,p] = await Promise.all([
+    const [i,r,p,m] = await Promise.all([
       supabase.from("initiatives").select("*").eq("org_id",ORG_ID).order("priority",{ascending:false}).order("created_at"),
       supabase.from("rocks").select("*").eq("org_id",ORG_ID).order("created_at"),
       supabase.from("projects").select("*").eq("org_id",ORG_ID).order("created_at"),
+      supabase.from("user_profiles").select("id, full_name, email").order("full_name"),
     ]);
-    setInits(i.data||[]); setRocks(r.data||[]); setProjects(p.data||[]);
+    setInits(i.data||[]); setRocks(r.data||[]); setProjects(p.data||[]); setMembers(m.data||[]);
     setLoading(false);
   };
   useEffect(()=>{ load(); },[]);
@@ -4158,6 +4287,8 @@ function PlanningView({ user, onRefresh }) {
   };
   useEffect(()=>{ if(selProj) reloadTasks(selProj.id); else setProjTasks([]); },[selProj]);
 
+  const initiativeById = id => inits.find(x=>x.id===id);
+  const rockById       = id => rocks.find(x=>x.id===id);
   const rocksFor    = id => rocks.filter(r=>r.initiative_id===id);
   const projForInit = id => projects.filter(p=>p.initiative_id===id && !p.rock_id);
   const projForRock = id => projects.filter(p=>p.rock_id===id);
@@ -4166,7 +4297,7 @@ function PlanningView({ user, onRefresh }) {
     if(type==="init") setForm({name:"",description:"",horizon_label:"",status:"active",mission_link:"",priority:0});
     if(type==="rock") setForm({title:"",description:"",status:"on_track",quarter:"",due_date:"",progress:0,priority:0});
     if(type==="proj") setForm({name:"",description:"",status:"active",rock_id:selRock?selRock.id:""});
-    if(type==="task") setForm({title:"",description:"",priority:"medium",due_date:"",assigned_to:user?.email||""});
+    if(type==="task") setForm({title:"",description:"",priority:"normal",due_date:"",start_date:""});
     setModal(type);
   };
 
@@ -4175,32 +4306,21 @@ function PlanningView({ user, onRefresh }) {
     const owner = myId ? { owner_user_id:myId } : {};
     try {
       if(modal==="init"){
-        if(!form.name.trim()) { setSaving(false); return; }
-        await supabase.from("initiatives").insert({ org_id:ORG_ID, ...owner,
-          name:form.name.trim(), description:form.description||null, horizon_label:form.horizon_label||null,
-          status:form.status, mission_link:form.mission_link||null, priority:Number(form.priority)||0 });
+        if(!form.name.trim()){ setSaving(false); return; }
+        await supabase.from("initiatives").insert({ org_id:ORG_ID, ...owner, name:form.name.trim(), description:form.description||null, horizon_label:form.horizon_label||null, status:form.status, mission_link:form.mission_link||null, priority:Number(form.priority)||0 });
       } else if(modal==="rock"){
-        if(!form.title.trim()) { setSaving(false); return; }
-        await supabase.from("rocks").insert({ org_id:ORG_ID, ...owner, initiative_id:selInit.id,
-          title:form.title.trim(), description:form.description||null, status:form.status,
-          quarter:form.quarter||null, due_date:form.due_date||null,
-          progress:Number(form.progress)||0, priority:Number(form.priority)||0 });
+        if(!form.title.trim()){ setSaving(false); return; }
+        await supabase.from("rocks").insert({ org_id:ORG_ID, ...owner, initiative_id:selInit.id, title:form.title.trim(), description:form.description||null, status:form.status, quarter:form.quarter||null, due_date:form.due_date||null, progress:Number(form.progress)||0, priority:Number(form.priority)||0 });
       } else if(modal==="proj"){
-        if(!form.name.trim()) { setSaving(false); return; }
+        if(!form.name.trim()){ setSaving(false); return; }
         const rk = form.rock_id ? rocks.find(r=>r.id===form.rock_id) : null;
         const initId = rk ? rk.initiative_id : (selInit?selInit.id:null);
-        await supabase.from("projects").insert({ org_id:ORG_ID, ...owner,
-          initiative_id:initId, rock_id:form.rock_id||null,
-          name:form.name.trim(), description:form.description||null, status:form.status });
+        await supabase.from("projects").insert({ org_id:ORG_ID, ...owner, initiative_id:initId, rock_id:form.rock_id||null, name:form.name.trim(), description:form.description||null, status:form.status });
       } else if(modal==="task"){
-        if(!form.title.trim()) { setSaving(false); return; }
-        await supabase.from("tasks").insert({ org_id:ORG_ID, project_id:selProj.id,
-          title:form.title.trim(), description:form.description||null, priority:form.priority,
-          due_date:form.due_date||null, status:"open", assigned_to:form.assigned_to||null,
-          created_by:creatorLabel(user) });
+        if(!form.title.trim()){ setSaving(false); return; }
+        await supabase.from("tasks").insert({ org_id:ORG_ID, project_id:selProj.id, title:form.title.trim(), description:form.description||null, priority:form.priority, due_date:form.due_date||null, start_date:form.start_date||null, status:"todo", progress:0, created_by:creatorLabel(user) });
       }
-      setModal(null);
-      await load();
+      setModal(null); await load();
       if(selProj) await reloadTasks(selProj.id);
     } catch(e){ alert("Save failed: "+(e.message||e)); }
     setSaving(false);
@@ -4215,26 +4335,25 @@ function PlanningView({ user, onRefresh }) {
     if(table==="projects"){ setSelProj(null); }
     load();
   };
-  const toggleTask = async (t) => {
-    await supabase.from("tasks").update({status:t.status==="done"?"open":"done"}).eq("id",t.id);
-    if(selProj) reloadTasks(selProj.id);
-  };
+
+  // task handlers for the modal
+  const taskUpdate = async (id,updates) => { await supabase.from("tasks").update(updates).eq("id",id); if(selProj) reloadTasks(selProj.id); };
+  const taskDelete = async (id) => { await supabase.from("tasks").delete().eq("id",id); if(selProj) reloadTasks(selProj.id); setOpenTask(t=>t&&t.id===id?null:t); };
+  const taskAddSub = async (title) => { await supabase.from("tasks").insert({ org_id:ORG_ID, project_id:selProj.id, parent_task_id:openTask.id, title, status:"todo", priority:"normal", progress:0, created_by:creatorLabel(user) }); if(selProj) reloadTasks(selProj.id); };
+  const quickToggle = async (t) => { const u = t.status==="done"?{status:"todo",completed_at:null}:{status:"done",progress:100,completed_at:new Date().toISOString()}; await supabase.from("tasks").update(u).eq("id",t.id); if(selProj) reloadTasks(selProj.id); };
 
   const crumbBtn = (active)=>({ background:"none", border:"none", padding:0, cursor:"pointer", fontFamily:FONT, fontSize:13, color:active?C.gold:C.text2, fontWeight:active?700:500 });
   const Pill = ({status})=>(
-    <span style={{ fontSize:10, fontWeight:700, fontFamily:FONT, letterSpacing:"0.04em", textTransform:"uppercase",
-      padding:"2px 8px", borderRadius:20, color:SCOLOR[status]||C.text3, background:(SCOLOR[status]||C.text3)+"22" }}>{(status||"").replace(/_/g," ")}</span>
+    <span style={{ fontSize:10, fontWeight:700, fontFamily:FONT, letterSpacing:"0.04em", textTransform:"uppercase", padding:"2px 8px", borderRadius:20, color:SCOLOR[status]||C.text3, background:(SCOLOR[status]||C.text3)+"22" }}>{(status||"").replace(/_/g," ")}</span>
   );
   const hdr = { fontSize:11, fontWeight:700, color:C.text2, fontFamily:FONT, letterSpacing:"0.08em", textTransform:"uppercase" };
   const cardWrap = { background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden", marginBottom:16 };
 
-  const Row = ({ onClick, children, dim }) => (
-    <div onClick={onClick} style={{ display:"flex", alignItems:"center", gap:12, padding:"12px 18px",
-      borderBottom:`1px solid ${C.border}`, cursor:onClick?"pointer":"default", opacity:dim?0.6:1 }}
+  const Row = ({ onClick, children }) => (
+    <div onClick={onClick} style={{ display:"flex", alignItems:"center", gap:12, padding:"12px 18px", borderBottom:`1px solid ${C.border}`, cursor:onClick?"pointer":"default" }}
       onMouseEnter={e=>{ if(onClick) e.currentTarget.style.background=C.surface2; }}
       onMouseLeave={e=>{ e.currentTarget.style.background="transparent"; }}>{children}</div>
   );
-
   const SectionCard = ({ title, count, onAdd, addLabel, empty, children }) => (
     <div style={cardWrap}>
       <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"11px 18px", borderBottom:`1px solid ${C.border}` }}>
@@ -4247,7 +4366,52 @@ function PlanningView({ user, onRefresh }) {
     </div>
   );
 
+  // Suarez-matched project row: numbered badge, parent chips, description, standalone tag, status
+  const ProjectRow = ({ p, i }) => {
+    const parentRock = p.rock_id ? rockById(p.rock_id) : null;
+    const parentInit = p.initiative_id ? initiativeById(p.initiative_id) : (parentRock?.initiative_id ? initiativeById(parentRock.initiative_id) : null);
+    return (
+      <div key={p.id} onClick={()=>setSelProj(p)} style={{ padding:"12px 18px", borderBottom:`1px solid ${C.border}`, display:"flex", alignItems:"flex-start", gap:12, cursor:"pointer" }}
+        onMouseEnter={e=>{ e.currentTarget.style.background=C.surface2; }} onMouseLeave={e=>{ e.currentTarget.style.background="transparent"; }}>
+        <div style={{ width:26, height:26, borderRadius:7, background:`linear-gradient(135deg, ${C.gold}, ${C.goldLight})`, color:"#0a0a0a", display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:800, fontFamily:SERIF, flexShrink:0 }}>{i+1}</div>
+        <div style={{ flex:1, minWidth:0 }}>
+          {(parentInit||parentRock) && (
+            <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:3, fontSize:9.5, fontWeight:700, letterSpacing:"0.02em", fontFamily:FONT, overflow:"hidden" }}>
+              {parentInit && <span style={{ color:C.blue, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{"\ud83c\udfaf"} {parentInit.name}</span>}
+              {parentInit && parentRock && <span style={{ color:C.text3 }}>{"\u203a"}</span>}
+              {parentRock && <span style={{ color:C.amber, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{"\ud83e\udea8"} {parentRock.title}</span>}
+            </div>
+          )}
+          <div style={{ fontSize:13, fontWeight:700, color:C.text, fontFamily:FONT }}>{p.name}</div>
+          {p.description && <div style={{ fontSize:11, color:C.text3, marginTop:2, lineHeight:1.45, fontFamily:FONT }}>{p.description}</div>}
+          {!parentInit && !parentRock && <div style={{ fontSize:9, color:C.text3, fontWeight:700, marginTop:3, letterSpacing:"0.04em", textTransform:"uppercase", fontFamily:FONT }}>Standalone</div>}
+        </div>
+        {p.status && <span style={{ fontSize:9, fontWeight:800, color:C.text2, background:C.surface2, border:`1px solid ${C.border2}`, borderRadius:5, padding:"3px 8px", letterSpacing:"0.04em", textTransform:"uppercase", flexShrink:0, fontFamily:FONT }}>{p.status}</span>}
+      </div>
+    );
+  };
+
+  // Suarez-matched task row: priority dot, title, due date, clickable -> modal
+  const TaskRow = ({ t }) => (
+    <div style={{ display:"flex", alignItems:"center", gap:12, padding:"11px 18px", borderBottom:`1px solid ${C.border}`, cursor:"pointer" }}
+      onClick={()=>setOpenTask(t)}
+      onMouseEnter={e=>{ e.currentTarget.style.background=C.surface2; }} onMouseLeave={e=>{ e.currentTarget.style.background="transparent"; }}>
+      <button onClick={e=>{ e.stopPropagation(); quickToggle(t); }} style={{ width:18, height:18, borderRadius:4, flexShrink:0, cursor:"pointer", padding:0, border:`2px solid ${t.status==="done"?C.gold:C.border2}`, background:t.status==="done"?C.gold:"transparent", display:"flex", alignItems:"center", justifyContent:"center" }}>
+        {t.status==="done"&&<span style={{ fontSize:9, color:"#0a0a0a", fontWeight:900 }}>{"\u2713"}</span>}
+      </button>
+      <div style={{ flex:1, minWidth:0 }}>
+        <div style={{ fontSize:13, fontWeight:500, fontFamily:FONT, color:t.status==="done"?C.text3:C.text, textDecoration:t.status==="done"?"line-through":"none" }}>{t.title}</div>
+        {t.assigned_to && <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>{t.assigned_to}</div>}
+      </div>
+      {typeof t.progress==="number" && t.progress>0 && t.status!=="done" && <span style={{ fontSize:11, color:C.text3, fontFamily:MONO }}>{t.progress}%</span>}
+      <div style={{ width:7, height:7, borderRadius:"50%", background:PCOL[t.priority]||C.text3, flexShrink:0 }} />
+      {t.due_date && <span style={{ fontSize:11, color:C.text3, fontFamily:MONO }}>{t.due_date}</span>}
+    </div>
+  );
+
   if(loading) return <div style={{ padding:"40px 24px", textAlign:"center", color:C.text3, fontFamily:FONT, fontSize:13 }}>Loading planning\u2026</div>;
+
+  const topTasks = projTasks.filter(t=>!t.parent_task_id);
 
   return (
     <div style={{ padding:"20px 24px" }}>
@@ -4258,10 +4422,8 @@ function PlanningView({ user, onRefresh }) {
         {selProj && <><span style={{color:C.text3}}>{"\u203a"}</span><span style={{color:C.gold,fontWeight:700,fontFamily:FONT,fontSize:13}}>{selProj.name}</span></>}
       </div>
 
-      {/* LEVEL 1 — INITIATIVES */}
       {!selInit && (
-        <SectionCard title="Initiatives" count={inits.length} onAdd={()=>openModal("init")} addLabel="Add Initiative"
-          empty="No initiatives yet. Add your first strategic initiative.">
+        <SectionCard title="Initiatives" count={inits.length} onAdd={()=>openModal("init")} addLabel="Add Initiative" empty="No initiatives yet. Add your first strategic initiative.">
           {inits.map(it=>(
             <Row key={it.id} onClick={()=>setSelInit(it)}>
               <div style={{ flex:1 }}>
@@ -4275,7 +4437,6 @@ function PlanningView({ user, onRefresh }) {
         </SectionCard>
       )}
 
-      {/* LEVEL 2 — INITIATIVE DETAIL: ROCKS + DIRECT PROJECTS */}
       {selInit && !selRock && !selProj && (
         <>
           <div style={{ ...cardWrap, padding:"16px 18px" }}>
@@ -4291,8 +4452,7 @@ function PlanningView({ user, onRefresh }) {
               </div>
             </div>
           </div>
-          <SectionCard title="Rocks" count={rocksFor(selInit.id).length} onAdd={()=>openModal("rock")} addLabel="Add Rock"
-            empty="No rocks under this initiative yet.">
+          <SectionCard title="Rocks" count={rocksFor(selInit.id).length} onAdd={()=>openModal("rock")} addLabel="Add Rock" empty="No rocks under this initiative yet.">
             {rocksFor(selInit.id).map(rk=>(
               <Row key={rk.id} onClick={()=>setSelRock(rk)}>
                 <div style={{ flex:1 }}>
@@ -4304,19 +4464,12 @@ function PlanningView({ user, onRefresh }) {
               </Row>
             ))}
           </SectionCard>
-          <SectionCard title="Projects (directly under initiative)" count={projForInit(selInit.id).length} onAdd={()=>openModal("proj")} addLabel="Add Project"
-            empty="No standalone projects under this initiative.">
-            {projForInit(selInit.id).map(pj=>(
-              <Row key={pj.id} onClick={()=>setSelProj(pj)}>
-                <div style={{ flex:1 }}><div style={{ fontSize:14, fontWeight:600, color:C.text, fontFamily:FONT }}>{pj.name}</div></div>
-                <Pill status={pj.status} />
-              </Row>
-            ))}
+          <SectionCard title="Projects (directly under initiative)" count={projForInit(selInit.id).length} onAdd={()=>openModal("proj")} addLabel="Add Project" empty="No standalone projects under this initiative.">
+            {projForInit(selInit.id).map((pj,idx)=><ProjectRow key={pj.id} p={pj} i={idx} />)}
           </SectionCard>
         </>
       )}
 
-      {/* LEVEL 3 — ROCK DETAIL: PROJECTS */}
       {selRock && !selProj && (
         <>
           <div style={{ ...cardWrap, padding:"16px 18px" }}>
@@ -4332,19 +4485,12 @@ function PlanningView({ user, onRefresh }) {
               </div>
             </div>
           </div>
-          <SectionCard title="Projects" count={projForRock(selRock.id).length} onAdd={()=>openModal("proj")} addLabel="Add Project"
-            empty="No projects under this rock yet.">
-            {projForRock(selRock.id).map(pj=>(
-              <Row key={pj.id} onClick={()=>setSelProj(pj)}>
-                <div style={{ flex:1 }}><div style={{ fontSize:14, fontWeight:600, color:C.text, fontFamily:FONT }}>{pj.name}</div></div>
-                <Pill status={pj.status} />
-              </Row>
-            ))}
+          <SectionCard title="Projects" count={projForRock(selRock.id).length} onAdd={()=>openModal("proj")} addLabel="Add Project" empty="No projects under this rock yet.">
+            {projForRock(selRock.id).map((pj,idx)=><ProjectRow key={pj.id} p={pj} i={idx} />)}
           </SectionCard>
         </>
       )}
 
-      {/* LEVEL 4 — PROJECT DETAIL: TASKS */}
       {selProj && (
         <>
           <div style={{ ...cardWrap, padding:"16px 18px" }}>
@@ -4359,27 +4505,17 @@ function PlanningView({ user, onRefresh }) {
               </div>
             </div>
           </div>
-          <SectionCard title="Tasks" count={projTasks.length} onAdd={()=>openModal("task")} addLabel="Add Task"
-            empty="No tasks on this project yet.">
-            {projTasks.map(t=>(
-              <Row key={t.id}>
-                <button onClick={()=>toggleTask(t)} style={{ width:18, height:18, borderRadius:4, flexShrink:0, cursor:"pointer", padding:0,
-                  border:`2px solid ${t.status==="done"?C.gold:C.border2}`, background:t.status==="done"?C.gold:"transparent",
-                  display:"flex", alignItems:"center", justifyContent:"center" }}>
-                  {t.status==="done"&&<span style={{ fontSize:9, color:"#0a0a0a", fontWeight:900 }}>{"\u2713"}</span>}
-                </button>
-                <div style={{ flex:1 }}>
-                  <div style={{ fontSize:13, fontWeight:500, fontFamily:FONT, color:t.status==="done"?C.text3:C.text, textDecoration:t.status==="done"?"line-through":"none" }}>{t.title}</div>
-                  {t.description&&<div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>{t.description}</div>}
-                </div>
-                {t.due_date&&<span style={{ fontSize:11, color:C.text3, fontFamily:MONO }}>{t.due_date}</span>}
-              </Row>
-            ))}
+          <SectionCard title="Tasks" count={topTasks.length} onAdd={()=>openModal("task")} addLabel="Add Task" empty="No tasks on this project yet.">
+            {topTasks.map(t=><TaskRow key={t.id} t={t} />)}
           </SectionCard>
         </>
       )}
 
-      {/* MODALS */}
+      {openTask && (
+        <PlanTaskModal task={projTasks.find(t=>t.id===openTask.id)||openTask} allTasks={projTasks} members={members}
+          onClose={()=>setOpenTask(null)} onUpdate={taskUpdate} onDelete={taskDelete} onAddSub={taskAddSub} />
+      )}
+
       {modal==="init" && (
         <Modal title="New Initiative" onClose={()=>setModal(null)} maxWidth={460}>
           <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
@@ -4388,7 +4524,7 @@ function PlanningView({ user, onRefresh }) {
               <Field label="Horizon" value={form.horizon_label} onChange={v=>set("horizon_label",v)} placeholder="e.g. 3-year" />
               <Sel label="Status" value={form.status} onChange={v=>set("status",v)} options={INIT_STATUS} />
             </div>
-            <Field label="Priority (number)" value={form.priority} onChange={v=>set("priority",v)} type="text" placeholder="0" />
+            <Field label="Priority (number)" value={form.priority} onChange={v=>set("priority",v)} placeholder="0" />
             <Field label="Mission link" value={form.mission_link} onChange={v=>set("mission_link",v)} placeholder="Optional" />
             <Field label="Description" value={form.description} onChange={v=>set("description",v)} placeholder="Optional" />
             <div style={{ display:"flex", gap:10, paddingTop:4 }}>
@@ -4424,8 +4560,7 @@ function PlanningView({ user, onRefresh }) {
           <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
             <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>Under initiative: <b style={{color:C.text2}}>{selInit?.name}</b></div>
             <Field label="Name" value={form.name} onChange={v=>set("name",v)} placeholder="e.g. Launch referral program" autoFocus />
-            <Sel label="Attach to Rock (optional \u2014 inherits its initiative)" value={form.rock_id}
-              onChange={v=>set("rock_id",v)}
+            <Sel label="Attach to Rock (optional \u2014 inherits its initiative)" value={form.rock_id} onChange={v=>set("rock_id",v)}
               options={[{value:"",label:"\u2014 None (directly under initiative) \u2014"}, ...rocksFor(selInit?.id).map(r=>({value:r.id,label:r.title}))]} />
             <Sel label="Status" value={form.status} onChange={v=>set("status",v)} options={PROJ_STATUS} />
             <Field label="Description" value={form.description} onChange={v=>set("description",v)} placeholder="Optional" />
@@ -4442,10 +4577,9 @@ function PlanningView({ user, onRefresh }) {
             <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>On project: <b style={{color:C.text2}}>{selProj?.name}</b></div>
             <Field label="Title" value={form.title} onChange={v=>set("title",v)} placeholder="e.g. Draft program terms" autoFocus />
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
-              <Sel label="Priority" value={form.priority} onChange={v=>set("priority",v)} options={[{value:"high",label:"High"},{value:"medium",label:"Medium"},{value:"low",label:"Low"}]} />
+              <Sel label="Priority" value={form.priority} onChange={v=>set("priority",v)} options={[{value:"low",label:"Low"},{value:"normal",label:"Normal"},{value:"high",label:"High"},{value:"urgent",label:"Urgent"}]} />
               <Field label="Due date" value={form.due_date} onChange={v=>set("due_date",v)} type="date" />
             </div>
-            <Field label="Assigned to" value={form.assigned_to} onChange={v=>set("assigned_to",v)} placeholder="email" />
             <Field label="Description" value={form.description} onChange={v=>set("description",v)} placeholder="Optional" />
             <div style={{ display:"flex", gap:10, paddingTop:4 }}>
               <GoldButton onClick={save} disabled={saving||!(form.title||"").trim()}>{saving?"Saving\u2026":"Add Task"}</GoldButton>
@@ -4457,7 +4591,6 @@ function PlanningView({ user, onRefresh }) {
     </div>
   );
 }
-
 
 function NotesView({ user }) {
   const [notes,setNotes]           = useState([]);
