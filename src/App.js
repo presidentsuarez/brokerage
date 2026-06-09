@@ -1427,7 +1427,7 @@ function DealDetail({ deal, user, onClose, onRefresh }) {
   const [contactRole,setContactRole]     = useState("Client");
   const [savingContact,setSavingContact] = useState(false);
   const [addingTask,setAddingTask]       = useState(false);
-  const [taskForm,setTaskForm]           = useState({title:"",priority:"medium",due_date:"",assigned_to:user?.email||""});
+  const [taskForm,setTaskForm]           = useState({title:"",priority:"normal",due_date:"",assigned_to:user?.email||""});
   const setTF = (k,v) => setTaskForm(f=>({...f,[k]:v}));
   const [savingTask,setSavingTask]       = useState(false);
   const [actForm,setActForm]   = useState({activity_type:"note",content:""});
@@ -1846,7 +1846,7 @@ function DealDetail({ deal, user, onClose, onRefresh }) {
                     padding:"12px 14px", background:C.surface, border:`1px solid ${C.border}`,
                     borderRadius:10, marginBottom:8 }}>
                     <button onClick={async()=>{
-                      await supabase.from("tasks").update({status:t.status==="done"?"open":"done"}).eq("id",t.id);
+                      await supabase.from("tasks").update(t.status==="done"?{status:"todo",completed_at:null}:{status:"done",progress:100,completed_at:new Date().toISOString()}).eq("id",t.id);
                       await reloadDetail();
                     }} style={{
                       width:18, height:18, borderRadius:4, flexShrink:0, cursor:"pointer", padding:0,
@@ -1862,7 +1862,7 @@ function DealDetail({ deal, user, onClose, onRefresh }) {
                     </div>
                     <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:3 }}>
                       <div style={{ width:7, height:7, borderRadius:"50%",
-                        background:{high:C.red,medium:C.amber,low:C.text3}[t.priority]||C.text3 }} />
+                        background:{urgent:C.red,high:C.amber,normal:C.blue,low:C.text3}[t.priority]||C.text3 }} />
                       {t.due_date&&<span style={{ fontSize:10, color:C.text3, fontFamily:MONO }}>{t.due_date}</span>}
                     </div>
                   </div>
@@ -1880,7 +1880,7 @@ function DealDetail({ deal, user, onClose, onRefresh }) {
                     <Field label="Task title" value={taskForm.title} onChange={v=>setTF("title",v)} placeholder="e.g. Order inspection" autoFocus />
                     <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
                       <Sel label="Priority" value={taskForm.priority} onChange={v=>setTF("priority",v)}
-                        options={[{value:"high",label:"High"},{value:"medium",label:"Medium"},{value:"low",label:"Low"}]} />
+                        options={[{value:"low",label:"Low"},{value:"normal",label:"Normal"},{value:"high",label:"High"},{value:"urgent",label:"Urgent"}]} />
                       <Field label="Due date" value={taskForm.due_date} onChange={v=>setTF("due_date",v)} type="date" />
                     </div>
                     <div style={{ display:"flex", gap:8 }}>
@@ -1888,11 +1888,11 @@ function DealDetail({ deal, user, onClose, onRefresh }) {
                         setSavingTask(true);
                         await supabase.from("tasks").insert({
                           ...taskForm, org_id:ORG_ID, deal_id:deal.id,
-                          status:"open", created_by:creatorLabel(user),
+                          status:"todo", created_by:creatorLabel(user),
                         });
                         setSavingTask(false);
                         setAddingTask(false);
-                        setTaskForm({title:"",priority:"medium",due_date:"",assigned_to:user?.email||""});
+                        setTaskForm({title:"",priority:"normal",due_date:"",assigned_to:user?.email||""});
                         await reloadDetail();
                         setToast({msg:"Task added",type:"success"});
                       }}>{savingTask?"Adding…":"Add task"}</GoldButton>
@@ -3073,7 +3073,7 @@ function AgentPortalApp(
                 <div key={t.id} style={{ padding:"11px 16px", borderBottom:`1px solid ${C.border}`,
                   display:"flex", alignItems:"center", gap:10 }}>
                   <div style={{ width:7, height:7, borderRadius:"50%", flexShrink:0,
-                    background:{high:C.red,medium:C.amber,low:C.text3}[t.priority]||C.text3 }} />
+                    background:{urgent:C.red,high:C.amber,normal:C.blue,low:C.text3}[t.priority]||C.text3 }} />
                   <div style={{ flex:1, minWidth:0 }}>
                     <div style={{ fontSize:12, fontWeight:500, color:C.text, fontFamily:FONT,
                       whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{t.title}</div>
@@ -3320,26 +3320,26 @@ function AgentPortalApp(
   // ── Tasks ──
   const PortalTasks = () => {
     const [showAdd,setShowAdd] = useState(false);
-    const [form,setForm]       = useState({title:"",priority:"medium",due_date:""});
+    const [form,setForm]       = useState({title:"",priority:"normal",due_date:""});
     const [saving,setSaving]   = useState(false);
     const open = myTasks.filter(t=>t.status!=="done");
     const done = myTasks.filter(t=>t.status==="done");
 
     const toggle = async t => {
-      await supabase.from("tasks").update({status:t.status==="done"?"open":"done"}).eq("id",t.id);
+      await supabase.from("tasks").update(t.status==="done"?{status:"todo",completed_at:null}:{status:"done",progress:100,completed_at:new Date().toISOString()}).eq("id",t.id);
       refreshTasks();
     };
     const addTask = async () => {
       if(!form.title.trim()) return;
       setSaving(true);
       await supabase.from("tasks").insert({
-        ...form, org_id:ORG_ID, status:"open",
+        ...form, org_id:ORG_ID, status:"todo",
         assigned_to:agentEmail, created_by:agentName,
       });
-      setSaving(false); setShowAdd(false); setForm({title:"",priority:"medium",due_date:""});
+      setSaving(false); setShowAdd(false); setForm({title:"",priority:"normal",due_date:""});
       refreshTasks();
     };
-    const PCOL = {high:C.red,medium:C.amber,low:C.text3};
+    const PCOL = {urgent:C.red,high:C.amber,normal:C.blue,low:C.text3};
 
     return (
       <div style={{ padding:"20px 24px" }}>
@@ -3397,7 +3397,7 @@ function AgentPortalApp(
               <Field label="Task" value={form.title} onChange={v=>setForm(f=>({...f,title:v}))} placeholder="e.g. Follow up with buyer" autoFocus />
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
                 <Sel label="Priority" value={form.priority} onChange={v=>setForm(f=>({...f,priority:v}))}
-                  options={[{value:"high",label:"High"},{value:"medium",label:"Medium"},{value:"low",label:"Low"}]} />
+                  options={[{value:"low",label:"Low"},{value:"normal",label:"Normal"},{value:"high",label:"High"},{value:"urgent",label:"Urgent"}]} />
                 <Field label="Due Date" value={form.due_date} onChange={v=>setForm(f=>({...f,due_date:v}))} type="date" />
               </div>
               <div style={{ display:"flex", gap:10, paddingTop:4 }}>
@@ -4020,7 +4020,7 @@ function ContactsView({ user, contacts, onRefresh }) {
 function TasksView({ user, tasks, onRefresh }) {
   const [showAdd,setShowAdd] = useState(false);
   const [saving,setSaving]   = useState(false);
-  const [form,setForm]       = useState({title:"",description:"",priority:"medium",due_date:"",assigned_to:user?.email||""});
+  const [form,setForm]       = useState({title:"",description:"",priority:"normal",due_date:"",assigned_to:user?.email||""});
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
   const open = tasks.filter(t=>t.status!=="done");
   const done = tasks.filter(t=>t.status==="done");
@@ -4028,18 +4028,18 @@ function TasksView({ user, tasks, onRefresh }) {
   const handleAdd = async () => {
     if(!form.title.trim()) return;
     setSaving(true);
-    await supabase.from("tasks").insert({...form,org_id:ORG_ID,status:"open",created_by:creatorLabel(user)});
+    await supabase.from("tasks").insert({...form,org_id:ORG_ID,status:"todo",created_by:creatorLabel(user)});
     setSaving(false); setShowAdd(false);
-    setForm({title:"",description:"",priority:"medium",due_date:"",assigned_to:user?.email||""});
+    setForm({title:"",description:"",priority:"normal",due_date:"",assigned_to:user?.email||""});
     onRefresh();
   };
 
   const toggle = async t => {
-    await supabase.from("tasks").update({status:t.status==="done"?"open":"done"}).eq("id",t.id);
+    await supabase.from("tasks").update(t.status==="done"?{status:"todo",completed_at:null}:{status:"done",progress:100,completed_at:new Date().toISOString()}).eq("id",t.id);
     onRefresh();
   };
 
-  const PCOL = {high:C.red,medium:C.amber,low:C.text3};
+  const PCOL = {urgent:C.red,high:C.amber,normal:C.blue,low:C.text3};
 
   const TaskRow = ({task}) => (
     <div style={{ display:"flex", alignItems:"center", gap:12, padding:"11px 18px", borderBottom:`1px solid ${C.border}` }}
@@ -4090,7 +4090,7 @@ function TasksView({ user, tasks, onRefresh }) {
           <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
             <Field label="Title" value={form.title} onChange={v=>set("title",v)} placeholder="e.g. Schedule showing" autoFocus />
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
-              <Sel   label="Priority" value={form.priority}  onChange={v=>set("priority",v)}  options={[{value:"high",label:"High"},{value:"medium",label:"Medium"},{value:"low",label:"Low"}]} />
+              <Sel   label="Priority" value={form.priority}  onChange={v=>set("priority",v)}  options={[{value:"low",label:"Low"},{value:"normal",label:"Normal"},{value:"high",label:"High"},{value:"urgent",label:"Urgent"}]} />
               <Field label="Due Date" value={form.due_date}  onChange={v=>set("due_date",v)}  type="date" />
             </div>
             <div>
