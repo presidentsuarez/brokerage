@@ -399,7 +399,7 @@ function ForgotScreen({ onBack }) {
   const submit = async e => {
     e.preventDefault(); setLoading(true); setError("");
     const { error:err } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo:`${window.location.origin}/brokerage`
+      redirectTo:`${window.location.origin}${window.location.pathname}`
     });
     if (err) { setError(err.message); setLoading(false); }
     else setSent(true);
@@ -6848,7 +6848,7 @@ function ApplicationPanel({ app, user, onClose, onUpdated, toast }) {
 
       // Send password reset / welcome email
       await supabase.auth.resetPasswordForEmail(app.email, {
-        redirectTo: "https://presidentsuarez.github.io/brokerage",
+        redirectTo: "https://app.winwithone.com",
       });
 
       // 5. Mark application as approved
