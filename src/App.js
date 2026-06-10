@@ -3641,8 +3641,50 @@ function AgentPickerModal({ contacts, onPick, onClose }) {
   );
 }
 
-function ContactsTable({ contacts, allContacts, onSelect, typeDot }) {
+function ContactsTable({ contacts, allContacts, onSelect, typeDot, onUpdate }) {
   const isMobile = useIsMobile();
+  const timeAgo = (ts) => {
+    if(!ts) return "Never";
+    const diff = Date.now()-new Date(ts).getTime(), day=86400000;
+    if(diff<day) return "Today";
+    const d=Math.floor(diff/day);
+    if(d<7) return d+"d ago";
+    if(d<30) return Math.floor(d/7)+"w ago";
+    if(d<365) return Math.floor(d/30)+"mo ago";
+    return Math.floor(d/365)+"y ago";
+  };
+  const isActive = c => (c.status||"Active").toLowerCase()!=="inactive";
+  const StatusTag = ({ c }) => {
+    const active = isActive(c);
+    return (
+      <button onClick={e=>{ e.stopPropagation(); onUpdate&&onUpdate(c.id,{status:active?"Inactive":"Active"}); }} title="Click to toggle active/inactive"
+        style={{ fontSize:10, fontWeight:700, fontFamily:FONT, letterSpacing:"0.03em", textTransform:"uppercase",
+          padding:"3px 9px", borderRadius:20, cursor:"pointer", border:"none", whiteSpace:"nowrap",
+          color:active?C.green:C.text3, background:active?"rgba(34,197,94,0.12)":C.surface2 }}>
+        {active?"\u25cf Active":"Inactive"}
+      </button>
+    );
+  };
+  const TagChips = ({ tags }) => {
+    const t = Array.isArray(tags)?tags:[];
+    if(t.length===0) return <span style={{ fontSize:11, color:C.text3 }}>{"\u2014"}</span>;
+    return (
+      <div style={{ display:"flex", flexWrap:"wrap", gap:4 }}>
+        {t.slice(0,3).map((tag,i)=>(
+          <span key={i} style={{ fontSize:9.5, fontWeight:600, fontFamily:FONT, color:C.gold, background:C.goldDim, border:`1px solid ${C.goldBorder}`, borderRadius:6, padding:"2px 6px", whiteSpace:"nowrap" }}>{tag}</span>
+        ))}
+        {t.length>3 && <span style={{ fontSize:9.5, color:C.text3, alignSelf:"center" }}>+{t.length-3}</span>}
+      </div>
+    );
+  };
+  const LastCell = ({ c }) => (
+    <div style={{ display:"flex", alignItems:"center", gap:7 }}>
+      <span style={{ fontSize:11.5, color:c.last_contacted_at?C.text2:C.text3, fontFamily:FONT, whiteSpace:"nowrap" }}>{timeAgo(c.last_contacted_at)}</span>
+      <button onClick={e=>{ e.stopPropagation(); onUpdate&&onUpdate(c.id,{last_contacted_at:new Date().toISOString()}); }} title="Mark contacted today"
+        style={{ fontSize:9.5, color:C.text3, background:"none", border:`1px solid ${C.border2}`, borderRadius:6, padding:"2px 7px", cursor:"pointer", whiteSpace:"nowrap" }}>{"\u2713"} Log</button>
+    </div>
+  );
+
   if(contacts.length===0) return (
     <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12,
       padding:"48px 18px", textAlign:"center", color:C.text3, fontSize:13, fontFamily:FONT }}>
@@ -3653,67 +3695,57 @@ function ContactsTable({ contacts, allContacts, onSelect, typeDot }) {
     <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
       {contacts.map(c=>(
         <div key={c.id} onClick={()=>onSelect(c)}
-          style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12,
-            padding:"14px 16px", cursor:"pointer", display:"flex", alignItems:"center", gap:12 }}
+          style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:"14px 16px", cursor:"pointer" }}
           onMouseEnter={e=>e.currentTarget.style.borderColor=C.goldBorder}
           onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}>
-          <Avatar name={c.full_name} email={c.email} size={42} />
-          <div style={{ flex:1, minWidth:0 }}>
-            <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:3 }}>
-              <span style={{ fontSize:14, fontWeight:700, color:C.text, fontFamily:FONT }}>{c.full_name}</span>
-              {c.portal_enabled&&<span style={{ fontSize:9, fontWeight:700, color:C.green,
-                background:"rgba(34,197,94,0.12)", borderRadius:10, padding:"2px 6px" }}>Portal ON</span>}
+          <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+            <Avatar name={c.full_name} email={c.email} size={42} />
+            <div style={{ flex:1, minWidth:0 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:3 }}>
+                <span style={{ fontSize:14, fontWeight:700, color:C.text, fontFamily:FONT }}>{c.full_name}</span>
+                <StatusTag c={c} />
+              </div>
+              <div style={{ fontSize:12, color:C.text2, fontFamily:FONT }}>{c.contact_type}{c.phone?` \u00b7 ${c.phone}`:""}</div>
+              {c.email&&<div style={{ fontSize:11, color:C.text3, fontFamily:FONT, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{c.email}</div>}
             </div>
-            <div style={{ fontSize:12, color:C.text2, fontFamily:FONT }}>
-              {c.contact_type}
-              {c.phone?` · ${c.phone}`:""}
-            </div>
-            {c.email&&<div style={{ fontSize:11, color:C.text3, fontFamily:FONT,
-              whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{c.email}</div>}
           </div>
-          <span style={{ fontSize:16, color:C.text3 }}>›</span>
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:8, marginTop:10 }}>
+            <TagChips tags={c.tags} />
+            <span style={{ fontSize:10.5, color:C.text3, fontFamily:FONT, whiteSpace:"nowrap" }}>Last: {timeAgo(c.last_contacted_at)}</span>
+          </div>
         </div>
       ))}
     </div>
   );
+  const COLS = "1.7fr 0.9fr 1.2fr 1fr 1.5fr 1.1fr";
   return (
     <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden" }}>
-      <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1.5fr 1fr 80px",
-        padding:"9px 18px", borderBottom:`1px solid ${C.border}` }}>
-        {["Name","Type","Email","Phone","Portal"].map(h=>(
-          <span key={h} style={{ fontSize:10, fontWeight:700, color:C.text3,
-            fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.08em" }}>{h}</span>
+      <div style={{ display:"grid", gridTemplateColumns:COLS, padding:"9px 18px", borderBottom:`1px solid ${C.border}` }}>
+        {["Name","Status","Tags","Phone","Email","Last Contact"].map(h=>(
+          <span key={h} style={{ fontSize:10, fontWeight:700, color:C.text3, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.08em" }}>{h}</span>
         ))}
       </div>
       {contacts.map(c=>(
         <div key={c.id} onClick={()=>onSelect(c)}
-          style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1.5fr 1fr 80px",
-            padding:"12px 18px", borderBottom:`1px solid ${C.border}`,
-            alignItems:"center", cursor:"pointer" }}
+          style={{ display:"grid", gridTemplateColumns:COLS, padding:"12px 18px", borderBottom:`1px solid ${C.border}`, alignItems:"center", cursor:"pointer" }}
           onMouseEnter={e=>e.currentTarget.style.background=C.surface2}
           onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-          <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:10, minWidth:0 }}>
             <Avatar name={c.full_name} email={c.email} size={28} />
-            <div>
-              <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:FONT }}>{c.full_name}</div>
-              {c.notes&&<div style={{ fontSize:10, color:C.text3, fontFamily:FONT,
-                whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", maxWidth:150 }}>{c.notes}</div>}
+            <div style={{ minWidth:0 }}>
+              <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:FONT, display:"flex", alignItems:"center", gap:6 }}>
+                <span style={{ width:6, height:6, borderRadius:"50%", background:typeDot[c.contact_type]||C.text3, flexShrink:0 }} />
+                <span style={{ overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{c.full_name}</span>
+                {c.portal_enabled&&<span style={{ fontSize:8, fontWeight:700, color:C.green, background:"rgba(34,197,94,0.10)", borderRadius:8, padding:"1px 5px", flexShrink:0 }}>PORTAL</span>}
+              </div>
+              <div style={{ fontSize:10, color:C.text3, fontFamily:FONT }}>{c.contact_type}</div>
             </div>
           </div>
-          <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-            <div style={{ width:6, height:6, borderRadius:"50%", background:typeDot[c.contact_type]||C.text3 }} />
-            <span style={{ fontSize:12, color:C.text2, fontFamily:FONT }}>{c.contact_type}</span>
-          </div>
-          <span style={{ fontSize:12, color:C.text2, fontFamily:FONT,
-            whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{c.email||"—"}</span>
-          <span style={{ fontSize:12, color:C.text2, fontFamily:MONO }}>{c.phone||"—"}</span>
-          <div style={{ display:"flex", justifyContent:"center" }}>
-            {c.portal_enabled
-              ? <span style={{ fontSize:10, fontWeight:700, color:C.green,
-                  background:"rgba(34,197,94,0.10)", borderRadius:20, padding:"3px 8px" }}>ON</span>
-              : <span style={{ fontSize:10, color:C.text3 }}>—</span>
-            }
-          </div>
+          <div><StatusTag c={c} /></div>
+          <TagChips tags={c.tags} />
+          <span style={{ fontSize:12, color:C.text2, fontFamily:MONO, whiteSpace:"nowrap" }}>{c.phone||"\u2014"}</span>
+          <span style={{ fontSize:12, color:C.text2, fontFamily:FONT, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{c.email||"\u2014"}</span>
+          <LastCell c={c} />
         </div>
       ))}
     </div>
@@ -3727,6 +3759,7 @@ function ContactDetail({ contact, user, onClose, onRefresh }) {
     full_name:contact.full_name||"", email:contact.email||"",
     phone:contact.phone||"", contact_type:contact.contact_type||"Agent",
     status:contact.status||"Active", source:contact.source||"", notes:contact.notes||"",
+    tags:(Array.isArray(contact.tags)?contact.tags:[]).join(", "),
   });
   const [portalEmail,setPortalEmail] = useState(contact.portal_email||contact.email||"");
   const [saving,setSaving]       = useState(false);
@@ -3740,10 +3773,17 @@ function ContactDetail({ contact, user, onClose, onRefresh }) {
     return d.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"});
   };
 
+  const markContacted = async () => {
+    await supabase.from("contacts").update({ last_contacted_at:new Date().toISOString() }).eq("id", contact.id);
+    onRefresh(); setToast({msg:"Marked contacted today",type:"success"});
+  };
+
   const saveEdit = async () => {
     setSaving(true);
+    const tags = (editForm.tags||"").split(",").map(t=>t.trim()).filter(Boolean);
+    const { tags:_t, ...rest } = editForm;
     const { error } = await supabase.from("contacts")
-      .update({...editForm, updated_at:new Date().toISOString()})
+      .update({...rest, tags, updated_at:new Date().toISOString()})
       .eq("id", contact.id);
     setSaving(false);
     if(!error){ setEditMode(false); onRefresh(); setToast({msg:"Contact updated",type:"success"}); }
@@ -3837,11 +3877,12 @@ function ContactDetail({ contact, user, onClose, onRefresh }) {
         <div style={{ flex:1, overflowY:"auto", padding:"20px 22px" }}>
 
           {/* Info grid */}
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:16 }}>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:12 }}>
             {[
               {label:"Type",   val:contact.contact_type||"—"},
               {label:"Status", val:contact.status||"—"},
               {label:"Source", val:contact.source||"—"},
+              {label:"Last Contacted", val:contact.last_contacted_at?fmtDate(contact.last_contacted_at):"Never"},
               {label:"Added",  val:fmtDate(contact.created_at)},
             ].map(item=>(
               <div key={item.label} style={{ background:C.surface, border:`1px solid ${C.border}`,
@@ -3851,6 +3892,17 @@ function ContactDetail({ contact, user, onClose, onRefresh }) {
                 <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:FONT }}>{item.val}</div>
               </div>
             ))}
+          </div>
+
+          {/* Tags + quick action */}
+          <div style={{ display:"flex", alignItems:"center", flexWrap:"wrap", gap:8, marginBottom:16 }}>
+            {(Array.isArray(contact.tags)?contact.tags:[]).map((t,i)=>(
+              <span key={i} style={{ fontSize:11, fontWeight:600, fontFamily:FONT, color:C.gold, background:C.goldDim, border:`1px solid ${C.goldBorder}`, borderRadius:7, padding:"4px 9px" }}>{t}</span>
+            ))}
+            {(!Array.isArray(contact.tags) || contact.tags.length===0) && <span style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>No tags yet</span>}
+            <div style={{ marginLeft:"auto" }}>
+              <GoldButton small outline onClick={markContacted}>{"\u2713"} Mark contacted today</GoldButton>
+            </div>
           </div>
 
           {/* Notes */}
@@ -3896,6 +3948,7 @@ function ContactDetail({ contact, user, onClose, onRefresh }) {
             <Sel   label="Status"    value={editForm.status} onChange={v=>setE("status",v)}
               options={["Active","Inactive","Prospect"]} />
             <Field label="Source"    value={editForm.source} onChange={v=>setE("source",v)} placeholder="Referral, ROGA Roster…" />
+            <Field label="Tags (comma-separated)" value={editForm.tags} onChange={v=>setE("tags",v)} placeholder="VIP, Past Client, Sphere" />
             <div>
               <label style={{ fontSize:11, fontWeight:700, color:C.text2, fontFamily:FONT,
                 letterSpacing:"0.08em", textTransform:"uppercase", display:"block", marginBottom:5 }}>Notes</label>
@@ -3918,11 +3971,12 @@ function ContactDetail({ contact, user, onClose, onRefresh }) {
 function ContactsView({ user, contacts, onRefresh }) {
   const [search,setSearch]         = useState("");
   const [typeFilter,setTypeFilter] = useState("all");
+  const [statusFilter,setStatusFilter] = useState("all");
   const [showAdd,setShowAdd]       = useState(false);
   const [selected,setSelected]     = useState(null);
   const [saving,setSaving]         = useState(false);
   const [toast,setToast]           = useState(null);
-  const [form,setForm]             = useState({full_name:"",email:"",phone:"",contact_type:"Agent",status:"Active",source:"",notes:""});
+  const [form,setForm]             = useState({full_name:"",email:"",phone:"",contact_type:"Agent",status:"Active",source:"",notes:"",tags:""});
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
 
   // Keep selected in sync after refresh
@@ -3931,18 +3985,28 @@ function ContactsView({ user, contacts, onRefresh }) {
   },[contacts]);
 
   const TYPES = ["all","Agent","Client","Lender","Referral","Vendor"];
+  const isActive = c => (c.status||"Active").toLowerCase()!=="inactive";
   const filtered = contacts.filter(c=>{
     if(typeFilter!=="all"&&c.contact_type!==typeFilter) return false;
-    if(search&&!`${c.full_name} ${c.email} ${c.phone}`.toLowerCase().includes(search.toLowerCase())) return false;
+    if(statusFilter==="active"&&!isActive(c)) return false;
+    if(statusFilter==="inactive"&&isActive(c)) return false;
+    if(search&&!`${c.full_name} ${c.email} ${c.phone} ${(c.tags||[]).join(" ")}`.toLowerCase().includes(search.toLowerCase())) return false;
     return true;
   });
+
+  const updateContact = async (id, updates) => {
+    await supabase.from("contacts").update(updates).eq("id", id);
+    onRefresh();
+  };
 
   const handleAdd = async () => {
     if(!form.full_name.trim()) return;
     setSaving(true);
-    const { error } = await supabase.from("contacts").insert({...form,org_id:ORG_ID,created_by:creatorLabel(user)});
+    const tags = (form.tags||"").split(",").map(t=>t.trim()).filter(Boolean);
+    const { tags:_t, ...rest } = form;
+    const { error } = await supabase.from("contacts").insert({...rest,tags,org_id:ORG_ID,created_by:creatorLabel(user)});
     setSaving(false);
-    if(!error){ setShowAdd(false); setForm({full_name:"",email:"",phone:"",contact_type:"Agent",status:"Active",source:"",notes:""}); onRefresh(); setToast({msg:"Contact added",type:"success"}); }
+    if(!error){ setShowAdd(false); setForm({full_name:"",email:"",phone:"",contact_type:"Agent",status:"Active",source:"",notes:"",tags:""}); onRefresh(); setToast({msg:"Contact added",type:"success"}); }
   };
 
   const TYPE_DOT = {Agent:C.gold,Client:C.blue,Lender:C.purple,Referral:C.green,Vendor:C.text3};
@@ -3975,10 +4039,22 @@ function ContactsView({ user, contacts, onRefresh }) {
           <span style={{ fontSize:10, color:C.text3, fontFamily:FONT,
             paddingLeft:4, whiteSpace:"nowrap" }}>{filtered.length} total</span>
         </div>
+        <div style={{ display:"flex", gap:5 }}>
+          {[["all","All"],["active","Active"],["inactive","Inactive"]].map(([v,lbl])=>(
+            <button key={v} onClick={()=>setStatusFilter(v)} style={{
+              padding:"5px 12px", borderRadius:20,
+              border:`1.5px solid ${statusFilter===v?(v==="inactive"?C.border2:"rgba(34,197,94,0.35)"):C.border}`,
+              background:statusFilter===v?(v==="inactive"?C.surface2:"rgba(34,197,94,0.12)"):"transparent",
+              color:statusFilter===v?(v==="inactive"?C.text2:C.green):C.text2,
+              fontSize:11, fontFamily:FONT, cursor:"pointer", fontWeight:statusFilter===v?700:400 }}>
+              {lbl}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Table / Cards */}
-      <ContactsTable contacts={filtered} allContacts={contacts} onSelect={setSelected} typeDot={TYPE_DOT} />
+      <ContactsTable contacts={filtered} allContacts={contacts} onSelect={setSelected} typeDot={TYPE_DOT} onUpdate={updateContact} />
 
       {/* Add modal */}
       {showAdd&&(
@@ -3991,6 +4067,10 @@ function ContactsView({ user, contacts, onRefresh }) {
               <Sel label="Type"   value={form.contact_type} onChange={v=>set("contact_type",v)}
                 options={["Agent","Client","Lender","Referral","Vendor"]} />
               <Field label="Source" value={form.source} onChange={v=>set("source",v)} placeholder="Referral, Walk-in…" />
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+              <Sel label="Status" value={form.status} onChange={v=>set("status",v)} options={["Active","Inactive"]} />
+              <Field label="Tags (comma-separated)" value={form.tags} onChange={v=>set("tags",v)} placeholder="VIP, Past Client" />
             </div>
             <div>
               <label style={{ fontSize:11, fontWeight:700, color:C.text2, fontFamily:FONT,
