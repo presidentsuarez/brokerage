@@ -4254,9 +4254,19 @@ function PlanningView({ user, onRefresh }) {
   const [openTask,setOpenTask] = useState(null);
 
   const [modal,setModal]   = useState(null);
+  const [editId,setEditId] = useState(null);
   const [saving,setSaving] = useState(false);
   const [form,setForm]     = useState({});
   const set = (k,v)=>setForm(f=>({...f,[k]:v}));
+  const [editing,setEditing] = useState(null);
+  const memberById = id => members.find(m=>m.id===id);
+  const memberByEmail = em => members.find(m=>(m.email||"").toLowerCase()===(em||"").toLowerCase());
+  const ownerName = (rec) => {
+    if(rec?.owner_user_id){ const m=memberById(rec.owner_user_id); if(m) return m.full_name||m.email; }
+    if(rec?.assigned_to){ const m=memberByEmail(rec.assigned_to); return m?(m.full_name||m.email):rec.assigned_to; }
+    return null;
+  };
+  const ownerOptions = [{value:"",label:"\u2014 Default (you) \u2014"}, ...members.map(m=>({value:m.id,label:m.full_name||m.email}))];
 
   const SUBNAV = [
     { key:"initiatives", icon:"\ud83c\udfaf", label:"Initiatives" },
@@ -4299,34 +4309,55 @@ function PlanningView({ user, onRefresh }) {
 
   const goTab = (k) => { setTab(k); setSelInit(null); setSelRock(null); setSelProj(null); };
 
-  const openModal = (type, ctx={}) => {
-    if(type==="init") setForm({name:"",description:"",horizon_label:"",status:"active",mission_link:"",priority:0});
-    if(type==="rock") setForm({title:"",description:"",status:"on_track",quarter:"",due_date:"",progress:0,priority:0, initiative_id:ctx.initiative_id||(selInit?selInit.id:"")});
-    if(type==="proj") setForm({name:"",description:"",status:"active", initiative_id:ctx.initiative_id||(selInit?selInit.id:""), rock_id:ctx.rock_id||(selRock?selRock.id:"")});
-    if(type==="task") setForm({title:"",description:"",priority:"normal",due_date:"",start_date:"", project_id:ctx.project_id||(selProj?selProj.id:"")});
+  const openModal = (type, ctx={}, rec=null) => {
+    setEditing(rec ? { type, id:rec.id } : null);
+    const defOwner = myId || "";
+    if(type==="init") setForm(rec
+      ? { name:rec.name||"", description:rec.description||"", horizon_label:rec.horizon_label||"", status:rec.status||"active", mission_link:rec.mission_link||"", priority:rec.priority||0, owner_user_id:rec.owner_user_id||"" }
+      : { name:"", description:"", horizon_label:"", status:"active", mission_link:"", priority:0, owner_user_id:defOwner });
+    if(type==="rock") setForm(rec
+      ? { title:rec.title||"", description:rec.description||"", status:rec.status||"on_track", quarter:rec.quarter||"", due_date:rec.due_date||"", progress:rec.progress||0, priority:rec.priority||0, initiative_id:rec.initiative_id||"", owner_user_id:rec.owner_user_id||"" }
+      : { title:"", description:"", status:"on_track", quarter:"", due_date:"", progress:0, priority:0, initiative_id:ctx.initiative_id||(selInit?selInit.id:""), owner_user_id:defOwner });
+    if(type==="proj") setForm(rec
+      ? { name:rec.name||"", description:rec.description||"", status:rec.status||"active", initiative_id:rec.initiative_id||"", rock_id:rec.rock_id||"", owner_user_id:rec.owner_user_id||"" }
+      : { name:"", description:"", status:"active", initiative_id:ctx.initiative_id||(selInit?selInit.id:""), rock_id:ctx.rock_id||(selRock?selRock.id:""), owner_user_id:defOwner });
+    if(type==="task") setForm(rec
+      ? { title:rec.title||"", description:rec.description||"", priority:rec.priority||"normal", due_date:rec.due_date||"", start_date:rec.start_date||"", project_id:rec.project_id||"", owner_user_id:(Array.isArray(rec.assignee_ids)&&rec.assignee_ids[0])||(memberByEmail(rec.assigned_to)?.id)||"" }
+      : { title:"", description:"", priority:"normal", due_date:"", start_date:"", project_id:ctx.project_id||(selProj?selProj.id:""), owner_user_id:defOwner });
     setModal(type);
   };
 
   const save = async () => {
     setSaving(true);
-    const owner = myId ? { owner_user_id:myId } : {};
+    const ownerId = form.owner_user_id || myId || null;
+    const taskOwner = memberById(form.owner_user_id) || memberById(myId) || null;
+    const taskAssignedName = taskOwner ? (taskOwner.full_name||taskOwner.email) : (user?.full_name||user?.email||null);
+    const taskAssigneeIds = taskOwner ? [taskOwner.id] : [];
     try {
       if(modal==="init"){
         if(!form.name.trim()){ setSaving(false); return; }
-        await supabase.from("initiatives").insert({ org_id:ORG_ID, ...owner, name:form.name.trim(), description:form.description||null, horizon_label:form.horizon_label||null, status:form.status, mission_link:form.mission_link||null, priority:Number(form.priority)||0 });
+        const payload = { name:form.name.trim(), description:form.description||null, horizon_label:form.horizon_label||null, status:form.status, mission_link:form.mission_link||null, priority:Number(form.priority)||0, owner_user_id:ownerId };
+        if(editing) await supabase.from("initiatives").update(payload).eq("id",editing.id);
+        else await supabase.from("initiatives").insert({ org_id:ORG_ID, ...payload });
       } else if(modal==="rock"){
         if(!form.title.trim()||!form.initiative_id){ setSaving(false); return; }
-        await supabase.from("rocks").insert({ org_id:ORG_ID, ...owner, initiative_id:form.initiative_id, title:form.title.trim(), description:form.description||null, status:form.status, quarter:form.quarter||null, due_date:form.due_date||null, progress:Number(form.progress)||0, priority:Number(form.priority)||0 });
+        const payload = { initiative_id:form.initiative_id, title:form.title.trim(), description:form.description||null, status:form.status, quarter:form.quarter||null, due_date:form.due_date||null, progress:Number(form.progress)||0, priority:Number(form.priority)||0, owner_user_id:ownerId };
+        if(editing) await supabase.from("rocks").update(payload).eq("id",editing.id);
+        else await supabase.from("rocks").insert({ org_id:ORG_ID, ...payload });
       } else if(modal==="proj"){
         if(!form.name.trim()){ setSaving(false); return; }
         const rk = form.rock_id ? rocks.find(r=>r.id===form.rock_id) : null;
         const initId = rk ? rk.initiative_id : (form.initiative_id||null);
-        await supabase.from("projects").insert({ org_id:ORG_ID, ...owner, initiative_id:initId, rock_id:form.rock_id||null, name:form.name.trim(), description:form.description||null, status:form.status });
+        const payload = { initiative_id:initId, rock_id:form.rock_id||null, name:form.name.trim(), description:form.description||null, status:form.status, owner_user_id:ownerId };
+        if(editing) await supabase.from("projects").update(payload).eq("id",editing.id);
+        else await supabase.from("projects").insert({ org_id:ORG_ID, ...payload });
       } else if(modal==="task"){
         if(!form.title.trim()||!form.project_id){ setSaving(false); return; }
-        await supabase.from("tasks").insert({ org_id:ORG_ID, project_id:form.project_id, title:form.title.trim(), description:form.description||null, priority:form.priority, due_date:form.due_date||null, start_date:form.start_date||null, status:"todo", progress:0, created_by:creatorLabel(user) });
+        const payload = { project_id:form.project_id, title:form.title.trim(), description:form.description||null, priority:form.priority, due_date:form.due_date||null, start_date:form.start_date||null, assigned_to:taskAssignedName, assignee_ids:taskAssigneeIds };
+        if(editing) await supabase.from("tasks").update(payload).eq("id",editing.id);
+        else await supabase.from("tasks").insert({ org_id:ORG_ID, ...payload, status:"todo", progress:0, created_by:creatorLabel(user) });
       }
-      setModal(null); await load();
+      setModal(null); setEditing(null); await load();
     } catch(e){ alert("Save failed: "+(e.message||e)); }
     setSaving(false);
   };
@@ -4447,9 +4478,11 @@ function PlanningView({ user, onRefresh }) {
             <div style={{ fontFamily:SERIF, fontSize:20, color:C.text, marginBottom:4 }}>{it.name}</div>
             {it.description && <div style={{ fontSize:13, color:C.text2, fontFamily:FONT, marginBottom:6 }}>{it.description}</div>}
             {it.horizon_label && <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>Horizon: {it.horizon_label}</div>}
+            {ownerName(it) && <div style={{ fontSize:11, color:C.text3, fontFamily:FONT, marginTop:2 }}>Owner: <span style={{ color:C.text2, fontWeight:600 }}>{ownerName(it)}</span></div>}
           </div>
           <div style={{ display:"flex", flexDirection:"column", gap:8, alignItems:"flex-end" }}>
             <Sel value={it.status} onChange={v=>{ setStatus("initiatives",it.id,v); setSelInit({...it,status:v}); }} options={INIT_STATUS} />
+            <GoldButton small outline onClick={()=>openModal("init",{},it)}>{"\u270e"} Edit</GoldButton>
             <button onClick={()=>del("initiatives",it.id)} style={{ background:"none", border:"none", color:C.red, fontSize:11, fontFamily:FONT, cursor:"pointer", padding:0 }}>Delete</button>
           </div>
         </div>
@@ -4485,9 +4518,11 @@ function PlanningView({ user, onRefresh }) {
             {rk.initiative_id && initiativeById(rk.initiative_id) && <div style={{ fontSize:11, color:C.blue, fontFamily:FONT, marginBottom:4 }}>{"\ud83c\udfaf"} {initiativeById(rk.initiative_id).name}</div>}
             {rk.description && <div style={{ fontSize:13, color:C.text2, fontFamily:FONT }}>{rk.description}</div>}
             <div style={{ fontSize:11, color:C.text3, fontFamily:FONT, marginTop:6 }}>{rk.quarter||"No quarter"}{rk.due_date?` \u00b7 due ${rk.due_date}`:""} \u00b7 {rk.progress||0}%</div>
+            {ownerName(rk) && <div style={{ fontSize:11, color:C.text3, fontFamily:FONT, marginTop:2 }}>Owner: <span style={{ color:C.text2, fontWeight:600 }}>{ownerName(rk)}</span></div>}
           </div>
           <div style={{ display:"flex", flexDirection:"column", gap:8, alignItems:"flex-end" }}>
             <Sel value={rk.status} onChange={v=>{ setStatus("rocks",rk.id,v); setSelRock({...rk,status:v}); }} options={ROCK_STATUS} />
+            <GoldButton small outline onClick={()=>openModal("rock",{},rk)}>{"\u270e"} Edit</GoldButton>
             <button onClick={()=>del("rocks",rk.id)} style={{ background:"none", border:"none", color:C.red, fontSize:11, fontFamily:FONT, cursor:"pointer", padding:0 }}>Delete</button>
           </div>
         </div>
@@ -4509,9 +4544,11 @@ function PlanningView({ user, onRefresh }) {
           <div style={{ flex:1 }}>
             <div style={{ fontFamily:SERIF, fontSize:18, color:C.text, marginBottom:4 }}>{pj.name}</div>
             {pj.description && <div style={{ fontSize:13, color:C.text2, fontFamily:FONT }}>{pj.description}</div>}
+            {ownerName(pj) && <div style={{ fontSize:11, color:C.text3, fontFamily:FONT, marginTop:4 }}>Owner: <span style={{ color:C.text2, fontWeight:600 }}>{ownerName(pj)}</span></div>}
           </div>
           <div style={{ display:"flex", flexDirection:"column", gap:8, alignItems:"flex-end" }}>
             <Sel value={pj.status} onChange={v=>{ setStatus("projects",pj.id,v); setSelProj({...pj,status:v}); }} options={PROJ_STATUS} />
+            <GoldButton small outline onClick={()=>openModal("proj",{},pj)}>{"\u270e"} Edit</GoldButton>
             <button onClick={()=>del("projects",pj.id)} style={{ background:"none", border:"none", color:C.red, fontSize:11, fontFamily:FONT, cursor:"pointer", padding:0 }}>Delete</button>
           </div>
         </div>
@@ -4582,25 +4619,26 @@ function PlanningView({ user, onRefresh }) {
       )}
 
       {modal==="init" && (
-        <Modal title="New Initiative" onClose={()=>setModal(null)} maxWidth={460}>
+        <Modal title={editing?"Edit Initiative":"New Initiative"} onClose={()=>setModal(null)} maxWidth={460}>
           <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
             <Field label="Name" value={form.name} onChange={v=>set("name",v)} placeholder="e.g. Dominate Tampa luxury market" autoFocus />
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
               <Field label="Horizon" value={form.horizon_label} onChange={v=>set("horizon_label",v)} placeholder="e.g. 3-year" />
               <Sel label="Status" value={form.status} onChange={v=>set("status",v)} options={INIT_STATUS} />
             </div>
+            <Sel label="Owner" value={form.owner_user_id} onChange={v=>set("owner_user_id",v)} options={ownerOptions} />
             <Field label="Priority (number)" value={form.priority} onChange={v=>set("priority",v)} placeholder="0" />
             <Field label="Mission link" value={form.mission_link} onChange={v=>set("mission_link",v)} placeholder="Optional" />
             <Field label="Description" value={form.description} onChange={v=>set("description",v)} placeholder="Optional" />
             <div style={{ display:"flex", gap:10, paddingTop:4 }}>
-              <GoldButton onClick={save} disabled={saving||!(form.name||"").trim()}>{saving?"Saving\u2026":"Add Initiative"}</GoldButton>
+              <GoldButton onClick={save} disabled={saving||!(form.name||"").trim()}>{saving?"Saving\u2026":(editing?"Save changes":"Add Initiative")}</GoldButton>
               <GoldButton onClick={()=>setModal(null)} outline>Cancel</GoldButton>
             </div>
           </div>
         </Modal>
       )}
       {modal==="rock" && (
-        <Modal title="New Rock" onClose={()=>setModal(null)} maxWidth={460}>
+        <Modal title={editing?"Edit Rock":"New Rock"} onClose={()=>setModal(null)} maxWidth={460}>
           <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
             <Sel label="Initiative" value={form.initiative_id} onChange={v=>set("initiative_id",v)}
               options={[{value:"",label:"\u2014 Select an initiative \u2014"}, ...inits.map(it=>({value:it.id,label:it.name}))]} />
@@ -4613,16 +4651,17 @@ function PlanningView({ user, onRefresh }) {
               <Field label="Due date" value={form.due_date} onChange={v=>set("due_date",v)} type="date" />
               <Field label="Progress %" value={form.progress} onChange={v=>set("progress",v)} placeholder="0" />
             </div>
+            <Sel label="Owner" value={form.owner_user_id} onChange={v=>set("owner_user_id",v)} options={ownerOptions} />
             <Field label="Description" value={form.description} onChange={v=>set("description",v)} placeholder="Optional" />
             <div style={{ display:"flex", gap:10, paddingTop:4 }}>
-              <GoldButton onClick={save} disabled={saving||!(form.title||"").trim()||!form.initiative_id}>{saving?"Saving\u2026":"Add Rock"}</GoldButton>
+              <GoldButton onClick={save} disabled={saving||!(form.title||"").trim()||!form.initiative_id}>{saving?"Saving\u2026":(editing?"Save changes":"Add Rock")}</GoldButton>
               <GoldButton onClick={()=>setModal(null)} outline>Cancel</GoldButton>
             </div>
           </div>
         </Modal>
       )}
       {modal==="proj" && (
-        <Modal title="New Project" onClose={()=>setModal(null)} maxWidth={460}>
+        <Modal title={editing?"Edit Project":"New Project"} onClose={()=>setModal(null)} maxWidth={460}>
           <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
             <Sel label="Initiative" value={form.initiative_id} onChange={v=>{ set("initiative_id",v); set("rock_id",""); }}
               options={[{value:"",label:"\u2014 Select an initiative \u2014"}, ...inits.map(it=>({value:it.id,label:it.name}))]} />
@@ -4630,16 +4669,17 @@ function PlanningView({ user, onRefresh }) {
               options={[{value:"",label:"\u2014 None (directly under initiative) \u2014"}, ...rocksFor(form.initiative_id).map(r=>({value:r.id,label:r.title}))]} />
             <Field label="Name" value={form.name} onChange={v=>set("name",v)} placeholder="e.g. Launch referral program" autoFocus />
             <Sel label="Status" value={form.status} onChange={v=>set("status",v)} options={PROJ_STATUS} />
+            <Sel label="Owner" value={form.owner_user_id} onChange={v=>set("owner_user_id",v)} options={ownerOptions} />
             <Field label="Description" value={form.description} onChange={v=>set("description",v)} placeholder="Optional" />
             <div style={{ display:"flex", gap:10, paddingTop:4 }}>
-              <GoldButton onClick={save} disabled={saving||!(form.name||"").trim()}>{saving?"Saving\u2026":"Add Project"}</GoldButton>
+              <GoldButton onClick={save} disabled={saving||!(form.name||"").trim()}>{saving?"Saving\u2026":(editing?"Save changes":"Add Project")}</GoldButton>
               <GoldButton onClick={()=>setModal(null)} outline>Cancel</GoldButton>
             </div>
           </div>
         </Modal>
       )}
       {modal==="task" && (
-        <Modal title="New Task" onClose={()=>setModal(null)} maxWidth={440}>
+        <Modal title={editing?"Edit Task":"New Task"} onClose={()=>setModal(null)} maxWidth={440}>
           <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
             <Sel label="Project" value={form.project_id} onChange={v=>set("project_id",v)}
               options={[{value:"",label:"\u2014 Select a project \u2014"}, ...projects.map(p=>({value:p.id,label:p.name}))]} />
@@ -4648,9 +4688,10 @@ function PlanningView({ user, onRefresh }) {
               <Sel label="Priority" value={form.priority} onChange={v=>set("priority",v)} options={[{value:"low",label:"Low"},{value:"normal",label:"Normal"},{value:"high",label:"High"},{value:"urgent",label:"Urgent"}]} />
               <Field label="Due date" value={form.due_date} onChange={v=>set("due_date",v)} type="date" />
             </div>
+            <Sel label="Owner" value={form.owner_user_id} onChange={v=>set("owner_user_id",v)} options={ownerOptions} />
             <Field label="Description" value={form.description} onChange={v=>set("description",v)} placeholder="Optional" />
             <div style={{ display:"flex", gap:10, paddingTop:4 }}>
-              <GoldButton onClick={save} disabled={saving||!(form.title||"").trim()||!form.project_id}>{saving?"Saving\u2026":"Add Task"}</GoldButton>
+              <GoldButton onClick={save} disabled={saving||!(form.title||"").trim()||!form.project_id}>{saving?"Saving\u2026":(editing?"Save changes":"Add Task")}</GoldButton>
               <GoldButton onClick={()=>setModal(null)} outline>Cancel</GoldButton>
             </div>
           </div>
