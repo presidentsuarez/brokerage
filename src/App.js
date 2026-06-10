@@ -95,7 +95,6 @@ const NAV = [
   { id:"dashboard", label:"Dashboard", icon:"🏠" },
   { id:"deals",     label:"Deals",     icon:"🏘️" },
   { id:"contacts",  label:"Contacts",  icon:"👤" },
-  { id:"tasks",     label:"Tasks",     icon:"✅" },
   { id:"planning",  label:"Planning",  icon:"🧭" },
   { id:"calendar",  label:"Calendar",  icon:"📅" },
   { id:"listings",  label:"Listings",  icon:"📋" },
