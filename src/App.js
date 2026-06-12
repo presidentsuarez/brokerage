@@ -92,7 +92,6 @@ const STATUS_CONFIG = {
 };
 
 const NAV = [
-  { id:"dashboard", label:"Dashboard", icon:"🏠" },
   { id:"deals",     label:"Deals",     icon:"🏘️" },
   { id:"contacts",  label:"Contacts",  icon:"👤" },
   { id:"planning",  label:"Planning",  icon:"🧭" },
@@ -520,8 +519,11 @@ function Sidebar({ activeView, onNav, user, onSignOut, collapsed, mobileOpen, on
         <div style={{ padding:collapsed&&!isMobile?"16px 14px":"16px 18px",
           display:"flex", alignItems:"center", gap:10,
           borderBottom:`1px solid ${C.border}`, minHeight:56 }}>
-          <PrismMark size={26} />
-          {(!collapsed||isMobile) && <BrandWordmark variant="sidebar" />}
+          <div onClick={()=>handleNav("dashboard")} title="Dashboard"
+            style={{ display:"flex", alignItems:"center", gap:10, cursor:"pointer" }}>
+            <PrismMark size={26} />
+            {(!collapsed||isMobile) && <BrandWordmark variant="sidebar" />}
+          </div>
           {isMobile && (
             <button onClick={onMobileClose} style={{ background:"none", border:"none",
               color:C.text2, fontSize:20, cursor:"pointer", marginLeft:"auto",
