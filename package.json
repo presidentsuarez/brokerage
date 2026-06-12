@@ -20,7 +20,9 @@
     "predeploy": "npm run build",
     "deploy": "gh-pages -d build",
     "start": "react-scripts start",
+    "prebuild": "node scripts/check-build-env.js",
     "build": "react-scripts build",
+    "postbuild": "node scripts/verify-build.js",
     "test": "react-scripts test",
     "eject": "react-scripts eject"
   },
