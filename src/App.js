@@ -4781,17 +4781,30 @@ function PlanningView({ user, onRefresh }) {
 }
 
 function NotesView({ user }) {
-  const [notes,setNotes]           = useState([]);
-  const [loading,setLoading]       = useState(true);
+  const isMobile = useIsMobile();
+  const [notes,setNotes]             = useState([]);
+  const [loading,setLoading]         = useState(true);
   const [editingNote,setEditingNote] = useState(null);
-  const [saving,setSaving]         = useState(false);
-  const [toast,setToast]           = useState(null);
-  const [newTitle,setNewTitle]     = useState("");
+  const [saving,setSaving]           = useState(false);
+  const [toast,setToast]             = useState(null);
+  const [dragId,setDragId]           = useState(null);
+  const [overId,setOverId]           = useState(null);
+
+  const PRIO   = ["low","normal","high","urgent"];
+  const PCOL   = { urgent:C.red, high:C.amber, normal:C.blue, low:C.text3 };
+  const PLABEL = { urgent:"Urgent", high:"High", normal:"Normal", low:"Low" };
+
+  const sortNotes = (arr) => [...arr].sort((a,b)=>
+    (b.pinned?1:0)-(a.pinned?1:0)
+    || (a.sort_order??9999)-(b.sort_order??9999)
+    || new Date(b.updated_at)-new Date(a.updated_at)
+  );
 
   const loadNotes = async () => {
     const { data } = await supabase.from("team_notes")
       .select("*").eq("org_id", ORG_ID)
       .order("pinned", {ascending:false})
+      .order("sort_order", {ascending:true, nullsFirst:false})
       .order("updated_at", {ascending:false});
     setNotes(data||[]);
     setLoading(false);
@@ -4800,8 +4813,11 @@ function NotesView({ user }) {
   useEffect(()=>{ loadNotes(); },[]);
 
   const createNote = async () => {
+    const minOrder = notes.reduce((m,n)=>Math.min(m, n.sort_order??0), 0);
     const { data } = await supabase.from("team_notes")
-      .insert({ org_id:ORG_ID, title:"New Note", content:"", created_by:creatorLabel(user), updated_by:creatorLabel(user) })
+      .insert({ org_id:ORG_ID, title:"New Note", content:"", priority:"normal",
+                sort_order:minOrder-1,
+                created_by:creatorLabel(user), updated_by:creatorLabel(user) })
       .select().single();
     if(data){ await loadNotes(); setEditingNote(data); }
   };
@@ -4810,13 +4826,14 @@ function NotesView({ user }) {
     if(!editingNote) return;
     setSaving(true);
     await supabase.from("team_notes").update({
-      title:   editingNote.title,
-      content: editingNote.content,
+      title:    editingNote.title,
+      content:  editingNote.content,
+      priority: editingNote.priority||"normal",
       updated_by: creatorLabel(user),
       updated_at: new Date().toISOString(),
     }).eq("id", editingNote.id);
     setSaving(false);
-    setNotes(n=>n.map(x=>x.id===editingNote.id?{...x,...editingNote,updated_at:new Date().toISOString()}:x));
+    setNotes(n=>sortNotes(n.map(x=>x.id===editingNote.id?{...x,...editingNote,updated_at:new Date().toISOString()}:x)));
     setEditingNote(null);
     setToast({msg:"Note saved",type:"success"});
   };
@@ -4830,16 +4847,69 @@ function NotesView({ user }) {
 
   const togglePin = async (note) => {
     await supabase.from("team_notes").update({pinned:!note.pinned}).eq("id",note.id);
-    setNotes(n=>n.map(x=>x.id===note.id?{...x,pinned:!x.pinned}:x).sort((a,b)=>b.pinned-a.pinned));
+    setNotes(n=>sortNotes(n.map(x=>x.id===note.id?{...x,pinned:!x.pinned}:x)));
   };
 
-  const fmtDate = iso => {
-    if(!iso) return "";
-    return new Date(iso).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"});
+  const cyclePriority = async (note) => {
+    const next = PRIO[(PRIO.indexOf(note.priority||"normal")+1)%PRIO.length];
+    setNotes(n=>n.map(x=>x.id===note.id?{...x,priority:next}:x));
+    await supabase.from("team_notes").update({priority:next}).eq("id",note.id);
   };
+
+  const persistOrder = async (ordered) => {
+    await Promise.all(ordered.map((n,i)=>
+      supabase.from("team_notes").update({sort_order:i}).eq("id",n.id)
+    ));
+  };
+
+  // Reorder one note ahead of another; only within the same pinned-group so
+  // pinned notes always stay on top.
+  const reorder = async (fromId, toId) => {
+    if(!fromId || fromId===toId) return;
+    const list = sortNotes(notes);
+    const from = list.findIndex(n=>n.id===fromId);
+    const to   = list.findIndex(n=>n.id===toId);
+    if(from<0||to<0) return;
+    if(list[from].pinned !== list[to].pinned) return;
+    const next=[...list];
+    const [moved]=next.splice(from,1);
+    next.splice(to,0,moved);
+    const renum = next.map((n,i)=>({...n,sort_order:i}));
+    setNotes(renum);
+    await persistOrder(renum);
+  };
+
+  // Up/down nudge — the touch-friendly path (HTML5 drag doesn't fire on phones).
+  const moveBy = async (note, dir) => {
+    const list = sortNotes(notes);
+    const idx  = list.findIndex(n=>n.id===note.id);
+    const tgt  = idx+dir;
+    if(tgt<0 || tgt>=list.length) return;
+    if(list[tgt].pinned !== note.pinned) return;
+    await reorder(note.id, list[tgt].id);
+  };
+
+  const fmtDate = iso => iso ? new Date(iso).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "";
+
+  const thStyle = { padding:"9px 12px", fontSize:10, textTransform:"uppercase", letterSpacing:"0.06em",
+                    color:C.text3, fontWeight:700, textAlign:"center", whiteSpace:"nowrap", fontFamily:FONT };
+  const tdStyle = { padding:"10px 12px", verticalAlign:"middle", fontFamily:FONT };
+
+  const ordered = sortNotes(notes);
+
+  const PriorityChip = ({note}) => (
+    <button onClick={e=>{e.stopPropagation();cyclePriority(note);}} title="Click to change priority"
+      style={{ display:"inline-flex", alignItems:"center", gap:6, cursor:"pointer",
+        background:C.surface2, border:`1px solid ${C.border2}`, borderRadius:20,
+        padding:"4px 11px", fontFamily:FONT, fontSize:11, fontWeight:600, color:C.text2,
+        minHeight:isMobile?32:"auto" }}>
+      <span style={{ width:8, height:8, borderRadius:"50%", background:PCOL[note.priority]||C.text3 }} />
+      {PLABEL[note.priority]||"Normal"}
+    </button>
+  );
 
   return (
-    <div style={{ padding:"16px", maxWidth:900 }}>
+    <div style={{ padding:"16px", maxWidth:980 }}>
       {toast&&<Toast message={toast.msg} type={toast.type} onDone={()=>setToast(null)} />}
 
       <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:20 }}>
@@ -4855,18 +4925,34 @@ function NotesView({ user }) {
       ) : editingNote ? (
         /* ── Editor ── */
         <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:"22px 24px" }}>
-          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:14 }}>
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:14, gap:12, flexWrap:"wrap" }}>
             <input value={editingNote.title}
               onChange={e=>setEditingNote(n=>({...n,title:e.target.value}))}
               placeholder="Note title"
-              style={{ flex:1, fontSize:18, fontWeight:700, color:C.text, fontFamily:SERIF,
+              style={{ flex:1, minWidth:180, fontSize:18, fontWeight:700, color:C.text, fontFamily:SERIF,
                 background:"transparent", border:"none", outline:"none",
-                borderBottom:`1px solid ${C.border2}`, paddingBottom:8, marginRight:16 }} />
+                borderBottom:`1px solid ${C.border2}`, paddingBottom:8 }} />
             <div style={{ display:"flex", gap:8 }}>
               <GoldButton onClick={saveNote} disabled={saving} small>{saving?"Saving…":"Save"}</GoldButton>
               <GoldButton onClick={()=>setEditingNote(null)} outline small>Cancel</GoldButton>
             </div>
           </div>
+
+          <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:16, flexWrap:"wrap" }}>
+            <span style={{ fontSize:10, color:C.text3, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.06em", marginRight:2 }}>Priority</span>
+            {PRIO.map(p=>(
+              <button key={p} onClick={()=>setEditingNote(nn=>({...nn,priority:p}))}
+                style={{ cursor:"pointer", borderRadius:20, padding:"5px 12px", fontSize:11, fontWeight:600, fontFamily:FONT,
+                  border:`1px solid ${(editingNote.priority||"normal")===p?PCOL[p]:C.border2}`,
+                  background:(editingNote.priority||"normal")===p ? PCOL[p]+"22" : "transparent",
+                  color:(editingNote.priority||"normal")===p ? C.text : C.text3,
+                  display:"inline-flex", alignItems:"center", gap:6, minHeight:isMobile?36:"auto" }}>
+                <span style={{ width:8,height:8,borderRadius:"50%",background:PCOL[p] }} />
+                {PLABEL[p]}
+              </button>
+            ))}
+          </div>
+
           <textarea
             value={editingNote.content}
             onChange={e=>setEditingNote(n=>({...n,content:e.target.value}))}
@@ -4885,43 +4971,86 @@ function NotesView({ user }) {
           </div>
         </div>
       ) : (
-        /* ── Note list ── */
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))", gap:12 }}>
-          {notes.length===0 ? (
-            <div style={{ gridColumn:"1/-1", textAlign:"center", padding:"48px 0",
-              color:C.text3, fontSize:13, fontFamily:FONT }}>
-              No notes yet — click + New Note to get started.
-            </div>
-          ) : notes.map(n=>(
-            <div key={n.id}
-              onClick={()=>setEditingNote(n)}
-              style={{ background:C.surface, border:`1px solid ${n.pinned?C.goldBorder:C.border}`,
-                borderRadius:12, padding:"16px 18px", cursor:"pointer",
-                transition:"border-color 0.12s, background 0.12s",
-                display:"flex", flexDirection:"column", gap:6 }}
-              onMouseEnter={e=>e.currentTarget.style.background=C.surface2}
-              onMouseLeave={e=>e.currentTarget.style.background=C.surface}>
-              <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:8 }}>
-                <div style={{ fontSize:14, fontWeight:700, color:C.text, fontFamily:SERIF,
-                  letterSpacing:"-0.01em", lineHeight:1.3 }}>{n.title||"Untitled"}</div>
-                <button onClick={e=>{e.stopPropagation();togglePin(n);}}
-                  style={{ background:"none", border:"none", cursor:"pointer", padding:0,
-                    fontSize:13, color:n.pinned?C.gold:C.text3, flexShrink:0,
-                    lineHeight:1, marginTop:1 }}
-                  title={n.pinned?"Unpin":"Pin to top"}>
-                  {n.pinned?"📌":"📍"}
-                </button>
-              </div>
-              <div style={{ fontSize:12, color:C.text3, fontFamily:FONT, lineHeight:1.5,
-                overflow:"hidden", display:"-webkit-box", WebkitLineClamp:3,
-                WebkitBoxOrient:"vertical" }}>
-                {n.content||"Empty note"}
-              </div>
-              <div style={{ fontSize:10, color:C.text3, fontFamily:FONT, marginTop:4 }}>
-                {fmtDate(n.updated_at)} · {n.updated_by||n.created_by||""}
-              </div>
-            </div>
-          ))}
+        /* ── Note table ── */
+        <div style={{ overflowX:"auto", border:`1px solid ${C.border}`, borderRadius:12, background:C.surface }}>
+          <table style={{ width:"100%", minWidth:560, borderCollapse:"collapse" }}>
+            <thead>
+              <tr style={{ borderBottom:`1px solid ${C.border}` }}>
+                <th style={{...thStyle, width:isMobile?54:34}}></th>
+                <th style={{...thStyle, width:104}}>Priority</th>
+                <th style={{...thStyle, textAlign:"left"}}>Note</th>
+                {!isMobile && <th style={{...thStyle, width:150}}>Updated</th>}
+                <th style={{...thStyle, width:44}}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {ordered.length===0 ? (
+                <tr><td colSpan={isMobile?4:5} style={{ textAlign:"center", padding:"48px 0", color:C.text3, fontSize:13, fontFamily:FONT }}>
+                  No notes yet — click + New Note to get started.
+                </td></tr>
+              ) : ordered.map(n=>(
+                <tr key={n.id}
+                  draggable={!isMobile}
+                  onDragStart={()=>setDragId(n.id)}
+                  onDragOver={e=>{e.preventDefault(); if(overId!==n.id) setOverId(n.id);}}
+                  onDrop={()=>{ reorder(dragId,n.id); setDragId(null); setOverId(null); }}
+                  onDragEnd={()=>{ setDragId(null); setOverId(null); }}
+                  onClick={()=>setEditingNote(n)}
+                  style={{ borderBottom:`1px solid ${C.border}`, cursor:"pointer",
+                    background: overId===n.id ? C.surface2 : "transparent",
+                    opacity: dragId===n.id ? 0.4 : 1, transition:"background 0.1s" }}>
+
+                  {/* drag handle / mobile nudge arrows */}
+                  <td style={{...tdStyle, textAlign:"center", color:C.text3}} onClick={e=>e.stopPropagation()}>
+                    {isMobile ? (
+                      <div style={{ display:"flex", flexDirection:"column", gap:2, alignItems:"center" }}>
+                        <button onClick={()=>moveBy(n,-1)} title="Move up"
+                          style={{ background:"none", border:"none", cursor:"pointer", color:C.text3, fontSize:12, lineHeight:1, padding:2 }}>▲</button>
+                        <button onClick={()=>moveBy(n,1)} title="Move down"
+                          style={{ background:"none", border:"none", cursor:"pointer", color:C.text3, fontSize:12, lineHeight:1, padding:2 }}>▼</button>
+                      </div>
+                    ) : (
+                      <span title="Drag to reorder" style={{ cursor:"grab", fontSize:15, userSelect:"none" }}>⠿</span>
+                    )}
+                  </td>
+
+                  {/* priority */}
+                  <td style={{...tdStyle, textAlign:"center"}}>
+                    <PriorityChip note={n} />
+                  </td>
+
+                  {/* note title + preview */}
+                  <td style={{...tdStyle, textAlign:"left"}}>
+                    <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                      {n.pinned && <span style={{ fontSize:11 }}>📌</span>}
+                      <span style={{ fontSize:14, fontWeight:700, color:C.text, fontFamily:SERIF, letterSpacing:"-0.01em" }}>{n.title||"Untitled"}</span>
+                    </div>
+                    <div style={{ fontSize:11.5, color:C.text3, fontFamily:FONT, marginTop:2,
+                      overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:isMobile?180:440 }}>
+                      {(n.content||"Empty note").replace(/\n/g," ").slice(0,160)}
+                    </div>
+                  </td>
+
+                  {/* updated (desktop only) */}
+                  {!isMobile && (
+                    <td style={{...tdStyle, textAlign:"center", color:C.text3, fontSize:11, whiteSpace:"nowrap"}}>
+                      <div>{fmtDate(n.updated_at)}</div>
+                      <div style={{ color:C.text3 }}>{n.updated_by||n.created_by||""}</div>
+                    </td>
+                  )}
+
+                  {/* pin */}
+                  <td style={{...tdStyle, textAlign:"center"}} onClick={e=>e.stopPropagation()}>
+                    <button onClick={()=>togglePin(n)} title={n.pinned?"Unpin":"Pin to top"}
+                      style={{ background:"none", border:"none", cursor:"pointer", fontSize:14,
+                        color:n.pinned?C.gold:C.text3, lineHeight:1, padding:4 }}>
+                      {n.pinned?"📌":"📍"}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>
