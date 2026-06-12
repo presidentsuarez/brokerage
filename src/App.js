@@ -2822,6 +2822,8 @@ function AgentPortalApp(
   const [team, setTeam]       = useState([]);
   const [loading, setLoading] = useState(true);
   const isMobile = useIsMobile();
+  const isTablet = useIsTablet();
+  const navOverlay = isMobile || isTablet; // sidebar overlays (doesn't push content) below 1024px
   const [sidebarCollapsed, setSC] = useState(false);
   const [mobileMenuOpen, setMobileMenu] = useState(false);
   const [chatMsgs, setChatMsgs]   = useState([]);
@@ -2910,15 +2912,15 @@ function AgentPortalApp(
   };
 
   const fmt = n=>n>=1e6?`$${(n/1e6).toFixed(1)}M`:n>=1e3?`$${(n/1e3).toFixed(0)}K`:`$${n}`;
-  const sw  = isMobile ? 0 : sidebarCollapsed ? 56 : 220;
+  const sw  = navOverlay ? 0 : sidebarCollapsed ? 56 : 220;
 
   // ── Agent Sidebar ──
   const AgentSidebar = () => {
-    const sW = isMobile ? 272 : sidebarCollapsed ? 56 : 220;
-    const isHidden = isMobile && !mobileMenuOpen;
+    const sW = navOverlay ? 272 : sidebarCollapsed ? 56 : 220;
+    const isHidden = navOverlay && !mobileMenuOpen;
     return (
     <>
-      {isMobile && mobileMenuOpen && (
+      {navOverlay && mobileMenuOpen && (
         <div onClick={()=>setMobileMenu(false)}
           style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.6)", zIndex:99 }} />
       )}
@@ -2928,7 +2930,7 @@ function AgentPortalApp(
       transition:"transform 0.25s ease, width 0.2s,min-width 0.2s", overflow:"hidden",
       position:"fixed", top:isPreview?40:0, left:0, zIndex:100,
       transform:isHidden?"translateX(-100%)":"translateX(0)",
-      boxShadow:isMobile&&mobileMenuOpen?"4px 0 24px rgba(0,0,0,0.4)":"none" }}>
+      boxShadow:navOverlay&&mobileMenuOpen?"4px 0 24px rgba(0,0,0,0.4)":"none" }}>
 
       <div style={{ padding:sidebarCollapsed?"16px 14px":"16px 18px",
         display:"flex", alignItems:"center", gap:10,
@@ -2948,7 +2950,7 @@ function AgentPortalApp(
         {PORTAL_NAV.map(item=>{
           const active = view===item.id;
           return (
-            <button key={item.id} onClick={()=>{setView(item.id);if(isMobile)setMobileMenu(false);}} style={{
+            <button key={item.id} onClick={()=>{setView(item.id);if(navOverlay)setMobileMenu(false);}} style={{
               display:"flex", alignItems:"center", gap:10,
               padding:sidebarCollapsed?"10px 0":"9px 12px",
               justifyContent:sidebarCollapsed?"center":"flex-start",
@@ -3527,7 +3529,7 @@ function AgentPortalApp(
         display:"flex", flexDirection:"column", minWidth:0,
         paddingBottom:isMobile?56:0 }}>
         <TopBar title={ptitle} subtitle={psub} theme={theme} onToggleTheme={toggleTheme}
-          onToggleSidebar={()=>isMobile?setMobileMenu(o=>!o):setSC(c=>!c)} />
+          onToggleSidebar={()=>navOverlay?setMobileMenu(o=>!o):setSC(c=>!c)} />
         {isPreview && (
           <div style={{ background:"rgba(212,175,55,0.08)", borderBottom:`1px solid ${C.goldBorder}`,
             padding:"8px 20px", fontSize:11, color:C.gold, fontFamily:FONT,
