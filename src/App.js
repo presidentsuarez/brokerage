@@ -490,6 +490,7 @@ function Sidebar({ activeView, onNav, user, onSignOut, collapsed, mobileOpen, on
 
   const sidebarW = isMobile ? 272 : collapsed ? 56 : 220;
   const isHidden = isMobile && !mobileOpen;
+  const [profileOpen, setProfileOpen] = useState(false);
 
   const handleNav = (id) => {
     onNav(id);
@@ -562,40 +563,83 @@ function Sidebar({ activeView, onNav, user, onSignOut, collapsed, mobileOpen, on
           })}
         </nav>
 
-        {/* User footer */}
+        {/* User footer — click your profile to reveal details / settings / sign out */}
         <div style={{ padding:(collapsed&&!isMobile)?"10px 6px":"12px 14px",
-          borderTop:`1px solid ${C.border}` }}>
-          {(!collapsed||isMobile) && (
-            <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:10,
-              padding:"4px 6px" }}>
-              <Avatar name={user?.full_name} email={user?.email} size={32} />
-              <div style={{ flex:1, minWidth:0 }}>
+          borderTop:`1px solid ${C.border}`, position:"relative" }}>
+
+          {profileOpen && (
+            <>
+              <div onClick={()=>setProfileOpen(false)}
+                style={{ position:"fixed", inset:0, zIndex:120 }} />
+              <div style={{ position:"absolute", bottom:"100%", left:8, width:226,
+                maxWidth:"calc(100vw - 24px)", marginBottom:8, background:C.surface2,
+                border:`1px solid ${C.border}`, borderRadius:12,
+                boxShadow:"0 10px 34px rgba(0,0,0,0.55)", zIndex:121, overflow:"hidden", padding:6 }}>
+                {/* profile details */}
+                <div style={{ padding:"10px 10px 12px", borderBottom:`1px solid ${C.border}`,
+                  marginBottom:6, display:"flex", alignItems:"center", gap:10 }}>
+                  <Avatar name={user?.full_name} email={user?.email} size={36} />
+                  <div style={{ minWidth:0 }}>
+                    <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:FONT,
+                      whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
+                      {user?.full_name||user?.email}</div>
+                    <div style={{ fontSize:11, color:C.text3, fontFamily:FONT,
+                      whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
+                      {user?.email}</div>
+                    <div style={{ fontSize:10, color:C.text3, fontFamily:FONT,
+                      textTransform:"capitalize", marginTop:1 }}>
+                      {user?.brokerage_role||user?.role}</div>
+                  </div>
+                </div>
+                {/* personal settings (platform admin) */}
+                {user?.email===PLATFORM_ADMIN && (
+                  <button onClick={()=>{ setProfileOpen(false); handleNav("settings"); }}
+                    style={{ width:"100%", display:"flex", alignItems:"center", gap:10,
+                      padding:"9px 10px", background:"transparent", border:"none", borderRadius:8,
+                      color:C.text2, fontSize:13, fontFamily:FONT, cursor:"pointer", textAlign:"left" }}
+                    onMouseEnter={e=>{e.currentTarget.style.background=C.surface;e.currentTarget.style.color=C.text;}}
+                    onMouseLeave={e=>{e.currentTarget.style.background="transparent";e.currentTarget.style.color=C.text2;}}>
+                    <span style={{ fontSize:15 }}>⚙️</span><span>Settings</span>
+                  </button>
+                )}
+                {/* sign out */}
+                <button onClick={onSignOut}
+                  style={{ width:"100%", display:"flex", alignItems:"center", gap:10,
+                    padding:"9px 10px", background:"transparent", border:"none", borderRadius:8,
+                    color:C.text3, fontSize:13, fontFamily:FONT, cursor:"pointer", textAlign:"left" }}
+                  onMouseEnter={e=>{e.currentTarget.style.background="rgba(239,68,68,0.10)";e.currentTarget.style.color=C.red;}}
+                  onMouseLeave={e=>{e.currentTarget.style.background="transparent";e.currentTarget.style.color=C.text3;}}>
+                  <span style={{ fontSize:15 }}>⎋</span><span>Sign out</span>
+                </button>
+              </div>
+            </>
+          )}
+
+          {/* profile trigger */}
+          <button onClick={()=>setProfileOpen(o=>!o)} title="Your profile"
+            style={{ width:"100%", display:"flex", alignItems:"center",
+              gap:(collapsed&&!isMobile)?0:10,
+              justifyContent:(collapsed&&!isMobile)?"center":"flex-start",
+              padding:(collapsed&&!isMobile)?"6px 0":"6px 6px",
+              background:profileOpen?C.surface2:"transparent",
+              border:`1px solid ${profileOpen?C.border:"transparent"}`, borderRadius:10,
+              cursor:"pointer", minHeight:isMobile?44:undefined, transition:"background 0.12s" }}
+            onMouseEnter={e=>{if(!profileOpen)e.currentTarget.style.background=C.surface2;}}
+            onMouseLeave={e=>{if(!profileOpen)e.currentTarget.style.background="transparent";}}>
+            <Avatar name={user?.full_name} email={user?.email} size={(collapsed&&!isMobile)?28:32} />
+            {(!collapsed||isMobile) && (
+              <div style={{ flex:1, minWidth:0, textAlign:"left" }}>
                 <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:FONT,
                   whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
-                  {user?.full_name||user?.email}
-                </div>
+                  {user?.full_name||user?.email}</div>
                 <div style={{ fontSize:10, color:C.text3, fontFamily:FONT, textTransform:"capitalize" }}>
-                  {user?.brokerage_role||user?.role}
-                </div>
+                  {user?.brokerage_role||user?.role}</div>
               </div>
-            </div>
-          )}
-          {(collapsed&&!isMobile) && (
-            <div style={{ display:"flex", justifyContent:"center", marginBottom:8 }}>
-              <Avatar name={user?.full_name} email={user?.email} size={28} />
-            </div>
-          )}
-          <button onClick={onSignOut} style={{
-            width:"100%", padding:(collapsed&&!isMobile)?"8px 0":"9px 12px",
-            background:C.surface2, border:`1px solid ${C.border}`, borderRadius:8,
-            color:C.text3, fontSize:12, fontFamily:FONT, cursor:"pointer",
-            display:"flex", alignItems:"center",
-            justifyContent:(collapsed&&!isMobile)?"center":"flex-start", gap:8,
-            minHeight:isMobile?44:32, transition:"color 0.12s" }}
-            onMouseEnter={e=>e.currentTarget.style.color=C.red}
-            onMouseLeave={e=>e.currentTarget.style.color=C.text3}>
-            <span style={{ fontSize:14 }}>⎋</span>
-            {(!collapsed||isMobile)&&<span>Sign out</span>}
+            )}
+            {(!collapsed||isMobile) && (
+              <span style={{ marginLeft:"auto", color:C.text3, fontSize:11,
+                transform:profileOpen?"rotate(180deg)":"none", transition:"transform 0.15s" }}>▴</span>
+            )}
           </button>
         </div>
       </div>
