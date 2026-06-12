@@ -8906,7 +8906,125 @@ const setQ = (obj) => {
   } catch(e){}
 };
 
+function TVBoard() {
+  const [data,setData] = useState(null);
+  const [idx,setIdx]   = useState(0);
+  const [now,setNow]   = useState(new Date());
+  const slides = ["glance","recruiting","deals","leaderboard"];
+  const TITLES = { glance:"Brokerage at a Glance", recruiting:"Recruiting Pipeline", deals:"Recent Activity", leaderboard:"Top Producers" };
+
+  useEffect(()=>{
+    let alive=true;
+    const pull=async()=>{ try{ const { data:d } = await supabase.rpc("tv_board"); if(alive&&d) setData(d); }catch(e){} };
+    pull(); const di=setInterval(pull,60000); return ()=>{ alive=false; clearInterval(di); };
+  },[]);
+  useEffect(()=>{
+    const si=setInterval(()=>setIdx(i=>(i+1)%slides.length),12000);
+    const ci=setInterval(()=>setNow(new Date()),30000);
+    return ()=>{ clearInterval(si); clearInterval(ci); };
+  },[]);
+
+  const fmtMoney = n => { n=Number(n)||0; return n>=1e9?`$${(n/1e9).toFixed(2)}B`:n>=1e6?`$${(n/1e6).toFixed(1)}M`:n>=1e3?`$${(n/1e3).toFixed(0)}K`:`$${n}`; };
+  const fmtNum   = n => (Number(n)||0).toLocaleString();
+  const wrap = { position:"fixed", inset:0, background:"#0a0a0a", color:C.text, fontFamily:FONT, overflow:"hidden", display:"flex", flexDirection:"column" };
+  if(!data) return <div style={{...wrap, alignItems:"center", justifyContent:"center"}}><div style={{color:C.text3, fontSize:"1.5vw"}}>Loading broadcast…</div></div>;
+  const cur = slides[idx];
+  const g=data.glance||{}, r=data.recruiting||{}, deals=data.recent_deals||[], board=data.leaderboard||[];
+  const tile = (l,v,c)=>(
+    <div key={l} style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:"1vw", padding:"4vh 2vw", textAlign:"center" }}>
+      <div style={{ fontSize:"3.4vw", fontWeight:800, fontFamily:SERIF, color:c, lineHeight:1 }}>{v}</div>
+      <div style={{ fontSize:"1vw", color:C.text3, textTransform:"uppercase", letterSpacing:"0.12em", marginTop:"1.6vh" }}>{l}</div>
+    </div>
+  );
+
+  return (
+    <div style={wrap}>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"3.5vh 4vw 0" }}>
+        <div style={{ fontFamily:SERIF, fontWeight:700, fontSize:"2.3vw" }}>Realty <span style={{color:C.gold}}>ONE</span> Group <span style={{fontWeight:600}}>Advantage</span></div>
+        <div style={{ textAlign:"right" }}>
+          <div style={{ fontSize:"1.7vw", fontFamily:MONO }}>{now.toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"})}</div>
+          <div style={{ fontSize:"0.9vw", color:C.text3 }}>{now.toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"})}</div>
+        </div>
+      </div>
+      <div style={{ padding:"1.4vh 4vw 0", fontSize:"1.15vw", color:C.gold, textTransform:"uppercase", letterSpacing:"0.22em", fontWeight:700 }}>{TITLES[cur]}</div>
+
+      <div key={cur} style={{ flex:1, padding:"2vh 4vw", display:"flex", flexDirection:"column", justifyContent:"center", animation:"tvfade .8s ease" }}>
+        {cur==="glance" && (
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:"1.8vw" }}>
+            {tile("Active Deals",fmtNum(g.active_deals),C.text)}
+            {tile("Closed · All-Time",fmtNum(g.closed_all_time),C.green)}
+            {tile("Volume · 7yr",fmtMoney(g.volume_7yr),C.gold)}
+            {tile("GCI · 7yr",fmtMoney(g.gci_7yr),C.gold)}
+            {tile("Contacts",fmtNum(g.contacts),C.text)}
+          </div>
+        )}
+        {cur==="recruiting" && (
+          <div>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:"1.8vw", marginBottom:"5vh" }}>
+              {tile("Total Leads",fmtNum(r.total),C.text)}
+              {tile("🔥 Hot",fmtNum(r.hot),C.red)}
+              {tile("Warm",fmtNum(r.warm),C.amber)}
+              {tile("Cold",fmtNum(r.cold),C.blue)}
+            </div>
+            {(r.stages||[]).map(s=>{ const pct=r.total?Math.max(s.count/r.total*100,1.5):0; return (
+              <div key={s.stage} style={{ marginBottom:"2.6vh" }}>
+                <div style={{ display:"flex", justifyContent:"space-between", fontSize:"1.4vw", marginBottom:"0.8vh" }}>
+                  <span>{s.stage}</span><span style={{fontFamily:MONO,color:C.gold}}>{fmtNum(s.count)}</span>
+                </div>
+                <div style={{ height:"1.8vh", background:C.surface2, borderRadius:"1vh", overflow:"hidden" }}>
+                  <div style={{ width:pct+"%", height:"100%", background:`linear-gradient(90deg,${C.goldDim},${C.gold})` }} />
+                </div>
+              </div>
+            );})}
+          </div>
+        )}
+        {cur==="deals" && (
+          <div style={{ display:"flex", flexDirection:"column", gap:"1.6vh" }}>
+            {deals.length===0 && <div style={{color:C.text3, fontSize:"1.4vw"}}>No recent deals.</div>}
+            {deals.map((d,i)=>(
+              <div key={i} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", background:C.surface, border:`1px solid ${C.border}`, borderRadius:"0.8vw", padding:"2.6vh 2.2vw" }}>
+                <div style={{ minWidth:0 }}>
+                  <div style={{ fontSize:"2vw", fontWeight:700 }}>{d.address||"—"}</div>
+                  <div style={{ fontSize:"1vw", color:C.text3 }}>{[d.city,d.state].filter(Boolean).join(", ")}{d.type?" · "+d.type:""}</div>
+                </div>
+                <div style={{ textAlign:"right" }}>
+                  <div style={{ fontSize:"2vw", fontFamily:MONO, color:C.gold }}>{d.price?fmtMoney(d.price):"—"}</div>
+                  <div style={{ fontSize:"1vw", color:(d.status==="Closed")?C.green:C.blue, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.06em" }}>{d.status}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        {cur==="leaderboard" && (
+          <div style={{ display:"flex", flexDirection:"column", gap:"1.2vh" }}>
+            {board.map((a,i)=>(
+              <div key={i} style={{ display:"flex", alignItems:"center", gap:"2vw", background:C.surface, border:`1px solid ${i<3?C.goldBorder:C.border}`, borderRadius:"0.8vw", padding:"1.9vh 2.2vw" }}>
+                <div style={{ fontSize:"2.1vw", fontWeight:800, fontFamily:SERIF, color:i===0?C.gold:C.text3, width:"3vw", textAlign:"center" }}>{i+1}</div>
+                <div style={{ flex:1, fontSize:"1.8vw", fontWeight:700, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{a.name||"—"}</div>
+                <div style={{ textAlign:"right" }}>
+                  <div style={{ fontSize:"1.7vw", fontFamily:MONO, color:C.gold }}>{fmtMoney(a.volume)}</div>
+                  <div style={{ fontSize:"0.9vw", color:C.text3 }}>{fmtNum(a.deals)} deals · {fmtMoney(a.gci)} GCI</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div style={{ display:"flex", gap:"1vw", justifyContent:"center", padding:"3vh 0 3.5vh" }}>
+        {slides.map((s,i)=>(<div key={s} style={{ width:i===idx?"3vw":"1vw", height:"0.6vh", borderRadius:"1vh", background:i===idx?C.gold:C.border2, transition:"all .4s" }} />))}
+      </div>
+      <style>{`@keyframes tvfade{from{opacity:0;transform:translateY(1.2vh)}to{opacity:1;transform:none}}`}</style>
+    </div>
+  );
+}
+
 export default function App() {
+  const tv = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("tv") === "1";
+  return tv ? <TVBoard /> : <MainApp />;
+}
+
+function MainApp() {
   const [session,setSession]             = useState(null);
   const [authLoading,setAuthLoading]     = useState(true);
   const [authScreen,setAuthScreen]       = useState("login");
