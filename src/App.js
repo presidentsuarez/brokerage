@@ -8548,6 +8548,8 @@ function SettingsView({ user, onProfileSaved, theme, onToggleTheme }) {
   const [toast,setToast]       = useState(null);
   const setE = (k,v) => setEditForm(f=>({...f,[k]:v}));
   const setP = (k,v) => setPwForm(f=>({...f,[k]:v}));
+  const [org,setOrg] = useState(null);
+  useEffect(()=>{ supabase.from("organizations").select("*").eq("id",ORG_ID).maybeSingle().then(({data})=>{ if(data) setOrg(data); }); },[]);
 
   const saveProfile = async () => {
     setSaving(true);
@@ -8605,6 +8607,30 @@ function SettingsView({ user, onProfileSaved, theme, onToggleTheme }) {
       </div>
 
       <OrgMembersCard />
+
+      {org && (
+        <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:"20px 22px", marginTop:12 }}>
+          <div style={{ fontSize:11, fontWeight:700, color:C.text3, fontFamily:FONT, letterSpacing:"0.08em", textTransform:"uppercase", marginBottom:8 }}>Office Information</div>
+          {[
+            ["Broker of Record", org.broker_name],
+            ["Head Office ID", org.office_id],
+            ["Address", [org.address, org.city, org.state, org.zip].filter(Boolean).join(", ")],
+            ["Phone", org.phone],
+            ["Fax", org.fax],
+            ["Email", org.email],
+            ["Website", org.website],
+          ].filter(([,v])=>v).map(([k,v],i)=>(
+            <div key={k} style={{ display:"flex", alignItems:"baseline", justifyContent:"space-between", gap:16, padding:"9px 0", borderTop:i===0?"none":`1px solid ${C.border}`, fontFamily:FONT }}>
+              <span style={{ fontSize:12, color:C.text3, whiteSpace:"nowrap" }}>{k}</span>
+              {k==="Email"
+                ? <a href={`mailto:${v}`} style={{ fontSize:12.5, color:C.gold, textAlign:"right", wordBreak:"break-word", textDecoration:"none" }}>{v}</a>
+                : k==="Website"
+                ? <a href={v} target="_blank" rel="noreferrer" style={{ fontSize:12.5, color:C.gold, textAlign:"right", wordBreak:"break-word", textDecoration:"none" }}>{v}</a>
+                : <span style={{ fontSize:12.5, color:C.text2, textAlign:"right", fontWeight:600, wordBreak:"break-word" }}>{v}</span>}
+            </div>
+          ))}
+        </div>
+      )}
 
       <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:"20px 22px", marginTop:12 }}>
         <div style={{ fontSize:11, fontWeight:700, color:C.text3, fontFamily:FONT, letterSpacing:"0.08em", textTransform:"uppercase", marginBottom:14 }}>Appearance</div>
