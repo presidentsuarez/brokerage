@@ -2824,6 +2824,7 @@ function AgentPortalApp(
   const isMobile = useIsMobile();
   const isTablet = useIsTablet();
   const navOverlay = isMobile || isTablet; // sidebar overlays (doesn't push content) below 1024px
+  const [portalBoard, setPortalBoard] = useState("listing");
   const [sidebarCollapsed, setSC] = useState(false);
   const [mobileMenuOpen, setMobileMenu] = useState(false);
   const [chatMsgs, setChatMsgs]   = useState([]);
@@ -3512,7 +3513,7 @@ function AgentPortalApp(
 
     const PORTAL_TITLES = {
     portal_dashboard: ["Dashboard", `Welcome, ${agentName.split(" ")[0]}`],
-    portal_pipeline:  ["My Pipeline", `${myDeals.length} deals`],
+    portal_pipeline:  ["Pipeline", "Listings / Buyers / Leasing"],
     portal_contacts:  ["My Contacts", `${myContacts.length} contacts`],
     portal_tasks:     ["Tasks", `${myTasks.filter(t=>t.status!=="done").length} open`],
     portal_team:      ["Team Directory", "Realty One Group Advantage"],
@@ -3543,7 +3544,21 @@ function AgentPortalApp(
             ? <div style={{ padding:40, textAlign:"center", color:C.text3, fontSize:13, fontFamily:FONT }}>Loading…</div>
             : <>
               {view==="portal_dashboard" && <PortalDashboard />}
-              {view==="portal_pipeline"  && <PortalPipeline />}
+              {view==="portal_pipeline"  && (
+                <div>
+                  <div style={{ display:"flex", gap:6, flexWrap:"wrap", padding:isMobile?"12px 12px 0":"16px 24px 0" }}>
+                    {[["listing","📋 Listings"],["buyer","🏠 Buyers"],["leasing","🔑 Leasing"]].map(([id,lbl])=>(
+                      <button key={id} onClick={()=>setPortalBoard(id)} style={{
+                        padding:"8px 16px", borderRadius:8,
+                        border:`1px solid ${portalBoard===id?C.goldBorder:C.border}`,
+                        background:portalBoard===id?C.goldDim:C.surface2,
+                        color:portalBoard===id?C.gold:C.text2, fontSize:13, fontWeight:600,
+                        fontFamily:FONT, cursor:"pointer", minHeight:isMobile?40:undefined }}>{lbl}</button>
+                    ))}
+                  </div>
+                  <PipelineView pipeline={portalBoard} user={{email:agentEmail, role:"member"}} />
+                </div>
+              )}
               {view==="portal_contacts"  && <PortalContacts />}
               {view==="portal_tasks"     && <PortalTasks />}
               {view==="portal_team"      && <PortalTeam />}
