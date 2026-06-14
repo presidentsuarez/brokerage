@@ -14,3 +14,8 @@ entrypoint = "./functions/generate-summary/index.ts"
 enabled = true
 verify_jwt = false
 entrypoint = "./functions/signing/index.ts"
+
+[functions.systems]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/systems/index.ts"

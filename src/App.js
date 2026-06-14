@@ -103,6 +103,7 @@ const NAV = [
   { id:"applications",label:"Applications",icon:"📥", adminOnly:true },
   { id:"financials",  label:"Financials",  icon:"💵", adminOnly:true },
   { id:"performance", label:"Performance", icon:"📈", adminOnly:true },
+  { id:"systems",    label:"Systems",   icon:"🛰️", ownerOnly:true },
   { id:"robots",    label:"Ari",       icon:"✨", platformOnly:true },
   { id:"notepad",   label:"Notepad",   icon:"📝", platformOnly:true },
   { id:"settings",  label:"Settings",  icon:"⚙️", platformOnly:true },
@@ -267,6 +268,7 @@ function BottomNavBar({ activeView, onNav, user, onMenu }) {
   const permitted = NAV.filter(n=>{
     if(n.platformOnly) return user?.email===PLATFORM_ADMIN;
     if(n.recruitGate)  return isAdmin || !!user?.canRecruit;
+    if(n.ownerOnly)    return user?.role==="owner";
     if(n.adminOnly)    return isAdmin;
     return true;
   });
@@ -538,6 +540,7 @@ function Sidebar({ activeView, onNav, user, onSignOut, collapsed, mobileOpen, on
           {NAV.filter(n=>{
             if(n.platformOnly) return user?.email===PLATFORM_ADMIN;
             if(n.recruitGate)  return isAdmin || !!user?.canRecruit;
+            if(n.ownerOnly)    return user?.role==="owner";
             if(n.adminOnly)    return isAdmin;
             return true;
           }).map(item=>{
@@ -8554,6 +8557,110 @@ function OrgMembersCard() {
   );
 }
 
+function BrevoSystemCard() {
+  const [st, setSt] = useState({ status:"checking" });
+  const check = async () => {
+    setSt({ status:"checking" });
+    try {
+      const { data:{ session } } = await supabase.auth.getSession();
+      const r = await fetch(`${process.env.REACT_APP_SUPABASE_URL}/functions/v1/systems`, {
+        method:"POST",
+        headers:{ "Content-Type":"application/json", "apikey":process.env.REACT_APP_SUPABASE_ANON_KEY, "Authorization":`Bearer ${session?.access_token}` },
+        body: JSON.stringify({ action:"brevo_status" }),
+      });
+      const j = await r.json();
+      setSt({ status: j.connected ? "connected" : "down", data:j });
+    } catch(e){ setSt({ status:"down", data:{ message:String(e) } }); }
+  };
+  useEffect(()=>{ check(); /* eslint-disable-next-line */ },[]);
+
+  const j = st.data || {};
+  const badge = st.status==="checking"
+    ? { t:"Checking\u2026", c:C.text3, bg:C.surface2, dot:C.text3 }
+    : st.status==="connected"
+    ? { t:"Live \u00b7 Connected", c:C.green, bg:C.goldDim, dot:C.green }
+    : { t:"Not connected", c:C.red, bg:"rgba(220,80,80,0.10)", dot:C.red };
+  const rows = st.status==="connected"
+    ? [["Account", j.email], ["Company", j.company], ["Plan", j.plan], ["Email credits", j.credits!=null?String(j.credits):null]]
+    : [];
+
+  return (
+    <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:"22px 24px", maxWidth:640 }}>
+      <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+        <div style={{ width:42, height:42, borderRadius:11, background:C.surface2, border:`1px solid ${C.border}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:22 }}>\ud83d\udce7</div>
+        <div style={{ flex:1, minWidth:0 }}>
+          <div style={{ fontSize:17, fontWeight:700, color:C.text, fontFamily:SERIF }}>Brevo</div>
+          <div style={{ fontSize:12, color:C.text3, fontFamily:FONT }}>Email marketing \u00b7 bulk campaigns &amp; contacts</div>
+        </div>
+        <div style={{ display:"flex", alignItems:"center", gap:7, padding:"6px 12px", borderRadius:20, background:badge.bg, border:`1px solid ${badge.c}44` }}>
+          <span style={{ width:8, height:8, borderRadius:8, background:badge.dot, flexShrink:0 }} />
+          <span style={{ fontSize:12, fontWeight:700, color:badge.c, fontFamily:FONT, whiteSpace:"nowrap" }}>{badge.t}</span>
+        </div>
+      </div>
+
+      {st.status==="connected" && (
+        <div style={{ marginTop:16 }}>
+          {rows.filter(([,v])=>v).map(([k,v])=>(
+            <div key={k} style={{ display:"flex", justifyContent:"space-between", gap:14, padding:"9px 0", borderTop:`1px solid ${C.border}`, fontFamily:FONT }}>
+              <span style={{ fontSize:12, color:C.text3 }}>{k}</span>
+              <span style={{ fontSize:12.5, color:C.text2, fontWeight:600, textAlign:"right", wordBreak:"break-word" }}>{v}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {st.status==="down" && (
+        <div style={{ marginTop:16, padding:"12px 14px", background:"rgba(220,80,80,0.08)", border:"1px solid rgba(220,80,80,0.30)", borderRadius:10 }}>
+          <div style={{ fontSize:12.5, fontWeight:700, color:C.red, fontFamily:FONT, marginBottom:4 }}>Couldn\u2019t reach Brevo{j.http?` (HTTP ${j.http})`:""}</div>
+          <div style={{ fontSize:12, color:C.text2, fontFamily:FONT, lineHeight:1.5 }}>{j.message||"Unknown error."}</div>
+          {String(j.message||"").toLowerCase().includes("ip") && (
+            <div style={{ fontSize:11.5, color:C.text3, fontFamily:FONT, marginTop:8, lineHeight:1.5 }}>
+              Brevo\u2019s IP allowlist is blocking server-side calls. In Brevo \u2192 Security \u2192 Authorised IPs, switch off the IP restriction (recommended \u2014 serverless egress IPs aren\u2019t fixed), then re-check.
+            </div>
+          )}
+        </div>
+      )}
+
+      <div style={{ display:"flex", alignItems:"center", gap:12, marginTop:16 }}>
+        <GoldButton small outline onClick={check} disabled={st.status==="checking"}>{st.status==="checking"?"Checking\u2026":"Re-check"}</GoldButton>
+        {j.checkedAt && <span style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>Last checked {new Date(j.checkedAt).toLocaleTimeString()}</span>}
+      </div>
+    </div>
+  );
+}
+
+function SystemsView({ user }) {
+  const isMobile = useIsMobile();
+  const [sys, setSys] = useState("brevo");
+  const SYSTEMS = [{ key:"brevo", icon:"\ud83d\udce7", label:"Brevo", desc:"Email marketing" }];
+  return (
+    <div style={{ display:isMobile?"block":"flex", gap:20, padding:isMobile?"12px":"20px 24px", maxWidth:1200 }}>
+      {isMobile ? (
+        <div style={{ display:"flex", gap:8, overflowX:"auto", paddingBottom:12 }}>
+          {SYSTEMS.map(s=>{ const a=sys===s.key; return (
+            <button key={s.key} onClick={()=>setSys(s.key)} style={{ flexShrink:0, display:"flex", alignItems:"center", gap:6, padding:"8px 14px", borderRadius:20, border:`1px solid ${a?C.goldBorder:C.border2}`, background:a?C.goldDim:"transparent", color:a?C.gold:C.text2, fontSize:13, fontWeight:a?700:500, fontFamily:FONT, cursor:"pointer", whiteSpace:"nowrap" }}>
+              <span>{s.icon}</span>{s.label}
+            </button>); })}
+        </div>
+      ) : (
+        <div style={{ width:180, flexShrink:0 }}>
+          <div style={{ fontSize:10, fontWeight:800, color:C.text3, letterSpacing:"0.1em", textTransform:"uppercase", fontFamily:FONT, padding:"4px 10px 8px" }}>Systems</div>
+          {SYSTEMS.map(s=>{ const a=sys===s.key; return (
+            <button key={s.key} onClick={()=>setSys(s.key)} style={{ width:"100%", display:"flex", alignItems:"center", gap:10, padding:"9px 12px", marginBottom:2, borderRadius:8, border:"none", background:a?C.goldDim:"transparent", color:a?C.gold:C.text2, fontSize:13.5, fontWeight:a?700:500, fontFamily:FONT, cursor:"pointer", textAlign:"left" }}
+              onMouseEnter={e=>{ if(!a) e.currentTarget.style.background=C.surface2; }} onMouseLeave={e=>{ if(!a) e.currentTarget.style.background="transparent"; }}>
+              <span style={{ fontSize:15 }}>{s.icon}</span>
+              <span style={{ display:"flex", flexDirection:"column", lineHeight:1.25 }}><span>{s.label}</span><span style={{ fontSize:10, color:C.text3, fontWeight:400 }}>{s.desc}</span></span>
+            </button>); })}
+          <div style={{ fontSize:10.5, color:C.text3, fontFamily:FONT, padding:"12px 10px", lineHeight:1.5 }}>More systems coming soon\u2026</div>
+        </div>
+      )}
+      <div style={{ flex:1, minWidth:0 }}>
+        {sys==="brevo" && <BrevoSystemCard />}
+      </div>
+    </div>
+  );
+}
+
 function SettingsView({ user, onProfileSaved, theme, onToggleTheme }) {
   const [showEdit,setShowEdit] = useState(false);
   const [showPw,setShowPw]     = useState(false);
@@ -9363,6 +9470,7 @@ function MainApp() {
     contacts:[`Contacts`,`${contacts.length} total`],
     tasks:[`Tasks`,`${tasks.filter(t=>t.status!=="done").length} open`],
     settings:["Settings","Account & org"],
+    systems:["Systems","Integrations & status"],
     robots:  ["Ari", "Business Unit Leader · ROGA"],
     calendar:   ["Calendar",   "Realty One Group Advantage"],
     listings:   ["Listings Pipeline", "Seller-side opportunities"],
@@ -9416,6 +9524,7 @@ function MainApp() {
           {view==="contacts" &&<ContactsView  user={cu} contacts={contacts} onRefresh={loadData} />}
           {view==="tasks"    &&<TasksView     user={cu} tasks={tasks}    onRefresh={loadData} />}
           {view==="planning" &&<PlanningView  user={cu} onRefresh={loadData} />}
+          {view==="systems" && <SystemsView user={cu} />}
           {view==="settings" &&<SettingsView  user={cu} onProfileSaved={onProfileSaved} theme={theme} onToggleTheme={toggleTheme} />}
           {view==="notepad"  &&<NotesView     user={cu} />}
           {view==="robots"   &&<RobotsView    user={cu} deals={deals} contacts={contacts} tasks={tasks} />}
