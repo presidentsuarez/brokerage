@@ -5930,6 +5930,7 @@ function PipelineView({ pipeline, user }) {
           <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>{filtered.length} of {cards.length}</div>
           {filtered.map(c=>{
             const stg=cfg.stages.find(s=>s.id===c.stage)||cfg.stages[0];
+            const isList=cfg.noun==="Listing"; const rent=/lease|rent/i.test(c.property_type||"");
             return (
               <div key={c.id} onClick={()=>setSel(c)} style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:10, padding:"11px 14px", cursor:"pointer", display:"flex", alignItems:"center", gap:12 }}
                 onMouseEnter={e=>e.currentTarget.style.borderColor=C.goldBorder} onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}>
@@ -5937,8 +5938,9 @@ function PipelineView({ pipeline, user }) {
                 <div style={{ flex:1, minWidth:0 }}>
                   <div style={{ fontSize:13, fontWeight:700, color:C.text, fontFamily:FONT }}>{cardTitle(c)}</div>
                   <div style={{ fontSize:11, color:C.text2, fontFamily:FONT, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
-                    {(linksByCard[c.id]||[]).map(l=>l.contacts?.full_name).filter(Boolean).join(", ")||c.property_address||"—"} · {pipe$(c.price)}</div>
+                    {(linksByCard[c.id]||[]).map(l=>l.contacts?.full_name).filter(Boolean).join(", ")||c.property_address||"—"} · {pipe$(c.price)}{rent?"/mo":""}</div>
                 </div>
+                {isList && <span style={{ fontSize:9, fontWeight:800, padding:"2px 7px", borderRadius:6, whiteSpace:"nowrap", color:rent?C.blue:C.gold, background:rent?"rgba(91,141,239,0.14)":C.goldDim, border:`1px solid ${rent?"rgba(91,141,239,0.45)":C.goldBorder}` }}>{rent?"FOR RENT":"FOR SALE"}</span>}
                 <span style={{ fontSize:10, fontWeight:700, color:stg.color, fontFamily:FONT, whiteSpace:"nowrap" }}>{stg.emoji} {stg.label}</span>
               </div>
             );
@@ -5959,17 +5961,20 @@ function pipeSelStyle(){ return { padding:"8px 10px", background:C.surface2, bor
 
 function PipeCard({ card, cfg, links, title, onClick }) {
   const names = links.map(l=>l.contacts?.full_name).filter(Boolean);
+  const isListing = cfg.noun==="Listing";
+  const isRental = /lease|rent/i.test(card.property_type||"");
   return (
     <div onClick={onClick} style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:10, padding:"11px 12px", cursor:"pointer" }}
       onMouseEnter={e=>e.currentTarget.style.borderColor=C.goldBorder} onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}>
       <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4 }}>
         <span style={{ fontSize:18 }}>{card.emoji||cfg.emoji}</span>
         <span style={{ fontSize:13, fontWeight:700, color:C.text, fontFamily:FONT, flex:1, minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{title}</span>
+        {isListing && <span style={{ fontSize:9, fontWeight:800, padding:"2px 6px", borderRadius:6, whiteSpace:"nowrap", color:isRental?C.blue:C.gold, background:isRental?"rgba(91,141,239,0.14)":C.goldDim, border:`1px solid ${isRental?"rgba(91,141,239,0.45)":C.goldBorder}` }}>{isRental?"FOR RENT":"FOR SALE"}</span>}
       </div>
       {names.length>0 && <div style={{ fontSize:11, color:C.text2, fontFamily:FONT, marginBottom:3, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>👤 {names.join(", ")}</div>}
       {card.property_address && title!==card.property_address && <div style={{ fontSize:10, color:C.text3, fontFamily:FONT, marginBottom:3, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>📍 {card.property_address}</div>}
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:3 }}>
-        <span style={{ fontSize:11, color:C.gold, fontFamily:MONO }}>{pipe$(card.price)}{cfg.priceLabel==="Monthly Rent"?"/mo":""}</span>
+        <span style={{ fontSize:11, color:C.gold, fontFamily:MONO }}>{pipe$(card.price)}{(cfg.priceLabel==="Monthly Rent"||isRental)?"/mo":""}</span>
         {card.target_date && <span style={{ fontSize:10, color:C.text3, fontFamily:FONT }}>📆 {pipeDate(card.target_date)}</span>}
       </div>
       {card.assigned_to && <div style={{ fontSize:9, color:C.text3, fontFamily:FONT, marginTop:5 }}>🧑‍💼 {card.assigned_to.split("@")[0]}</div>}
