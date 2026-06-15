@@ -8557,7 +8557,7 @@ function OrgMembersCard() {
   );
 }
 
-function BrevoSystemCard() {
+function SystemStatusCard({ sys }) {
   const [st, setSt] = useState({ status:"checking" });
   const check = async () => {
     setSt({ status:"checking" });
@@ -8566,31 +8566,31 @@ function BrevoSystemCard() {
       const r = await fetch(`${process.env.REACT_APP_SUPABASE_URL}/functions/v1/systems`, {
         method:"POST",
         headers:{ "Content-Type":"application/json", "apikey":process.env.REACT_APP_SUPABASE_ANON_KEY, "Authorization":`Bearer ${session?.access_token}` },
-        body: JSON.stringify({ action:"brevo_status" }),
+        body: JSON.stringify({ action: sys.action }),
       });
       const j = await r.json();
       setSt({ status: j.connected ? "connected" : "down", data:j });
     } catch(e){ setSt({ status:"down", data:{ message:String(e) } }); }
   };
-  useEffect(()=>{ check(); /* eslint-disable-next-line */ },[]);
+  useEffect(()=>{ check(); /* eslint-disable-next-line */ }, [sys.key]);
 
   const j = st.data || {};
   const badge = st.status==="checking"
-    ? { t:"Checking\u2026", c:C.text3, bg:C.surface2, dot:C.text3 }
+    ? { t:"Checking…", c:C.text3, bg:C.surface2, dot:C.text3 }
     : st.status==="connected"
-    ? { t:"Live \u00b7 Connected", c:C.green, bg:C.goldDim, dot:C.green }
+    ? { t:"Live · Connected", c:C.green, bg:C.goldDim, dot:C.green }
     : { t:"Not connected", c:C.red, bg:"rgba(220,80,80,0.10)", dot:C.red };
   const rows = st.status==="connected"
-    ? [["Account", j.email], ["Company", j.company], ["Plan", j.plan], ["Email credits", j.credits!=null?String(j.credits):null]]
+    ? sys.fields.map(([label,key])=>[label, j[key]]).filter(([,v])=>v!=null && v!=="")
     : [];
 
   return (
     <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:"22px 24px", maxWidth:640 }}>
       <div style={{ display:"flex", alignItems:"center", gap:12 }}>
-        <div style={{ width:42, height:42, borderRadius:11, background:C.surface2, border:`1px solid ${C.border}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:22 }}>📧</div>
+        <div style={{ width:42, height:42, borderRadius:11, background:C.surface2, border:`1px solid ${C.border}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:22 }}>{sys.icon}</div>
         <div style={{ flex:1, minWidth:0 }}>
-          <div style={{ fontSize:17, fontWeight:700, color:C.text, fontFamily:SERIF }}>Brevo</div>
-          <div style={{ fontSize:12, color:C.text3, fontFamily:FONT }}>Email marketing · bulk campaigns & contacts</div>
+          <div style={{ fontSize:17, fontWeight:700, color:C.text, fontFamily:SERIF }}>{sys.label}</div>
+          <div style={{ fontSize:12, color:C.text3, fontFamily:FONT }}>{sys.subtitle}</div>
         </div>
         <div style={{ display:"flex", alignItems:"center", gap:7, padding:"6px 12px", borderRadius:20, background:badge.bg, border:`1px solid ${badge.c}44` }}>
           <span style={{ width:8, height:8, borderRadius:8, background:badge.dot, flexShrink:0 }} />
@@ -8600,10 +8600,10 @@ function BrevoSystemCard() {
 
       {st.status==="connected" && (
         <div style={{ marginTop:16 }}>
-          {rows.filter(([,v])=>v).map(([k,v])=>(
+          {rows.map(([k,v])=>(
             <div key={k} style={{ display:"flex", justifyContent:"space-between", gap:14, padding:"9px 0", borderTop:`1px solid ${C.border}`, fontFamily:FONT }}>
               <span style={{ fontSize:12, color:C.text3 }}>{k}</span>
-              <span style={{ fontSize:12.5, color:C.text2, fontWeight:600, textAlign:"right", wordBreak:"break-word" }}>{v}</span>
+              <span style={{ fontSize:12.5, color:C.text2, fontWeight:600, textAlign:"right", wordBreak:"break-word" }}>{String(v)}</span>
             </div>
           ))}
         </div>
@@ -8611,42 +8611,54 @@ function BrevoSystemCard() {
 
       {st.status==="down" && (
         <div style={{ marginTop:16, padding:"12px 14px", background:"rgba(220,80,80,0.08)", border:"1px solid rgba(220,80,80,0.30)", borderRadius:10 }}>
-          <div style={{ fontSize:12.5, fontWeight:700, color:C.red, fontFamily:FONT, marginBottom:4 }}>Couldn't reach Brevo{j.http?` (HTTP ${j.http})`:""}</div>
-          <div style={{ fontSize:12, color:C.text2, fontFamily:FONT, lineHeight:1.5 }}>{j.message||"Unknown error."}</div>
+          <div style={{ fontSize:12.5, fontWeight:700, color:C.red, fontFamily:FONT, marginBottom:4 }}>Couldn't reach {sys.label}{j.http?` (HTTP ${j.http})`:""}</div>
+          <div style={{ fontSize:12, color:C.text2, fontFamily:FONT, lineHeight:1.5 }}>{j.message||j.reason||"Unknown error."}</div>
           {String(j.message||"").toLowerCase().includes("ip") && (
             <div style={{ fontSize:11.5, color:C.text3, fontFamily:FONT, marginTop:8, lineHeight:1.5 }}>
-              Brevo's IP allowlist is blocking server-side calls. In Brevo → Security → Authorised IPs, switch off the IP restriction (recommended — serverless egress IPs aren't fixed), then re-check.
+              An IP allowlist is blocking server-side calls. Disable the IP restriction in the provider's security settings (serverless egress IPs aren't fixed), then re-check.
             </div>
           )}
         </div>
       )}
 
       <div style={{ display:"flex", alignItems:"center", gap:12, marginTop:16 }}>
-        <GoldButton small outline onClick={check} disabled={st.status==="checking"}>{st.status==="checking"?"Checking\u2026":"Re-check"}</GoldButton>
+        <GoldButton small outline onClick={check} disabled={st.status==="checking"}>{st.status==="checking"?"Checking…":"Re-check"}</GoldButton>
         {j.checkedAt && <span style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>Last checked {new Date(j.checkedAt).toLocaleTimeString()}</span>}
       </div>
     </div>
   );
 }
 
+const PRISM_SYSTEMS = [
+  { key:"brevo", icon:"\u{1F4E7}", label:"Brevo", desc:"Email marketing", action:"brevo_status",
+    subtitle:"Email marketing · bulk campaigns & contacts",
+    fields:[["Account","email"],["Company","company"],["Plan","plan"],["Email credits","credits"]] },
+  { key:"github", icon:"\u{1F419}", label:"GitHub", desc:"Source & deploy", action:"github_status",
+    subtitle:"Source control · GitHub Pages hosting",
+    fields:[["Repository","repo"],["Visibility","visibility"],["Default branch","branch"],["Last push","pushedAt"]] },
+  { key:"supabase", icon:"\u{1F5C4}\uFE0F", label:"Supabase", desc:"Backend", action:"supabase_status",
+    subtitle:"Postgres · Auth · Storage · Edge functions",
+    fields:[["Project ref","ref"],["URL","url"],["Database","db"]] },
+];
+
 function SystemsView({ user }) {
   const isMobile = useIsMobile();
-  const [sys, setSys] = useState("brevo");
-  const SYSTEMS = [{ key:"brevo", icon:"\ud83d\udce7", label:"Brevo", desc:"Email marketing" }];
+  const [sysKey, setSysKey] = useState("brevo");
+  const active = PRISM_SYSTEMS.find(s=>s.key===sysKey) || PRISM_SYSTEMS[0];
   return (
     <div style={{ display:isMobile?"block":"flex", gap:20, padding:isMobile?"12px":"20px 24px", maxWidth:1200 }}>
       {isMobile ? (
         <div style={{ display:"flex", gap:8, overflowX:"auto", paddingBottom:12 }}>
-          {SYSTEMS.map(s=>{ const a=sys===s.key; return (
-            <button key={s.key} onClick={()=>setSys(s.key)} style={{ flexShrink:0, display:"flex", alignItems:"center", gap:6, padding:"8px 14px", borderRadius:20, border:`1px solid ${a?C.goldBorder:C.border2}`, background:a?C.goldDim:"transparent", color:a?C.gold:C.text2, fontSize:13, fontWeight:a?700:500, fontFamily:FONT, cursor:"pointer", whiteSpace:"nowrap" }}>
+          {PRISM_SYSTEMS.map(s=>{ const a=sysKey===s.key; return (
+            <button key={s.key} onClick={()=>setSysKey(s.key)} style={{ flexShrink:0, display:"flex", alignItems:"center", gap:6, padding:"8px 14px", borderRadius:20, border:`1px solid ${a?C.goldBorder:C.border2}`, background:a?C.goldDim:"transparent", color:a?C.gold:C.text2, fontSize:13, fontWeight:a?700:500, fontFamily:FONT, cursor:"pointer", whiteSpace:"nowrap" }}>
               <span>{s.icon}</span>{s.label}
             </button>); })}
         </div>
       ) : (
         <div style={{ width:180, flexShrink:0 }}>
           <div style={{ fontSize:10, fontWeight:800, color:C.text3, letterSpacing:"0.1em", textTransform:"uppercase", fontFamily:FONT, padding:"4px 10px 8px" }}>Systems</div>
-          {SYSTEMS.map(s=>{ const a=sys===s.key; return (
-            <button key={s.key} onClick={()=>setSys(s.key)} style={{ width:"100%", display:"flex", alignItems:"center", gap:10, padding:"9px 12px", marginBottom:2, borderRadius:8, border:"none", background:a?C.goldDim:"transparent", color:a?C.gold:C.text2, fontSize:13.5, fontWeight:a?700:500, fontFamily:FONT, cursor:"pointer", textAlign:"left" }}
+          {PRISM_SYSTEMS.map(s=>{ const a=sysKey===s.key; return (
+            <button key={s.key} onClick={()=>setSysKey(s.key)} style={{ width:"100%", display:"flex", alignItems:"center", gap:10, padding:"9px 12px", marginBottom:2, borderRadius:8, border:"none", background:a?C.goldDim:"transparent", color:a?C.gold:C.text2, fontSize:13.5, fontWeight:a?700:500, fontFamily:FONT, cursor:"pointer", textAlign:"left" }}
               onMouseEnter={e=>{ if(!a) e.currentTarget.style.background=C.surface2; }} onMouseLeave={e=>{ if(!a) e.currentTarget.style.background="transparent"; }}>
               <span style={{ fontSize:15 }}>{s.icon}</span>
               <span style={{ display:"flex", flexDirection:"column", lineHeight:1.25 }}><span>{s.label}</span><span style={{ fontSize:10, color:C.text3, fontWeight:400 }}>{s.desc}</span></span>
@@ -8655,7 +8667,7 @@ function SystemsView({ user }) {
         </div>
       )}
       <div style={{ flex:1, minWidth:0 }}>
-        {sys==="brevo" && <BrevoSystemCard />}
+        <SystemStatusCard sys={active} />
       </div>
     </div>
   );

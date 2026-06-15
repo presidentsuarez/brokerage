@@ -1,5 +1,5 @@
 // Prism — systems edge function. Holds integration secrets server-side and reports status.
-// Owner/admin only. First system: Brevo (email marketing).
+// Owner/admin only. Systems: Brevo (email), GitHub (source/deploy), Supabase (backend).
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const supabase = createClient(
@@ -27,28 +27,36 @@ Deno.serve(async (req) => {
     const { data: prof } = await supabase.from("user_profiles").select("role").eq("email", user.email).maybeSingle();
     if (!prof || !["owner", "admin"].includes(prof.role)) return json({ error: "forbidden" }, 403);
 
+    const checkedAt = new Date().toISOString();
+
     if (action === "brevo_status") {
       const key = Deno.env.get("BREVO_API_KEY");
-      const checkedAt = new Date().toISOString();
       if (!key) return json({ system: "brevo", connected: false, reason: "no_key", checkedAt });
-      const r = await fetch("https://api.brevo.com/v3/account", {
-        headers: { "api-key": key, "accept": "application/json" },
-      });
+      const r = await fetch("https://api.brevo.com/v3/account", { headers: { "api-key": key, "accept": "application/json" } });
       const data = await r.json().catch(() => ({}));
       if (r.ok) {
         const plan = (data.plan ?? []).find((p: any) => String(p.creditsType ?? "").toLowerCase().includes("email"))
           ?? (data.plan ?? [])[0] ?? {};
-        return json({
-          system: "brevo", connected: true, http: r.status,
-          email: data.email, company: data.companyName,
-          plan: plan.type ?? null, credits: plan.credits ?? null, creditsType: plan.creditsType ?? null,
-          checkedAt,
-        });
+        return json({ system: "brevo", connected: true, http: r.status, email: data.email, company: data.companyName, plan: plan.type ?? null, credits: plan.credits ?? null, checkedAt });
       }
-      return json({
-        system: "brevo", connected: false, http: r.status,
-        reason: data.code ?? "error", message: data.message ?? "Brevo returned an error", checkedAt,
+      return json({ system: "brevo", connected: false, http: r.status, reason: data.code ?? "error", message: data.message ?? "Brevo error", checkedAt });
+    }
+
+    if (action === "github_status") {
+      const pat = Deno.env.get("GITHUB_PAT");
+      if (!pat) return json({ system: "github", connected: false, reason: "no_token", checkedAt });
+      const r = await fetch("https://api.github.com/repos/presidentsuarez/brokerage", {
+        headers: { "Authorization": `Bearer ${pat}`, "Accept": "application/vnd.github+json", "User-Agent": "PrismApp" },
       });
+      const d = await r.json().catch(() => ({}));
+      if (r.ok) return json({ system: "github", connected: true, http: r.status, repo: d.full_name, visibility: d.private ? "private" : "public", branch: d.default_branch, pushedAt: d.pushed_at ? String(d.pushed_at).replace("T", " ").replace("Z", " UTC") : null, checkedAt });
+      return json({ system: "github", connected: false, http: r.status, message: d.message ?? "GitHub error", checkedAt });
+    }
+
+    if (action === "supabase_status") {
+      const { error } = await supabase.from("organizations").select("id", { head: true, count: "exact" });
+      if (!error) return json({ system: "supabase", connected: true, ref: "rtgfnwktybkorqvlirtd", url: Deno.env.get("SUPABASE_URL"), db: "reachable", checkedAt });
+      return json({ system: "supabase", connected: false, message: error.message, checkedAt });
     }
 
     return json({ error: "unknown action" }, 400);
