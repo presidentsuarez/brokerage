@@ -8587,10 +8587,10 @@ function BrevoSystemCard() {
   return (
     <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:"22px 24px", maxWidth:640 }}>
       <div style={{ display:"flex", alignItems:"center", gap:12 }}>
-        <div style={{ width:42, height:42, borderRadius:11, background:C.surface2, border:`1px solid ${C.border}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:22 }}>\ud83d\udce7</div>
+        <div style={{ width:42, height:42, borderRadius:11, background:C.surface2, border:`1px solid ${C.border}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:22 }}>📧</div>
         <div style={{ flex:1, minWidth:0 }}>
           <div style={{ fontSize:17, fontWeight:700, color:C.text, fontFamily:SERIF }}>Brevo</div>
-          <div style={{ fontSize:12, color:C.text3, fontFamily:FONT }}>Email marketing \u00b7 bulk campaigns &amp; contacts</div>
+          <div style={{ fontSize:12, color:C.text3, fontFamily:FONT }}>Email marketing · bulk campaigns & contacts</div>
         </div>
         <div style={{ display:"flex", alignItems:"center", gap:7, padding:"6px 12px", borderRadius:20, background:badge.bg, border:`1px solid ${badge.c}44` }}>
           <span style={{ width:8, height:8, borderRadius:8, background:badge.dot, flexShrink:0 }} />
@@ -8611,11 +8611,11 @@ function BrevoSystemCard() {
 
       {st.status==="down" && (
         <div style={{ marginTop:16, padding:"12px 14px", background:"rgba(220,80,80,0.08)", border:"1px solid rgba(220,80,80,0.30)", borderRadius:10 }}>
-          <div style={{ fontSize:12.5, fontWeight:700, color:C.red, fontFamily:FONT, marginBottom:4 }}>Couldn\u2019t reach Brevo{j.http?` (HTTP ${j.http})`:""}</div>
+          <div style={{ fontSize:12.5, fontWeight:700, color:C.red, fontFamily:FONT, marginBottom:4 }}>Couldn't reach Brevo{j.http?` (HTTP ${j.http})`:""}</div>
           <div style={{ fontSize:12, color:C.text2, fontFamily:FONT, lineHeight:1.5 }}>{j.message||"Unknown error."}</div>
           {String(j.message||"").toLowerCase().includes("ip") && (
             <div style={{ fontSize:11.5, color:C.text3, fontFamily:FONT, marginTop:8, lineHeight:1.5 }}>
-              Brevo\u2019s IP allowlist is blocking server-side calls. In Brevo \u2192 Security \u2192 Authorised IPs, switch off the IP restriction (recommended \u2014 serverless egress IPs aren\u2019t fixed), then re-check.
+              Brevo's IP allowlist is blocking server-side calls. In Brevo → Security → Authorised IPs, switch off the IP restriction (recommended — serverless egress IPs aren't fixed), then re-check.
             </div>
           )}
         </div>
@@ -8651,7 +8651,7 @@ function SystemsView({ user }) {
               <span style={{ fontSize:15 }}>{s.icon}</span>
               <span style={{ display:"flex", flexDirection:"column", lineHeight:1.25 }}><span>{s.label}</span><span style={{ fontSize:10, color:C.text3, fontWeight:400 }}>{s.desc}</span></span>
             </button>); })}
-          <div style={{ fontSize:10.5, color:C.text3, fontFamily:FONT, padding:"12px 10px", lineHeight:1.5 }}>More systems coming soon\u2026</div>
+          <div style={{ fontSize:10.5, color:C.text3, fontFamily:FONT, padding:"12px 10px", lineHeight:1.5 }}>More systems coming soon…</div>
         </div>
       )}
       <div style={{ flex:1, minWidth:0 }}>
@@ -8706,7 +8706,7 @@ function SettingsView({ user, onProfileSaved, theme, onToggleTheme }) {
           </div>
           <div>
             <div style={{ fontSize:14, fontWeight:700, color:C.text, fontFamily:SERIF }}>{ORG_NAME}</div>
-            <div style={{ fontSize:11, color:C.text2, fontFamily:FONT }}>Pro plan \u00b7 {APP_NAME}</div>
+            <div style={{ fontSize:11, color:C.text2, fontFamily:FONT }}>Pro plan · {APP_NAME}</div>
           </div>
         </div>
       </div>
