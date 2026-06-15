@@ -109,6 +109,16 @@ const NAV = [
   { id:"settings",  label:"Settings",  icon:"⚙️", platformOnly:true },
 ];
 
+// Sidebar grouping: collapsible sections. Items keep their own gating from NAV.
+const NAV_GROUPS = [
+  { group:"realestate", label:"Real Estate", icon:"🏢", items:["deals","listings","buyers","leasing"] },
+  { group:"people",     label:"People",      icon:"👥", items:["contacts","recruiting","applications"] },
+  { group:"finance",    label:"Finance",     icon:"💰", items:["financials","performance"] },
+  { group:"workspace",  label:"Workspace",   icon:"🗂️", items:["planning","calendar"] },
+  { group:"admin",      label:"Admin",       icon:"🛠️", items:["systems","robots","notepad","settings"] },
+];
+const NAV_BY_ID = Object.fromEntries(NAV.map(n=>[n.id,n]));
+
 // ── Shared atoms ──────────────────────────────────────────────
 
 function PrismMark({ size=32 }) {
@@ -493,6 +503,18 @@ function Sidebar({ activeView, onNav, user, onSignOut, collapsed, mobileOpen, on
   const sidebarW = isMobile ? 272 : collapsed ? 56 : 220;
   const isHidden = isMobile && !mobileOpen;
   const [profileOpen, setProfileOpen] = useState(false);
+  const isPermitted = (n) => {
+    if(!n) return false;
+    if(n.platformOnly) return user?.email===PLATFORM_ADMIN;
+    if(n.recruitGate)  return isAdmin || !!user?.canRecruit;
+    if(n.ownerOnly)    return user?.role==="owner";
+    if(n.adminOnly)    return isAdmin;
+    return true;
+  };
+  const groupOfView = (v) => (NAV_GROUPS.find(g=>g.items.includes(v))||{}).group;
+  const [openGroups, setOpenGroups] = useState(()=>{ const g=groupOfView(activeView)||NAV_GROUPS[0].group; return {[g]:true}; });
+  useEffect(()=>{ const g=groupOfView(activeView); if(g) setOpenGroups(o=>o[g]?o:{...o,[g]:true}); },[activeView]);
+  const toggleGroup = (g) => setOpenGroups(o=>({...o,[g]:!o[g]}));
 
   const handleNav = (id) => {
     onNav(id);
@@ -535,35 +557,56 @@ function Sidebar({ activeView, onNav, user, onSignOut, collapsed, mobileOpen, on
         </div>
 
         {/* Nav items */}
-        <nav style={{ flex:1, padding:"10px 6px", display:"flex", flexDirection:"column", gap:1,
-          overflowY:"auto" }}>
-          {NAV.filter(n=>{
-            if(n.platformOnly) return user?.email===PLATFORM_ADMIN;
-            if(n.recruitGate)  return isAdmin || !!user?.canRecruit;
-            if(n.ownerOnly)    return user?.role==="owner";
-            if(n.adminOnly)    return isAdmin;
-            return true;
-          }).map(item=>{
-            const active = activeView===item.id;
-            return (
-              <button key={item.id} onClick={()=>handleNav(item.id)} style={{
-                display:"flex", alignItems:"center", gap:12,
-                padding:(collapsed&&!isMobile)?"10px 0":"10px 14px",
-                justifyContent:(collapsed&&!isMobile)?"center":"flex-start",
-                borderRadius:10, border:"none", cursor:"pointer", width:"100%",
-                background:active?C.goldDim:"transparent",
-                color:active?C.gold:C.text2,
-                fontSize:isMobile?14:13, fontWeight:active?600:400, fontFamily:FONT,
-                minHeight:isMobile?48:36, transition:"all 0.1s" }}
-                onMouseEnter={e=>{if(!active){e.currentTarget.style.background=C.surface2;e.currentTarget.style.color=C.text;}}}
-                onMouseLeave={e=>{if(!active){e.currentTarget.style.background="transparent";e.currentTarget.style.color=C.text2;}}}>
-                <span style={{ fontSize:17, lineHeight:1, flexShrink:0 }}>{item.icon}</span>
-                {(!collapsed||isMobile)&&<span style={{ whiteSpace:"nowrap" }}>{item.label}</span>}
-                {active&&(!collapsed||isMobile)&&<div style={{ marginLeft:"auto", width:3,
-                  height:16, borderRadius:2, background:C.gold }} />}
-              </button>
-            );
-          })}
+        <nav style={{ flex:1, padding:"10px 6px", display:"flex", flexDirection:"column", gap:1, overflowY:"auto" }}>
+          {(collapsed && !isMobile)
+            ? NAV.filter(isPermitted).map(item=>{
+                const active = activeView===item.id;
+                return (
+                  <button key={item.id} onClick={()=>handleNav(item.id)} title={item.label} style={{
+                    display:"flex", alignItems:"center", justifyContent:"center", padding:"10px 0", width:"100%",
+                    borderRadius:10, border:"none", cursor:"pointer", background:active?C.goldDim:"transparent",
+                    color:active?C.gold:C.text2, minHeight:36, transition:"all 0.1s" }}>
+                    <span style={{ fontSize:17, lineHeight:1 }}>{item.icon}</span>
+                  </button>
+                );
+              })
+            : NAV_GROUPS.map(grp=>{
+                const kids = grp.items.map(id=>NAV_BY_ID[id]).filter(isPermitted);
+                if(kids.length===0) return null;
+                const open = !!openGroups[grp.group];
+                const hasActive = kids.some(k=>k.id===activeView);
+                return (
+                  <div key={grp.group} style={{ marginBottom:2 }}>
+                    <button onClick={()=>toggleGroup(grp.group)} style={{
+                      display:"flex", alignItems:"center", gap:10, padding:"9px 12px", width:"100%",
+                      borderRadius:10, border:"none", cursor:"pointer", background:"transparent",
+                      color:(hasActive&&!open)?C.gold:C.text3, fontSize:11, fontWeight:700, fontFamily:FONT,
+                      letterSpacing:"0.06em", textTransform:"uppercase" }}
+                      onMouseEnter={e=>{e.currentTarget.style.color=C.text2;}}
+                      onMouseLeave={e=>{e.currentTarget.style.color=(hasActive&&!open)?C.gold:C.text3;}}>
+                      <span style={{ fontSize:14, lineHeight:1 }}>{grp.icon}</span>
+                      <span style={{ flex:1, textAlign:"left" }}>{grp.label}</span>
+                      <span style={{ fontSize:9, transform:open?"rotate(90deg)":"none", transition:"transform 0.12s" }}>▸</span>
+                    </button>
+                    {open && kids.map(item=>{
+                      const active = activeView===item.id;
+                      return (
+                        <button key={item.id} onClick={()=>handleNav(item.id)} style={{
+                          display:"flex", alignItems:"center", gap:11, padding:"9px 12px 9px 24px", width:"100%",
+                          borderRadius:10, border:"none", cursor:"pointer", background:active?C.goldDim:"transparent",
+                          color:active?C.gold:C.text2, fontSize:isMobile?14:13, fontWeight:active?600:400,
+                          fontFamily:FONT, minHeight:isMobile?44:34, transition:"all 0.1s" }}
+                          onMouseEnter={e=>{if(!active){e.currentTarget.style.background=C.surface2;e.currentTarget.style.color=C.text;}}}
+                          onMouseLeave={e=>{if(!active){e.currentTarget.style.background="transparent";e.currentTarget.style.color=C.text2;}}}>
+                          <span style={{ fontSize:15, lineHeight:1, flexShrink:0 }}>{item.icon}</span>
+                          <span style={{ whiteSpace:"nowrap" }}>{item.label}</span>
+                          {active&&<div style={{ marginLeft:"auto", width:3, height:16, borderRadius:2, background:C.gold }} />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                );
+              })}
         </nav>
 
         {/* User footer — click your profile to reveal details / settings / sign out */}
