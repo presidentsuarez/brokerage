@@ -113,10 +113,10 @@ const NAV = [
 // Sidebar grouping: collapsible sections. Items keep their own gating from NAV.
 const NAV_GROUPS = [
   { group:"realestate", label:"Real Estate", icon:"🏢", items:["deals","listings","buyers","leasing"] },
-  { group:"people",     label:"People",      icon:"👥", items:["contacts","recruiting","applications","organization"] },
+  { group:"people",     label:"People",      icon:"👥", items:["contacts","recruiting","applications"] },
   { group:"finance",    label:"Finance",     icon:"💰", items:["financials","performance"] },
   { group:"workspace",  label:"Workspace",   icon:"🗂️", items:["planning","calendar"] },
-  { group:"admin",      label:"Admin",       icon:"🛠️", items:["systems","robots","notepad","settings"] },
+  { group:"admin",      label:"Admin",       icon:"🛠️", items:["organization","systems","robots","notepad","settings"] },
 ];
 const NAV_BY_ID = Object.fromEntries(NAV.map(n=>[n.id,n]));
 
