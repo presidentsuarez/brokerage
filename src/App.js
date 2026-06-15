@@ -8688,7 +8688,105 @@ const PRISM_SYSTEMS = [
   { key:"supabase", icon:"\u{1F5C4}\uFE0F", label:"Supabase", desc:"Backend", action:"supabase_status",
     subtitle:"Postgres · Auth · Storage · Edge functions",
     fields:[["Project ref","ref"],["URL","url"],["Database","db"]] },
+  { key:"suarez", icon:"\u{1F310}", label:"Suarez", desc:"Global OS sync", custom:true,
+    subtitle:"Suarez Global OS · synced robots & cross-platform link" },
 ];
+
+function SuarezConnectionCard({ sys }) {
+  const [robots, setRobots] = useState(null);
+  const [err, setErr] = useState(null);
+  const load = async () => {
+    setErr(null);
+    try {
+      const { data, error } = await supabase.from("robots")
+        .select("id, name, role, description, avatar_color, status, current_focus, synced_at")
+        .eq("source", "suarez").order("name", { ascending:true });
+      if (error) throw error;
+      setRobots(data || []);
+    } catch(e){ setErr(String(e.message||e)); setRobots([]); }
+  };
+  useEffect(()=>{ load(); /* eslint-disable-next-line */ }, []);
+
+  const connected = robots && robots.length > 0;
+  const lastSync = connected ? robots.map(r=>r.synced_at).filter(Boolean).sort().slice(-1)[0] : null;
+  const badge = robots===null
+    ? { t:"Checking…", c:C.text3, bg:C.surface2, dot:C.text3 }
+    : connected
+    ? { t:"Live · Synced", c:C.green, bg:C.goldDim, dot:C.green }
+    : { t:"No synced robots", c:C.red, bg:"rgba(220,80,80,0.10)", dot:C.red };
+
+  return (
+    <div style={{ maxWidth:680 }}>
+      {/* Connection header */}
+      <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:"22px 24px" }}>
+        <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+          <div style={{ width:42, height:42, borderRadius:11, background:C.surface2, border:`1px solid ${C.border}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:22 }}>{sys.icon}</div>
+          <div style={{ flex:1, minWidth:0 }}>
+            <div style={{ fontSize:17, fontWeight:700, color:C.text, fontFamily:SERIF }}>Suarez Global OS</div>
+            <div style={{ fontSize:12, color:C.text3, fontFamily:FONT }}>{sys.subtitle}</div>
+          </div>
+          <div style={{ display:"flex", alignItems:"center", gap:7, padding:"6px 12px", borderRadius:20, background:badge.bg, border:`1px solid ${badge.c}44` }}>
+            <span style={{ width:8, height:8, borderRadius:8, background:badge.dot, flexShrink:0 }} />
+            <span style={{ fontSize:12, fontWeight:700, color:badge.c, fontFamily:FONT, whiteSpace:"nowrap" }}>{badge.t}</span>
+          </div>
+        </div>
+        {connected && (
+          <div style={{ display:"flex", gap:14, marginTop:16, flexWrap:"wrap" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", gap:14, padding:"9px 0", borderTop:`1px solid ${C.border}`, fontFamily:FONT, flex:"1 1 100%" }}>
+              <span style={{ fontSize:12, color:C.text3 }}>Robots synced from Suarez</span>
+              <span style={{ fontSize:12.5, color:C.text2, fontWeight:600 }}>{robots.length}</span>
+            </div>
+            <div style={{ display:"flex", justifyContent:"space-between", gap:14, padding:"9px 0", borderTop:`1px solid ${C.border}`, fontFamily:FONT, flex:"1 1 100%" }}>
+              <span style={{ fontSize:12, color:C.text3 }}>Last sync</span>
+              <span style={{ fontSize:12.5, color:C.text2, fontWeight:600 }}>{lastSync ? new Date(lastSync).toLocaleString() : "—"}</span>
+            </div>
+          </div>
+        )}
+        {err && <div style={{ marginTop:14, padding:"12px 14px", background:"rgba(220,80,80,0.08)", border:"1px solid rgba(220,80,80,0.30)", borderRadius:10, fontSize:12.5, color:C.red, fontFamily:FONT }}>{err}</div>}
+        <div style={{ marginTop:16 }}>
+          <GoldButton small outline onClick={load} disabled={robots===null}>{robots===null?"Checking…":"Re-check"}</GoldButton>
+        </div>
+      </div>
+
+      {/* Synced robot roster */}
+      {connected && (
+        <div style={{ marginTop:18 }}>
+          <div style={{ fontSize:11, fontWeight:800, color:C.text3, letterSpacing:"0.1em", textTransform:"uppercase", fontFamily:FONT, marginBottom:10 }}>Synced Business Unit Leaders</div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr", gap:12 }}>
+            {robots.map(r=>{
+              const c = r.avatar_color || C.gold;
+              const initial = String(r.name||"?").charAt(0).toUpperCase();
+              return (
+                <div key={r.id} style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:"16px 18px" }}>
+                  <div style={{ display:"flex", gap:13, alignItems:"flex-start" }}>
+                    <div style={{ width:42, height:42, borderRadius:11, background:c+"22", border:`1px solid ${c}66`, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, fontWeight:800, fontSize:18, color:c, fontFamily:SERIF }}>{initial}</div>
+                    <div style={{ minWidth:0, flex:1 }}>
+                      <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
+                        <span style={{ fontSize:15, fontWeight:700, color:C.text, fontFamily:FONT }}>{r.name}</span>
+                        <span style={{ fontSize:9, fontWeight:800, color:C.gold, background:C.goldDim, border:`1px solid ${C.goldBorder}`, borderRadius:999, padding:"2px 8px", letterSpacing:"0.04em", textTransform:"uppercase" }}>synced from Suarez</span>
+                      </div>
+                      <div style={{ fontSize:11.5, fontWeight:700, color:c, marginTop:2, textTransform:"uppercase", letterSpacing:"0.04em", fontFamily:FONT }}>{r.role}</div>
+                    </div>
+                  </div>
+                  {r.description && <div style={{ fontSize:12.5, color:C.text2, marginTop:10, lineHeight:1.5, fontFamily:FONT }}>{r.description}</div>}
+                  {r.current_focus && (
+                    <div style={{ marginTop:10, background:c+"14", border:`1px solid ${c}33`, borderRadius:9, padding:"8px 11px" }}>
+                      <span style={{ fontSize:9, fontWeight:800, color:c, textTransform:"uppercase", letterSpacing:"0.06em", fontFamily:FONT }}>Current focus</span>
+                      <div style={{ fontSize:12, color:C.text2, marginTop:2, lineHeight:1.45, fontFamily:FONT }}>{r.current_focus}</div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <div style={{ fontSize:11, color:C.text3, fontFamily:FONT, marginTop:12, lineHeight:1.5 }}>
+            These robots are defined in Suarez Global OS and synced into Prism. They're available to deploy here. Editing the canonical definition happens in Suarez; re-running the sync refreshes them.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function SystemsView({ user }) {
   const isMobile = useIsMobile();
@@ -8716,7 +8814,7 @@ function SystemsView({ user }) {
         </div>
       )}
       <div style={{ flex:1, minWidth:0 }}>
-        <SystemStatusCard sys={active} />
+        {active.custom && active.key==="suarez" ? <SuarezConnectionCard sys={active} /> : <SystemStatusCard sys={active} />}
       </div>
     </div>
   );
