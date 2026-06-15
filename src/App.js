@@ -101,6 +101,7 @@ const NAV = [
   { id:"leasing",   label:"Leasing",   icon:"🔑" },
   { id:"recruiting", label:"Recruiting",  icon:"🎯", recruitGate:true },
   { id:"applications",label:"Applications",icon:"📥", adminOnly:true },
+  { id:"organization",label:"Organization",icon:"🏛️" },
   { id:"financials",  label:"Financials",  icon:"💵", adminOnly:true },
   { id:"performance", label:"Performance", icon:"📈", adminOnly:true },
   { id:"systems",    label:"Systems",   icon:"🛰️", ownerOnly:true },
@@ -112,7 +113,7 @@ const NAV = [
 // Sidebar grouping: collapsible sections. Items keep their own gating from NAV.
 const NAV_GROUPS = [
   { group:"realestate", label:"Real Estate", icon:"🏢", items:["deals","listings","buyers","leasing"] },
-  { group:"people",     label:"People",      icon:"👥", items:["contacts","recruiting","applications"] },
+  { group:"people",     label:"People",      icon:"👥", items:["contacts","recruiting","applications","organization"] },
   { group:"finance",    label:"Finance",     icon:"💰", items:["financials","performance"] },
   { group:"workspace",  label:"Workspace",   icon:"🗂️", items:["planning","calendar"] },
   { group:"admin",      label:"Admin",       icon:"🛠️", items:["systems","robots","notepad","settings"] },
@@ -8721,6 +8722,58 @@ function SystemsView({ user }) {
   );
 }
 
+function OrganizationView({ user }) {
+  const isMobile = useIsMobile();
+  const [staff, setStaff] = useState(null);
+  const [org, setOrg] = useState(null);
+  useEffect(()=>{
+    supabase.from("user_profiles").select("full_name,email,role,brokerage_role,avatar_url").then(({data})=>setStaff(data||[]));
+    supabase.from("organizations").select("name,broker_name").eq("id",ORG_ID).maybeSingle().then(({data})=>setOrg(data||null));
+  },[]);
+  const TIERS=[
+    { key:"owner",   label:"Ownership",      icon:"👑", note:"Owners & principals" },
+    { key:"admin",   label:"Administration", icon:"🔑", note:"Brokers & front office" },
+    { key:"manager", label:"Management",     icon:"🛠️", note:"Operations & team leads" },
+  ];
+  return (
+    <div style={{ padding:isMobile?"16px":"24px 28px", maxWidth:980 }}>
+      <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:"22px 24px", marginBottom:22 }}>
+        <div style={{ fontSize:11, fontWeight:700, color:C.text3, letterSpacing:"0.1em", textTransform:"uppercase", fontFamily:FONT, marginBottom:6 }}>Organization</div>
+        <div style={{ fontSize:22, fontWeight:700, color:C.text, fontFamily:SERIF }}>{org?.name||"Realty One Group Advantage"}</div>
+        {org?.broker_name && <div style={{ fontSize:13, color:C.text2, fontFamily:FONT, marginTop:5 }}>Broker of Record · <span style={{ color:C.gold, fontWeight:600 }}>{org.broker_name}</span></div>}
+      </div>
+      {staff===null ? (
+        <div style={{ color:C.text3, fontFamily:FONT, fontSize:13 }}>Loading…</div>
+      ) : TIERS.map(tier=>{
+        const people = staff.filter(p=>p.role===tier.key);
+        if(people.length===0) return null;
+        return (
+          <div key={tier.key} style={{ marginBottom:24 }}>
+            <div style={{ display:"flex", alignItems:"baseline", gap:8, marginBottom:10 }}>
+              <span style={{ fontSize:15 }}>{tier.icon}</span>
+              <span style={{ fontSize:14, fontWeight:700, color:C.gold, fontFamily:FONT, letterSpacing:"0.04em", textTransform:"uppercase" }}>{tier.label}</span>
+              <span style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>· {tier.note}</span>
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:isMobile?"1fr":"repeat(auto-fill, minmax(280px, 1fr))", gap:12 }}>
+              {people.map(p=>(
+                <div key={p.email} style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:"14px 16px", display:"flex", alignItems:"center", gap:13 }}>
+                  <Avatar name={p.full_name} email={p.email} size={44} />
+                  <div style={{ minWidth:0, flex:1 }}>
+                    <div style={{ fontSize:14, fontWeight:700, color:C.text, fontFamily:FONT, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{p.full_name||p.email}</div>
+                    <div style={{ fontSize:12, color:C.gold, fontFamily:FONT, fontWeight:600 }}>{p.brokerage_role||tier.label}</div>
+                    <div style={{ fontSize:11, color:C.text3, fontFamily:FONT, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{p.email}</div>
+                  </div>
+                  <span style={{ fontSize:9, fontWeight:800, padding:"3px 8px", borderRadius:6, color:C.gold, background:C.goldDim, border:`1px solid ${C.goldBorder}`, textTransform:"uppercase", whiteSpace:"nowrap" }}>{p.role}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function SettingsView({ user, onProfileSaved, theme, onToggleTheme }) {
   const [showEdit,setShowEdit] = useState(false);
   const [showPw,setShowPw]     = useState(false);
@@ -9531,6 +9584,7 @@ function MainApp() {
     tasks:[`Tasks`,`${tasks.filter(t=>t.status!=="done").length} open`],
     settings:["Settings","Account & org"],
     systems:["Systems","Integrations & status"],
+    organization:["Organization","Leadership & structure"],
     robots:  ["Ari", "Business Unit Leader · ROGA"],
     calendar:   ["Calendar",   "Realty One Group Advantage"],
     listings:   ["Listings Pipeline", "Seller-side opportunities"],
@@ -9585,6 +9639,7 @@ function MainApp() {
           {view==="tasks"    &&<TasksView     user={cu} tasks={tasks}    onRefresh={loadData} />}
           {view==="planning" &&<PlanningView  user={cu} onRefresh={loadData} />}
           {view==="systems" && <SystemsView user={cu} />}
+          {view==="organization" && <OrganizationView user={cu} />}
           {view==="settings" &&<SettingsView  user={cu} onProfileSaved={onProfileSaved} theme={theme} onToggleTheme={toggleTheme} />}
           {view==="notepad"  &&<NotesView     user={cu} />}
           {view==="robots"   &&<RobotsView    user={cu} deals={deals} contacts={contacts} tasks={tasks} />}
