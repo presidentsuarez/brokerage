@@ -8824,9 +8824,11 @@ function OrganizationView({ user }) {
   const isMobile = useIsMobile();
   const [staff, setStaff] = useState(null);
   const [org, setOrg] = useState(null);
+  const [robots, setRobots] = useState(null);
   useEffect(()=>{
     supabase.from("user_profiles").select("full_name,email,role,brokerage_role,avatar_url").then(({data})=>setStaff(data||[]));
     supabase.from("organizations").select("name,broker_name").eq("id",ORG_ID).maybeSingle().then(({data})=>setOrg(data||null));
+    supabase.from("robots").select("id,name,role,description,avatar_color,status,current_focus,source").order("name",{ascending:true}).then(({data})=>setRobots(data||[]));
   },[]);
   const TIERS=[
     { key:"owner",   label:"Ownership",      icon:"👑", note:"Owners & principals" },
@@ -8868,6 +8870,46 @@ function OrganizationView({ user }) {
           </div>
         );
       })}
+
+      {/* AI Team — robots */}
+      {robots && robots.length > 0 && (
+        <div style={{ marginBottom:24 }}>
+          <div style={{ display:"flex", alignItems:"baseline", gap:8, marginBottom:10 }}>
+            <span style={{ fontSize:15 }}>🤖</span>
+            <span style={{ fontSize:14, fontWeight:700, color:C.gold, fontFamily:FONT, letterSpacing:"0.04em", textTransform:"uppercase" }}>AI Team</span>
+            <span style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>· Business Unit Leaders & in-app assistant</span>
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:isMobile?"1fr":"repeat(auto-fill, minmax(300px, 1fr))", gap:12 }}>
+            {robots.map(r=>{
+              const c = r.avatar_color || C.gold;
+              const initial = String(r.name||"?").charAt(0).toUpperCase();
+              const origin = r.source === "suarez" ? "Synced from Suarez" : "In-App";
+              return (
+                <div key={r.id} style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:"14px 16px" }}>
+                  <div style={{ display:"flex", alignItems:"flex-start", gap:13 }}>
+                    <div style={{ width:44, height:44, borderRadius:11, background:c+"22", border:`1px solid ${c}66`, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, fontWeight:800, fontSize:18, color:c, fontFamily:SERIF }}>{initial}</div>
+                    <div style={{ minWidth:0, flex:1 }}>
+                      <div style={{ display:"flex", alignItems:"center", gap:7, flexWrap:"wrap" }}>
+                        <span style={{ fontSize:14, fontWeight:700, color:C.text, fontFamily:FONT }}>{r.name}</span>
+                        <span style={{ fontSize:8.5, fontWeight:800, padding:"2px 7px", borderRadius:6, color:C.gold, background:C.goldDim, border:`1px solid ${C.goldBorder}`, textTransform:"uppercase", whiteSpace:"nowrap" }}>{r.status}</span>
+                        <span style={{ fontSize:8.5, fontWeight:700, padding:"2px 7px", borderRadius:6, color:C.text3, background:C.surface2, border:`1px solid ${C.border}`, whiteSpace:"nowrap" }}>{origin}</span>
+                      </div>
+                      <div style={{ fontSize:11.5, color:c, fontFamily:FONT, fontWeight:600, marginTop:2 }}>{r.role}</div>
+                    </div>
+                  </div>
+                  {r.description && <div style={{ fontSize:12, color:C.text2, fontFamily:FONT, marginTop:10, lineHeight:1.5 }}>{r.description}</div>}
+                  {r.current_focus && (
+                    <div style={{ marginTop:10, background:c+"14", border:`1px solid ${c}33`, borderRadius:9, padding:"8px 11px" }}>
+                      <span style={{ fontSize:8.5, fontWeight:800, color:c, textTransform:"uppercase", letterSpacing:"0.06em", fontFamily:FONT }}>Current focus</span>
+                      <div style={{ fontSize:11.5, color:C.text2, fontFamily:FONT, marginTop:2, lineHeight:1.45 }}>{r.current_focus}</div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
