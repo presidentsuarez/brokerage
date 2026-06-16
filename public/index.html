@@ -12,6 +12,23 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=Playfair+Display:wght@400;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
     <title>Prism | Brokerage</title>
+    <script>
+      // Self-heal: if a stale cached index.html points at a deploy-deleted JS bundle,
+      // the script 404s and the app would blank. Catch that and reload once to fetch
+      // the current index + bundle. sessionStorage guard prevents reload loops.
+      (function () {
+        window.addEventListener('error', function (e) {
+          var t = e && e.target;
+          if (t && t.tagName === 'SCRIPT' && /\/static\/js\/main\.[a-z0-9]+\.js/.test(t.src || '')) {
+            if (!sessionStorage.getItem('prism_chunk_reload')) {
+              sessionStorage.setItem('prism_chunk_reload', '1');
+              location.reload();
+            }
+          }
+        }, true);
+        window.addEventListener('load', function () { sessionStorage.removeItem('prism_chunk_reload'); });
+      })();
+    </script>
   </head>
   <body>
     <noscript>You need to enable JavaScript to run this app.</noscript>
