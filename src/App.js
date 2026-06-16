@@ -105,7 +105,7 @@ const NAV = [
   { id:"financials",  label:"Financials",  icon:"💵", adminOnly:true },
   { id:"performance", label:"Performance", icon:"📈", adminOnly:true },
   { id:"systems",    label:"Systems",   icon:"🛰️", ownerOnly:true },
-  { id:"robots",    label:"Ari",       icon:"✨", platformOnly:true },
+  { id:"robots",    label:"Robots",    icon:"🤖", platformOnly:true },
   { id:"notepad",   label:"Notepad",   icon:"📝", platformOnly:true },
   { id:"settings",  label:"Settings",  icon:"⚙️", platformOnly:true },
 ];
@@ -5530,30 +5530,52 @@ function CalendarView({ user, isPortal=false, agentContact=null }) {
 
 function RobotsView({ user, deals, contacts, tasks }) {
   const isMobile = useIsMobile();
+  const [robots, setRobots]       = useState([]);
+  const [activeId, setActiveId]   = useState(ARI_ID);
   const [messages, setMessages]   = useState([]);
   const [input, setInput]         = useState("");
   const [sending, setSending]     = useState(false);
   const [convId, setConvId]       = useState(null);
-  const [ariStatus, setAriStatus] = useState("idle");
+  const [status, setStatus]       = useState("idle");
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [mems, setMems]           = useState(null);
   const bottomRef = useRef(null);
 
-  // Load or create Ari's conversation for this user
-  useEffect(()=>{
-    supabase.from("robot_conversations")
-      .select("*").eq("robot_id", ARI_ID)
-      .eq("user_email", user?.email).eq("org_id", ORG_ID)
-      .order("updated_at", {ascending:false}).limit(1)
-      .then(({data})=>{
-        if(data&&data[0]) {
-          setConvId(data[0].id);
-          setMessages(data[0].messages||[]);
-        }
-      });
-  },[user?.email]);
+  const robot = robots.find(r=>r.id===activeId) || null;
 
+  // Load the robot roster
   useEffect(()=>{
-    bottomRef.current?.scrollIntoView({behavior:"smooth"});
-  },[messages]);
+    supabase.from("robots")
+      .select("id,name,role,description,system_prompt,avatar_color,status,current_focus,source,suarez_name")
+      .eq("org_id", ORG_ID)
+      .then(({data})=>{
+        const list = data||[];
+        list.sort((a,b)=> a.id===ARI_ID?-1 : b.id===ARI_ID?1 : (a.name||"").localeCompare(b.name||""));
+        setRobots(list);
+      });
+  },[]);
+
+  // Load the active robot's conversation for this user
+  useEffect(()=>{
+    if(!activeId) return;
+    setMessages([]); setConvId(null);
+    supabase.from("robot_conversations")
+      .select("*").eq("robot_id", activeId)
+      .eq("user_email", user?.email).eq("org_id", ORG_ID)
+      .order("updated_at",{ascending:false}).limit(1)
+      .then(({data})=>{ if(data&&data[0]){ setConvId(data[0].id); setMessages(data[0].messages||[]); } });
+  },[activeId, user?.email]);
+
+  useEffect(()=>{ bottomRef.current?.scrollIntoView({behavior:"smooth"}); },[messages]);
+
+  // Load memories when the profile opens
+  useEffect(()=>{
+    if(!profileOpen||!activeId) return;
+    setMems(null);
+    supabase.from("robot_memories").select("memory_type,content,updated_at")
+      .eq("robot_id", activeId).order("updated_at",{ascending:false})
+      .then(({data})=>setMems(data||[]));
+  },[profileOpen, activeId]);
 
   const buildContext = () => {
     const dealSummary = deals.slice(0,20).map(d=>
@@ -5564,207 +5586,184 @@ function RobotsView({ user, deals, contacts, tasks }) {
     return `\nLIVE ORG CONTEXT:\nDeals (${deals.length} total): ${dealSummary||"none"}\nContacts: ${contacts.length} total (${agentCount} agents)\nOpen tasks: ${openTasks}\nDate: ${new Date().toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric",year:"numeric"})}`;
   };
 
+  const robotPrompt = (r) => {
+    const base = r?.system_prompt && r.system_prompt.trim()
+      ? r.system_prompt.trim()
+      : `You are ${r?.name||"an AI assistant"}, ${r?.role||"a Business Unit Leader"} at Realty ONE Group Advantage (ROGA).${r?.description?` ${r.description}`:""}${r?.current_focus?`\nCurrent focus: ${r.current_focus}`:""}`;
+    return `${base}\n\nBe direct, sharp, and practical. Never start with "Certainly!" or "Of course!". Get to the point. Use bullet points for lists. Keep responses focused. You have live read access to the brokerage's deals, contacts, agent roster, and tasks when provided below.`;
+  };
+
   const sendMessage = async () => {
-    if(!input.trim()||sending) return;
-    const userMsg = { role:"user", content:input.trim(), ts: new Date().toISOString() };
+    if(!input.trim()||sending||!robot) return;
+    const userMsg = { role:"user", content:input.trim(), ts:new Date().toISOString() };
     const newMsgs = [...messages, userMsg];
-    setMessages(newMsgs);
-    setInput("");
-    setSending(true);
-    setAriStatus("thinking");
-
+    setMessages(newMsgs); setInput(""); setSending(true); setStatus("thinking");
     try {
-      // Build messages for Claude API
-      const apiMessages = newMsgs.map(m=>({
-        role: m.role==="user"?"user":"assistant",
-        content: m.content,
-      }));
-
-      // Add org context to first user message
-      if(apiMessages.length===1) {
-        apiMessages[0].content = apiMessages[0].content + buildContext();
-      }
-
+      const apiMessages = newMsgs.map(m=>({ role:m.role==="user"?"user":"assistant", content:m.content }));
+      if(apiMessages.length===1) apiMessages[0].content += buildContext();
       const { data:{ session } } = await supabase.auth.getSession();
       const res = await fetch(`${process.env.REACT_APP_SUPABASE_URL}/functions/v1/ari-chat`, {
         method:"POST",
         headers:{ "Content-Type":"application/json", "apikey":process.env.REACT_APP_SUPABASE_ANON_KEY, "Authorization":`Bearer ${session?.access_token}` },
         body: JSON.stringify({
-          model: "claude-sonnet-4-6",
-          max_tokens: 1200,
-          endpoint: "ari_admin",
-          user_email: user?.email,
-          system: `You are Ari, the AI Business Unit Leader for Realty One Group Advantage (ROGA). You support Javier Suarez (Operations) with brokerage intelligence — deal pipeline analysis, agent performance, operational guidance, market context, and strategic recommendations. You have live access to org data when provided. Be direct, sharp, and practical. Never start with "Certainly!" or "Of course!". Get to the point. Use bullet points for lists. Keep responses focused.`,
-          messages: apiMessages,
+          model:"claude-sonnet-4-6", max_tokens:1200,
+          endpoint:`ari_admin:${robot.name}`, user_email:user?.email,
+          system: robotPrompt(robot), messages: apiMessages,
         }),
       });
       const data = await res.json();
-      const ariText = data.content?.[0]?.text || "Sorry, I ran into an issue. Try again.";
-      const ariMsg  = { role:"assistant", content:ariText, ts: new Date().toISOString() };
-      const finalMsgs = [...newMsgs, ariMsg];
+      const text = data.content?.[0]?.text || "Sorry, I ran into an issue. Try again.";
+      const botMsg = { role:"assistant", content:text, ts:new Date().toISOString() };
+      const finalMsgs = [...newMsgs, botMsg];
       setMessages(finalMsgs);
-
-      // Save/update conversation
-      if(convId) {
-        await supabase.from("robot_conversations").update({
-          messages:finalMsgs, updated_at:new Date().toISOString()
-        }).eq("id", convId);
+      if(convId){
+        await supabase.from("robot_conversations").update({ messages:finalMsgs, updated_at:new Date().toISOString() }).eq("id",convId);
       } else {
         const {data:conv} = await supabase.from("robot_conversations").insert({
-          robot_id: ARI_ID, org_id: ORG_ID,
-          user_email: user?.email, messages: finalMsgs,
+          robot_id:robot.id, org_id:ORG_ID, user_email:user?.email, messages:finalMsgs,
         }).select().single();
         if(conv) setConvId(conv.id);
       }
-    } catch(e) {
-      const errMsg = { role:"assistant", content:"Connection error — check your API key or try again.", ts:new Date().toISOString() };
-      setMessages(m=>[...m, errMsg]);
-    } finally {
-      setSending(false);
-      setAriStatus("idle");
-    }
+    } catch(e){
+      setMessages(m=>[...m,{role:"assistant",content:"Connection error — try again.",ts:new Date().toISOString()}]);
+    } finally { setSending(false); setStatus("idle"); }
   };
 
   const clearChat = async () => {
     if(convId) await supabase.from("robot_conversations").update({messages:[],updated_at:new Date().toISOString()}).eq("id",convId);
     setMessages([]);
   };
+  const fmtTime = iso => iso ? new Date(iso).toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"}) : "";
 
-  const fmtTime = iso => {
-    if(!iso) return "";
-    return new Date(iso).toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"});
-  };
+  const RAvatar = ({ r, size }) => (
+    <div style={{ width:size, height:size, borderRadius:Math.round(size*0.28), flexShrink:0,
+      background: r?.avatar_color || C.gold, display:"flex", alignItems:"center", justifyContent:"center",
+      fontSize:Math.round(size*0.44), fontWeight:800, color:"#fff", fontFamily:SERIF,
+      boxShadow:`0 0 0 1px ${C.border}` }}>
+      {(r?.name||"?").slice(0,1).toUpperCase()}
+    </div>
+  );
+  const Section = ({ title, children }) => (
+    <div>
+      <div style={{ fontSize:10, fontWeight:700, color:C.text3, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:7 }}>{title}</div>
+      {children}
+    </div>
+  );
+  const srcBadge = (src) => src==="prism" ? { t:"Native · Prism", c:C.gold } : { t:"Synced · Suarez OS", c:C.purple };
 
   return (
-    <div style={{ display:"flex", height:"calc(100vh - 56px)", overflow:"hidden" }}>
-      {/* Ari sidebar */}
+    <div style={{ display:"flex", height:"calc(100vh - 56px)", overflow:"hidden", position:"relative" }}>
+      {/* Robot roster rail (desktop) */}
       {!isMobile && (
-      <div style={{ width:240, background:C.surface, borderRight:`1px solid ${C.border}`,
-        display:"flex", flexDirection:"column", padding:"20px 16px", flexShrink:0 }}>
-        <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:20 }}>
-          <div style={{ width:44, height:44, borderRadius:12, flexShrink:0,
-            background:`linear-gradient(135deg,${C.gold},${C.goldLight})`,
-            display:"flex", alignItems:"center", justifyContent:"center",
-            fontSize:18 }}>✦</div>
-          <div>
-            <div style={{ fontSize:15, fontWeight:700, color:C.text, fontFamily:SERIF }}>Ari</div>
-            <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>Business Unit Leader</div>
-          </div>
-        </div>
-
-        <div style={{ fontSize:11, color:C.text3, fontFamily:FONT, lineHeight:1.6, marginBottom:20 }}>
-          Ari has live access to your deals, contacts, tasks, and agent roster. Ask anything about your brokerage.
-        </div>
-
-        <div style={{ background:C.surface2, borderRadius:10, padding:"12px 14px", marginBottom:16 }}>
-          <div style={{ fontSize:10, fontWeight:700, color:C.text3, fontFamily:FONT,
-            textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:8 }}>Try asking</div>
-          {[
-            "What's my pipeline look like?",
-            "Which deals need attention?",
-            "Summarize this week's activity",
-            "How many agents are active?",
-            "Draft a follow-up email for a buyer",
-          ].map(q=>(
-            <button key={q} onClick={()=>setInput(q)} style={{
-              display:"block", width:"100%", textAlign:"left", padding:"6px 0",
-              background:"none", border:"none", borderBottom:`1px solid ${C.border}`,
-              color:C.text2, fontSize:11, fontFamily:FONT, cursor:"pointer",
-              transition:"color 0.1s" }}
-              onMouseEnter={e=>e.currentTarget.style.color=C.gold}
-              onMouseLeave={e=>e.currentTarget.style.color=C.text2}>
-              {q}
+      <div style={{ width:248, background:C.surface, borderRight:`1px solid ${C.border}`,
+        display:"flex", flexDirection:"column", padding:"16px 12px", flexShrink:0, overflowY:"auto" }}>
+        <div style={{ fontSize:10, fontWeight:700, color:C.text3, fontFamily:FONT,
+          textTransform:"uppercase", letterSpacing:"0.08em", padding:"4px 8px 10px" }}>Robots</div>
+        {robots.map(r=>{
+          const active = r.id===activeId; const b = srcBadge(r.source);
+          return (
+            <button key={r.id} onClick={()=>setActiveId(r.id)} style={{
+              display:"flex", gap:11, alignItems:"center", textAlign:"left",
+              padding:"10px", marginBottom:4, borderRadius:10, cursor:"pointer", width:"100%",
+              background: active?C.goldDim:"transparent",
+              border:`1px solid ${active?C.goldBorder:"transparent"}`, transition:"background 0.12s" }}
+              onMouseEnter={e=>{ if(!active) e.currentTarget.style.background=C.surface2; }}
+              onMouseLeave={e=>{ if(!active) e.currentTarget.style.background="transparent"; }}>
+              <RAvatar r={r} size={36} />
+              <div style={{ minWidth:0, flex:1 }}>
+                <div style={{ fontSize:13.5, fontWeight:700, color:C.text, fontFamily:SERIF,
+                  whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{r.name}</div>
+                <div style={{ fontSize:10.5, color:active?b.c:C.text3, fontFamily:FONT,
+                  whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{r.role}</div>
+              </div>
             </button>
-          ))}
-        </div>
-
-        <div style={{ marginTop:"auto" }}>
-          <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:8 }}>
-            <div style={{ width:7, height:7, borderRadius:"50%",
-              background:ariStatus==="thinking"?C.amber:C.green,
-              animation:ariStatus==="thinking"?"pulse 1s infinite":"none" }} />
-            <span style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>
-              {ariStatus==="thinking"?"Thinking…":"Ready"}
-            </span>
-          </div>
-          {messages.length>0&&(
-            <button onClick={clearChat} style={{ background:"none", border:`1px solid ${C.border}`,
-              borderRadius:6, color:C.text3, fontSize:11, fontFamily:FONT, cursor:"pointer",
-              padding:"6px 12px", width:"100%", transition:"color 0.1s" }}
-              onMouseEnter={e=>e.currentTarget.style.color=C.red}
-              onMouseLeave={e=>e.currentTarget.style.color=C.text3}>
-              Clear chat
-            </button>
-          )}
+          );
+        })}
+        <div style={{ marginTop:"auto", padding:"10px 8px 4px", display:"flex", alignItems:"center", gap:6 }}>
+          <div style={{ width:7, height:7, borderRadius:"50%",
+            background:status==="thinking"?C.amber:C.green, animation:status==="thinking"?"pulse 1s infinite":"none" }} />
+          <span style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>{status==="thinking"?"Thinking…":"Ready"}</span>
         </div>
       </div>
       )}
 
-      {/* Chat area */}
+      {/* Chat column */}
       <div style={{ flex:1, display:"flex", flexDirection:"column", minWidth:0 }}>
-        {/* Messages */}
-        <div style={{ flex:1, overflowY:"auto", padding:"20px 24px",
-          display:"flex", flexDirection:"column", gap:16 }}>
-          {messages.length===0 && (
-            <div style={{ flex:1, display:"flex", flexDirection:"column",
-              alignItems:"center", justifyContent:"center", gap:12, opacity:0.5 }}>
-              <div style={{ fontSize:40 }}>✦</div>
-              <div style={{ fontSize:14, color:C.text3, fontFamily:FONT, textAlign:"center" }}>
-                Ask Ari anything about your brokerage
-              </div>
-            </div>
+        {/* Header bar */}
+        <div style={{ display:"flex", alignItems:"center", gap:12, padding:"12px 20px",
+          borderBottom:`1px solid ${C.border}`, background:C.surface, flexShrink:0 }}>
+          <RAvatar r={robot} size={38} />
+          <div style={{ minWidth:0, flex:1 }}>
+            <div style={{ fontSize:15, fontWeight:700, color:C.text, fontFamily:SERIF,
+              whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{robot?.name||"…"}</div>
+            <div style={{ fontSize:11, color:C.text3, fontFamily:FONT,
+              whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{robot?.role||""}</div>
+          </div>
+          {messages.length>0 && (
+            <button onClick={clearChat} style={{ background:"none", border:`1px solid ${C.border}`,
+              borderRadius:8, color:C.text3, fontSize:11, fontFamily:FONT, cursor:"pointer", padding:"7px 12px" }}
+              onMouseEnter={e=>e.currentTarget.style.color=C.red}
+              onMouseLeave={e=>e.currentTarget.style.color=C.text3}>Clear chat</button>
           )}
-          {isMobile && messages.length===0 && (
-            <div style={{ display:"flex", flexDirection:"column", gap:8, marginTop:4 }}>
-              <div style={{ fontSize:10, fontWeight:700, color:C.text3, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.07em" }}>Try asking</div>
-              {["What's my pipeline look like?","Which deals need attention?","Summarize this week's activity","How many agents are active?"].map(q=>(
-                <button key={q} onClick={()=>setInput(q)} style={{ textAlign:"left", background:C.surface2, border:`1px solid ${C.border}`, borderRadius:10, color:C.text2, fontSize:13, fontFamily:FONT, cursor:"pointer", padding:"11px 13px" }}>{q}</button>
-              ))}
+          <button onClick={()=>setProfileOpen(true)} disabled={!robot} style={{
+            background:C.goldDim, border:`1px solid ${C.goldBorder}`, borderRadius:8,
+            color:C.gold, fontSize:11.5, fontWeight:700, fontFamily:FONT,
+            cursor:robot?"pointer":"not-allowed", padding:"7px 13px", whiteSpace:"nowrap" }}>
+            View Robot Profile
+          </button>
+        </div>
+
+        {/* Mobile robot selector */}
+        {isMobile && (
+          <div style={{ display:"flex", gap:8, overflowX:"auto", padding:"10px 14px",
+            borderBottom:`1px solid ${C.border}`, background:C.surface }}>
+            {robots.map(r=>(
+              <button key={r.id} onClick={()=>setActiveId(r.id)} style={{
+                display:"flex", gap:7, alignItems:"center", flexShrink:0, padding:"6px 11px", borderRadius:20,
+                background:r.id===activeId?C.goldDim:C.surface2,
+                border:`1px solid ${r.id===activeId?C.goldBorder:C.border}`, cursor:"pointer" }}>
+                <RAvatar r={r} size={20} />
+                <span style={{ fontSize:12.5, fontWeight:700, color:C.text, fontFamily:SERIF }}>{r.name}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Messages */}
+        <div style={{ flex:1, overflowY:"auto", padding:"20px 24px", display:"flex", flexDirection:"column", gap:16 }}>
+          {messages.length===0 && (
+            <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:12, opacity:0.75 }}>
+              <RAvatar r={robot} size={52} />
+              <div style={{ fontSize:14, color:C.text3, fontFamily:FONT, textAlign:"center", maxWidth:360 }}>
+                {robot?.description || `Ask ${robot?.name||"this robot"} anything about your brokerage.`}
+              </div>
+              {robot?.current_focus && (
+                <div style={{ fontSize:12, color:C.text3, fontFamily:FONT, textAlign:"center", maxWidth:400,
+                  background:C.surface2, border:`1px solid ${C.border}`, borderRadius:10, padding:"8px 12px" }}>
+                  <b style={{color:C.text2}}>Current focus:</b> {robot.current_focus}
+                </div>
+              )}
             </div>
           )}
           {messages.map((m,i)=>(
-            <div key={i} style={{ display:"flex", gap:12,
-              flexDirection:m.role==="user"?"row-reverse":"row",
-              alignItems:"flex-start" }}>
-              {m.role==="assistant" ? (
-                <div style={{ width:32, height:32, borderRadius:8, flexShrink:0,
-                  background:`linear-gradient(135deg,${C.gold},${C.goldLight})`,
-                  display:"flex", alignItems:"center", justifyContent:"center",
-                  fontSize:14 }}>✦</div>
-              ) : (
-                <Avatar name={user?.full_name} email={user?.email} size={32} />
-              )}
+            <div key={i} style={{ display:"flex", gap:12, flexDirection:m.role==="user"?"row-reverse":"row", alignItems:"flex-start" }}>
+              {m.role==="assistant" ? <RAvatar r={robot} size={32} /> : <Avatar name={user?.full_name} email={user?.email} size={32} />}
               <div style={{ maxWidth:"72%", minWidth:0 }}>
-                <div style={{
-                  padding:"12px 16px", borderRadius:12,
-                  background: m.role==="user" ? C.goldDim : C.surface,
-                  border: m.role==="user" ? `1px solid ${C.goldBorder}` : `1px solid ${C.border}`,
-                  color: C.text, fontSize:13, fontFamily:FONT, lineHeight:1.65,
-                  whiteSpace:"pre-wrap", wordBreak:"break-word",
-                }}>
+                <div style={{ padding:"12px 16px", borderRadius:12,
+                  background:m.role==="user"?C.goldDim:C.surface,
+                  border:m.role==="user"?`1px solid ${C.goldBorder}`:`1px solid ${C.border}`,
+                  color:C.text, fontSize:13, fontFamily:FONT, lineHeight:1.65, whiteSpace:"pre-wrap", wordBreak:"break-word" }}>
                   {m.content}
                 </div>
-                <div style={{ fontSize:10, color:C.text3, fontFamily:FONT,
-                  marginTop:4, textAlign:m.role==="user"?"right":"left" }}>
-                  {fmtTime(m.ts)}
-                </div>
+                <div style={{ fontSize:10, color:C.text3, fontFamily:FONT, marginTop:4, textAlign:m.role==="user"?"right":"left" }}>{fmtTime(m.ts)}</div>
               </div>
             </div>
           ))}
           {sending && (
             <div style={{ display:"flex", gap:12, alignItems:"flex-start" }}>
-              <div style={{ width:32, height:32, borderRadius:8, flexShrink:0,
-                background:`linear-gradient(135deg,${C.gold},${C.goldLight})`,
-                display:"flex", alignItems:"center", justifyContent:"center",
-                fontSize:14 }}>✦</div>
-              <div style={{ padding:"12px 16px", borderRadius:12,
-                background:C.surface, border:`1px solid ${C.border}`,
-                display:"flex", gap:5, alignItems:"center" }}>
-                {[0,1,2].map(i=>(
-                  <div key={i} style={{ width:6, height:6, borderRadius:"50%",
-                    background:C.gold, opacity:0.6,
-                    animation:`bounce 1s ${i*0.15}s infinite` }} />
-                ))}
+              <RAvatar r={robot} size={32} />
+              <div style={{ padding:"12px 16px", borderRadius:12, background:C.surface, border:`1px solid ${C.border}`, display:"flex", gap:5, alignItems:"center" }}>
+                {[0,1,2].map(i=>(<div key={i} style={{ width:6, height:6, borderRadius:"50%", background:robot?.avatar_color||C.gold, opacity:0.6, animation:`bounce 1s ${i*0.15}s infinite` }} />))}
               </div>
             </div>
           )}
@@ -5772,34 +5771,90 @@ function RobotsView({ user, deals, contacts, tasks }) {
         </div>
 
         {/* Input */}
-        <div style={{ padding:"16px 24px", borderTop:`1px solid ${C.border}`,
-          background:C.surface }}>
+        <div style={{ padding:"16px 24px", borderTop:`1px solid ${C.border}`, background:C.surface }}>
           <div style={{ display:"flex", gap:10 }}>
-            <textarea value={input}
-              onChange={e=>setInput(e.target.value)}
+            <textarea value={input} onChange={e=>setInput(e.target.value)}
               onKeyDown={e=>{ if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendMessage();}}}
-              placeholder="Ask Ari… (Enter to send, Shift+Enter for new line)"
-              rows={2}
-              style={{ flex:1, padding:"11px 14px", background:C.surface2,
-                border:`1.5px solid ${C.border2}`, borderRadius:10, color:C.text,
-                fontSize:13, fontFamily:FONT, outline:"none", resize:"none",
-                lineHeight:1.5, transition:"border-color 0.15s" }}
-              onFocus={e=>e.target.style.borderColor=C.gold}
-              onBlur={e=>e.target.style.borderColor=C.border2} />
+              placeholder={`Ask ${robot?.name||"…"}… (Enter to send, Shift+Enter for new line)`} rows={2}
+              style={{ flex:1, padding:"11px 14px", background:C.surface2, border:`1.5px solid ${C.border2}`,
+                borderRadius:10, color:C.text, fontSize:isMobile?16:13, fontFamily:FONT, outline:"none", resize:"none", lineHeight:1.5, transition:"border-color 0.15s" }}
+              onFocus={e=>e.target.style.borderColor=C.gold} onBlur={e=>e.target.style.borderColor=C.border2} />
             <button onClick={sendMessage} disabled={sending||!input.trim()} style={{
               padding:"0 20px", borderRadius:10, border:"none",
-              background:sending||!input.trim()
-                ? C.surface3
-                :`linear-gradient(135deg,${C.gold},${C.goldLight})`,
-              color:sending||!input.trim()?C.text3:"#0a0a0a",
-              fontSize:13, fontWeight:700, fontFamily:FONT,
-              cursor:sending||!input.trim()?"not-allowed":"pointer",
-              flexShrink:0 }}>
+              background:sending||!input.trim()?C.surface3:`linear-gradient(135deg,${C.gold},${C.goldLight})`,
+              color:sending||!input.trim()?C.text3:"#0a0a0a", fontSize:13, fontWeight:700, fontFamily:FONT,
+              cursor:sending||!input.trim()?"not-allowed":"pointer", flexShrink:0, minHeight:isMobile?44:"auto" }}>
               {sending?"…":"Send"}
             </button>
           </div>
         </div>
       </div>
+
+      {/* Profile overlay */}
+      {profileOpen && robot && (
+        <div onClick={()=>setProfileOpen(false)} style={{ position:"fixed", inset:0, zIndex:1000,
+          background:"rgba(0,0,0,0.6)", display:"flex", alignItems:"flex-start", justifyContent:"center",
+          padding:isMobile?"0":"40px 20px", overflowY:"auto" }}>
+          <div onClick={e=>e.stopPropagation()} style={{ background:C.surface, width:"100%", maxWidth:560,
+            borderRadius:isMobile?0:16, border:`1px solid ${C.border2}`, boxShadow:"0 20px 60px rgba(0,0,0,0.5)", overflow:"hidden" }}>
+            <div style={{ display:"flex", gap:14, alignItems:"center", padding:"20px 22px",
+              borderBottom:`1px solid ${C.border}`, background:`linear-gradient(135deg, ${robot.avatar_color}22, transparent)` }}>
+              <RAvatar r={robot} size={52} />
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ fontSize:19, fontWeight:800, color:C.text, fontFamily:SERIF }}>{robot.name}</div>
+                <div style={{ fontSize:12.5, color:C.text2, fontFamily:FONT }}>{robot.role}</div>
+                <div style={{ marginTop:6, display:"inline-flex", alignItems:"center", gap:5, fontSize:10, fontWeight:700,
+                  color:srcBadge(robot.source).c, background:`${srcBadge(robot.source).c}1a`,
+                  borderRadius:20, padding:"2px 9px", fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.05em" }}>
+                  {srcBadge(robot.source).t}
+                </div>
+              </div>
+              <button onClick={()=>setProfileOpen(false)} style={{ background:"none", border:"none", color:C.text3,
+                fontSize:22, cursor:"pointer", lineHeight:1, padding:4 }}>×</button>
+            </div>
+            <div style={{ padding:"18px 22px", display:"flex", flexDirection:"column", gap:18, maxHeight:"62vh", overflowY:"auto" }}>
+              {robot.description && (
+                <Section title="About">
+                  <div style={{ fontSize:13, color:C.text2, fontFamily:FONT, lineHeight:1.6 }}>{robot.description}</div>
+                </Section>
+              )}
+              {robot.current_focus && (
+                <Section title="Current focus">
+                  <div style={{ fontSize:13, color:C.text2, fontFamily:FONT, lineHeight:1.6 }}>{robot.current_focus}</div>
+                </Section>
+              )}
+              <Section title="Functions & access">
+                <ul style={{ margin:0, paddingLeft:18, fontSize:13, color:C.text2, fontFamily:FONT, lineHeight:1.7 }}>
+                  <li>Live read access to deals, contacts, agent roster &amp; open tasks</li>
+                  <li>Pipeline analysis, agent coaching &amp; brokerage strategy</li>
+                  <li>Drafting — emails, follow-ups, summaries &amp; memos</li>
+                  <li>Conversational Q&amp;A grounded in your live org data</li>
+                </ul>
+              </Section>
+              <Section title="Memory">
+                {mems===null ? (
+                  <div style={{ fontSize:12.5, color:C.text3, fontFamily:FONT }}>Loading…</div>
+                ) : mems.length===0 ? (
+                  <div style={{ fontSize:12.5, color:C.text3, fontFamily:FONT }}>No stored memories yet. {robot.name} picks up context from your live org data each conversation.</div>
+                ) : mems.map((m,i)=>(
+                  <div key={i} style={{ background:C.surface2, border:`1px solid ${C.border}`, borderRadius:10, padding:"10px 12px", marginBottom:8 }}>
+                    <div style={{ fontSize:9.5, fontWeight:700, color:C.text3, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:4 }}>{(m.memory_type||"note").replace(/_/g," ")}</div>
+                    <div style={{ fontSize:12.5, color:C.text2, fontFamily:FONT, lineHeight:1.55 }}>{m.content}</div>
+                  </div>
+                ))}
+              </Section>
+              {robot.system_prompt && (
+                <Section title="Instructions (system prompt)">
+                  <div style={{ fontSize:11.5, color:C.text3, fontFamily:MONO, lineHeight:1.55, whiteSpace:"pre-wrap",
+                    background:C.surface2, border:`1px solid ${C.border}`, borderRadius:10, padding:"11px 13px", maxHeight:200, overflowY:"auto" }}>
+                    {robot.system_prompt}
+                  </div>
+                </Section>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       <style>{`
         @keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.5)}}
@@ -9731,7 +9786,7 @@ function MainApp() {
     settings:["Settings","Account & org"],
     systems:["Systems","Integrations & status"],
     organization:["Organization","Leadership & structure"],
-    robots:  ["Ari", "Business Unit Leader · ROGA"],
+    robots:  ["Robots", "Your AI team"],
     calendar:   ["Calendar",   "Realty One Group Advantage"],
     listings:   ["Listings Pipeline", "Seller-side opportunities"],
     buyers:     ["Buyers Pipeline", "Buyer-side opportunities"],
