@@ -5871,7 +5871,6 @@ function RobotsView({ user, deals, contacts, tasks }) {
     if(!parts.length) return "";
     return "\n\nFINANCIAL CONTEXT (CONFIDENTIAL — ownership only; never share with agents):\n"+parts.join("\n\n");
   };
-  };
 
   useEffect(()=>{
     if(!robot?.finance_access){ setFinCtx(""); return; }
