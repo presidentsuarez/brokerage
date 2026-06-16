@@ -8749,6 +8749,8 @@ const PRISM_SYSTEMS = [
   { key:"supabase", icon:"\u{1F5C4}\uFE0F", label:"Supabase", desc:"Backend", action:"supabase_status",
     subtitle:"Postgres · Auth · Storage · Edge functions",
     fields:[["Project ref","ref"],["URL","url"],["Database","db"]] },
+  { key:"quo", icon:"\u{1F4DE}", label:"Quo", desc:"Phone & SMS", action:"quo_status", custom:true,
+    subtitle:"OpenPhone · business phone lines, calls & texts" },
   { key:"suarez", icon:"\u{1F310}", label:"Suarez", desc:"Global OS sync", custom:true,
     subtitle:"Suarez Global OS · synced robots & cross-platform link" },
 ];
@@ -8849,6 +8851,110 @@ function SuarezConnectionCard({ sys }) {
   );
 }
 
+function QuoDashboard({ sys }) {
+  const [st, setSt] = useState({ status:"checking" });
+  const check = async () => {
+    setSt({ status:"checking" });
+    try {
+      const { data:{ session } } = await supabase.auth.getSession();
+      const r = await fetch(`${process.env.REACT_APP_SUPABASE_URL}/functions/v1/systems`, {
+        method:"POST",
+        headers:{ "Content-Type":"application/json", "apikey":process.env.REACT_APP_SUPABASE_ANON_KEY, "Authorization":`Bearer ${session?.access_token}` },
+        body: JSON.stringify({ action:"quo_status" }),
+      });
+      const j = await r.json();
+      setSt({ status: j.connected ? "connected":"down", data:j });
+    } catch(e){ setSt({ status:"down", data:{ message:String(e) } }); }
+  };
+  useEffect(()=>{ check(); /* eslint-disable-next-line */ }, []);
+  const j = st.data || {};
+  const lines = j.lines || [];
+  const users = j.users || [];
+  const QUO = C.blue;
+  const badge = st.status==="checking"
+    ? { t:"Checking…", c:C.text3, bg:C.surface2, dot:C.text3 }
+    : st.status==="connected"
+    ? { t:"Live · Connected", c:C.green, bg:C.goldDim, dot:C.green }
+    : { t:"Not connected", c:C.red, bg:"rgba(220,80,80,0.10)", dot:C.red };
+
+  return (
+    <div style={{ maxWidth:760 }}>
+      <div style={{ background:`linear-gradient(135deg, ${QUO}18, ${C.surface} 60%)`, border:`1px solid ${C.border}`, borderRadius:16, padding:"22px 24px" }}>
+        <div style={{ display:"flex", alignItems:"center", gap:13 }}>
+          <div style={{ width:46, height:46, borderRadius:12, background:QUO+"22", border:`1px solid ${QUO}55`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:23 }}>📞</div>
+          <div style={{ flex:1, minWidth:0 }}>
+            <div style={{ fontSize:18, fontWeight:800, color:C.text, fontFamily:SERIF }}>Quo</div>
+            <div style={{ fontSize:12, color:C.text3, fontFamily:FONT }}>{sys.subtitle}</div>
+          </div>
+          <div style={{ display:"flex", alignItems:"center", gap:7, padding:"6px 12px", borderRadius:20, background:badge.bg, border:`1px solid ${badge.c}44` }}>
+            <span style={{ width:8, height:8, borderRadius:8, background:badge.dot, flexShrink:0 }} />
+            <span style={{ fontSize:12, fontWeight:700, color:badge.c, fontFamily:FONT, whiteSpace:"nowrap" }}>{badge.t}</span>
+          </div>
+        </div>
+        {st.status==="connected" && (
+          <div style={{ display:"flex", gap:12, marginTop:18, flexWrap:"wrap" }}>
+            {[["Phone lines", j.lineCount ?? lines.length],["Team members", j.userCount ?? users.length]].map(([k,v])=>(
+              <div key={k} style={{ flex:"1 1 140px", background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:"14px 16px" }}>
+                <div style={{ fontSize:26, fontWeight:800, color:C.text, fontFamily:SERIF, lineHeight:1 }}>{v}</div>
+                <div style={{ fontSize:11, color:C.text3, fontFamily:FONT, marginTop:5, textTransform:"uppercase", letterSpacing:"0.06em" }}>{k}</div>
+              </div>
+            ))}
+          </div>
+        )}
+        {st.status==="down" && (
+          <div style={{ marginTop:16, padding:"12px 14px", background:"rgba(220,80,80,0.08)", border:"1px solid rgba(220,80,80,0.30)", borderRadius:10 }}>
+            <div style={{ fontSize:12.5, fontWeight:700, color:C.red, fontFamily:FONT, marginBottom:4 }}>Couldn't reach Quo{j.http?` (HTTP ${j.http})`:""}</div>
+            <div style={{ fontSize:12, color:C.text2, fontFamily:FONT, lineHeight:1.5 }}>{j.message||j.reason||"Unknown error."}</div>
+            {String(j.message||"").toLowerCase().includes("ip") && (
+              <div style={{ fontSize:11.5, color:C.text3, fontFamily:FONT, marginTop:8, lineHeight:1.5 }}>An IP allowlist may be blocking server-side calls. Disable IP restrictions in OpenPhone's API settings, then re-check.</div>
+            )}
+          </div>
+        )}
+        <div style={{ display:"flex", alignItems:"center", gap:12, marginTop:16 }}>
+          <GoldButton small outline onClick={check} disabled={st.status==="checking"}>{st.status==="checking"?"Checking…":"Re-check"}</GoldButton>
+          {j.checkedAt && <span style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>Last checked {new Date(j.checkedAt).toLocaleTimeString()}</span>}
+        </div>
+      </div>
+
+      {st.status==="connected" && lines.length>0 && (
+        <div style={{ marginTop:18 }}>
+          <div style={{ fontSize:11, fontWeight:800, color:C.text3, letterSpacing:"0.1em", textTransform:"uppercase", fontFamily:FONT, marginBottom:10 }}>Phone lines</div>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))", gap:12 }}>
+            {lines.map((ln,i)=>(
+              <div key={ln.id||i} style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:"15px 16px" }}>
+                <div style={{ display:"flex", alignItems:"center", gap:9, marginBottom:8 }}>
+                  <div style={{ width:30, height:30, borderRadius:8, background:QUO+"1e", border:`1px solid ${QUO}44`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:14 }}>📱</div>
+                  <div style={{ fontSize:11, color:C.text3, fontFamily:FONT, fontWeight:600 }}>{ln.users?`${ln.users} user${ln.users>1?"s":""}`:"Shared"}</div>
+                </div>
+                <div style={{ fontSize:16, fontWeight:800, color:C.text, fontFamily:MONO, letterSpacing:"0.01em" }}>{ln.number||"—"}</div>
+                <div style={{ fontSize:12, color:C.text2, fontFamily:FONT, marginTop:3 }}>{ln.name||"Unnamed line"}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {st.status==="connected" && users.length>0 && (
+        <div style={{ marginTop:18 }}>
+          <div style={{ fontSize:11, fontWeight:800, color:C.text3, letterSpacing:"0.1em", textTransform:"uppercase", fontFamily:FONT, marginBottom:10 }}>Team on Quo</div>
+          <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden" }}>
+            {users.map((u,i)=>(
+              <div key={i} style={{ display:"flex", alignItems:"center", gap:11, padding:"11px 15px", borderTop:i?`1px solid ${C.border}`:"none" }}>
+                <Avatar name={u.name} email={u.email} size={28} />
+                <div style={{ minWidth:0, flex:1 }}>
+                  <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:FONT }}>{u.name}</div>
+                  {u.email && <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>{u.email}</div>}
+                </div>
+                {u.role && <span style={{ fontSize:10, fontWeight:700, color:C.text3, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.05em" }}>{u.role}</span>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SystemsView({ user }) {
   const isMobile = useIsMobile();
   const [sysKey, setSysKey] = useState("brevo");
@@ -8875,7 +8981,9 @@ function SystemsView({ user }) {
         </div>
       )}
       <div style={{ flex:1, minWidth:0 }}>
-        {active.custom && active.key==="suarez" ? <SuarezConnectionCard sys={active} /> : <SystemStatusCard sys={active} />}
+        {active.key==="suarez" ? <SuarezConnectionCard sys={active} />
+          : active.key==="quo" ? <QuoDashboard sys={active} />
+          : <SystemStatusCard sys={active} />}
       </div>
     </div>
   );

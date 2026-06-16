@@ -59,6 +59,32 @@ Deno.serve(async (req) => {
       return json({ system: "supabase", connected: false, message: error.message, checkedAt });
     }
 
+    if (action === "quo_status") {
+      const key = Deno.env.get("OPENPHONE_API_KEY");
+      if (!key) return json({ system: "quo", connected: false, reason: "no_key", checkedAt });
+      const r = await fetch("https://api.openphone.com/v1/phone-numbers", { headers: { "Authorization": key } });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) return json({ system: "quo", connected: false, http: r.status, message: d.message ?? d.error ?? "OpenPhone error", checkedAt });
+      const arr = Array.isArray(d.data) ? d.data : (Array.isArray(d) ? d : []);
+      const lines = arr.map((n: any) => ({
+        id: n.id,
+        name: n.name ?? null,
+        number: n.formattedNumber ?? n.number ?? n.phoneNumber ?? null,
+        users: Array.isArray(n.users) ? n.users.length : (n.userId ? 1 : 0),
+      }));
+      // best-effort team roster (don't fail the status if this errors)
+      let users: any[] = [];
+      try {
+        const ru = await fetch("https://api.openphone.com/v1/users", { headers: { "Authorization": key } });
+        if (ru.ok) {
+          const du = await ru.json();
+          const ua = Array.isArray(du.data) ? du.data : [];
+          users = ua.map((u: any) => ({ name: [u.firstName, u.lastName].filter(Boolean).join(" ") || u.name || u.email, email: u.email, role: u.role ?? null }));
+        }
+      } catch (_) { /* ignore */ }
+      return json({ system: "quo", connected: true, http: r.status, lineCount: lines.length, lines, userCount: users.length, users, checkedAt });
+    }
+
     return json({ error: "unknown action" }, 400);
   } catch (e) {
     return json({ error: String(e) }, 500);
