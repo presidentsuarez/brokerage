@@ -2403,12 +2403,15 @@ function PortalChatPanel({
         const apiMsgs = newMsgs.map(m=>({role:m.role==="user"?"user":"assistant",content:m.content}));
         if(apiMsgs.length===1) apiMsgs[0].content += buildAgentContext();
 
-        const res = await fetch("https://api.anthropic.com/v1/messages",{
+        const { data:{ session } } = await supabase.auth.getSession();
+        const res = await fetch(`${process.env.REACT_APP_SUPABASE_URL}/functions/v1/ari-chat`,{
           method:"POST",
-          headers:{"Content-Type":"application/json"},
+          headers:{ "Content-Type":"application/json", "apikey":process.env.REACT_APP_SUPABASE_ANON_KEY, "Authorization":`Bearer ${session?.access_token}` },
           body:JSON.stringify({
-            model:"claude-sonnet-4-20250514",
-            max_tokens:1000,
+            model:"claude-sonnet-4-6",
+            max_tokens:1200,
+            endpoint:"ari_portal",
+            user_email:agentEmail,
             system:`You are Ari, the AI assistant for ${agentName} at Realty One Group Advantage. You are their personal brokerage AI coach and resource. Help with: pipeline questions, drafting emails and offers, real estate advice, showing prep, goal tracking, and client communication. Their broker team: Dara Khoyi (Broker, khoyi1234@gmail.com), Alex Khoi (Broker, alex@brokeralex.com), Josh Maples (Front Desk, roga.lutz@gmail.com), Javier Suarez (Operations, javier@thesuarezcapital.com). Be encouraging, practical, and direct. Keep responses concise. If they need broker support, point them to Dara or Alex.`,
             messages:apiMsgs,
           }),
@@ -5582,12 +5585,15 @@ function RobotsView({ user, deals, contacts, tasks }) {
         apiMessages[0].content = apiMessages[0].content + buildContext();
       }
 
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
+      const { data:{ session } } = await supabase.auth.getSession();
+      const res = await fetch(`${process.env.REACT_APP_SUPABASE_URL}/functions/v1/ari-chat`, {
         method:"POST",
-        headers:{"Content-Type":"application/json"},
+        headers:{ "Content-Type":"application/json", "apikey":process.env.REACT_APP_SUPABASE_ANON_KEY, "Authorization":`Bearer ${session?.access_token}` },
         body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 1000,
+          model: "claude-sonnet-4-6",
+          max_tokens: 1200,
+          endpoint: "ari_admin",
+          user_email: user?.email,
           system: `You are Ari, the AI Business Unit Leader for Realty One Group Advantage (ROGA). You support Javier Suarez (Operations) with brokerage intelligence — deal pipeline analysis, agent performance, operational guidance, market context, and strategic recommendations. You have live access to org data when provided. Be direct, sharp, and practical. Never start with "Certainly!" or "Of course!". Get to the point. Use bullet points for lists. Keep responses focused.`,
           messages: apiMessages,
         }),
