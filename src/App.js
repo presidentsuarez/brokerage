@@ -5528,6 +5528,230 @@ function CalendarView({ user, isPortal=false, agentContact=null }) {
   );
 }
 
+// ===== Robot chat: markdown rendering + document export =====
+function mdInline(text){
+  if(!text) return null;
+  const t=String(text); let out=[],last=0,key=0,m;
+  const moneyC=(s)=>{ const c=String(s||"").trim().replace(/\*\*/g,""); if(!/\$/.test(c)) return null; if(/^-\$|^-[\d,]|^\(-/.test(c)) return C.red; if(/^\+\$/.test(c)) return C.green; return null; };
+  const re=/(\*\*([^*]+)\*\*|__([^_]+)__|\*([^*]+)\*|_([^_]+)_|`([^`]+)`|\[([^\]]+)\]\(([^)]+)\))/g;
+  while((m=re.exec(t))){
+    if(m.index>last) out.push(t.slice(last,m.index));
+    if(m[2]!==undefined||m[3]!==undefined){ const inner=m[2]??m[3]; const mc=moneyC(inner); out.push(<strong key={key++} style={{color:mc||C.text,fontWeight:700}}>{inner}</strong>); }
+    else if(m[4]!==undefined||m[5]!==undefined) out.push(<em key={key++}>{m[4]??m[5]}</em>);
+    else if(m[6]!==undefined) out.push(<code key={key++} style={{fontFamily:MONO,fontSize:"0.9em",background:C.surface2,border:`1px solid ${C.border}`,borderRadius:4,padding:"1px 5px"}}>{m[6]}</code>);
+    else if(m[7]!==undefined) out.push(<a key={key++} href={m[8]} target="_blank" rel="noreferrer" style={{color:C.blue,textDecoration:"underline"}}>{m[7]}</a>);
+    last=re.lastIndex;
+  }
+  if(last<t.length) out.push(t.slice(last));
+  return out;
+}
+
+function parseMarkdown(src){
+  const lines=String(src||"").replace(/\r/g,"").split("\n");
+  const blocks=[]; let i=0;
+  const isSep=(s)=> s!==undefined && /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(s);
+  const splitRow=(s)=> s.trim().replace(/^\|/,"").replace(/\|$/,"").split("|").map(c=>c.trim());
+  const startsBlock=(s,next)=> /^(#{1,6}\s|```|\s*>)/.test(s) || /^\s*([-*+]\s+|\d+\.\s+)/.test(s) || /^\s*(---|\*\*\*|___)\s*$/.test(s) || (s.includes("|")&&isSep(next));
+  while(i<lines.length){
+    const line=lines[i];
+    if(!line.trim()){ i++; continue; }
+    if(/^```/.test(line)){ const buf=[]; i++; while(i<lines.length&&!/^```/.test(lines[i])){ buf.push(lines[i]); i++; } i++; blocks.push({type:"code",text:buf.join("\n")}); continue; }
+    if(/^\s*(---|\*\*\*|___)\s*$/.test(line)){ blocks.push({type:"hr"}); i++; continue; }
+    const h=line.match(/^(#{1,6})\s+(.*)$/);
+    if(h){ blocks.push({type:"heading",level:h[1].length,text:h[2].trim()}); i++; continue; }
+    if(/^\s*>\s?/.test(line)){ const buf=[]; while(i<lines.length&&/^\s*>\s?/.test(lines[i])){ buf.push(lines[i].replace(/^\s*>\s?/,"")); i++; } blocks.push({type:"quote",text:buf.join("\n")}); continue; }
+    if(line.includes("|")&&isSep(lines[i+1])){ const headers=splitRow(line); i+=2; const rows=[]; while(i<lines.length&&lines[i].includes("|")&&lines[i].trim()){ rows.push(splitRow(lines[i])); i++; } blocks.push({type:"table",headers,rows}); continue; }
+    if(/^\s*([-*+]\s+|\d+\.\s+)/.test(line)){ const ordered=/^\s*\d+\.\s+/.test(line); const items=[]; while(i<lines.length&&/^\s*([-*+]\s+|\d+\.\s+)/.test(lines[i])){ items.push(lines[i].replace(/^\s*([-*+]\s+|\d+\.\s+)/,"")); i++; } blocks.push({type:"list",ordered,items}); continue; }
+    const buf=[line]; i++;
+    while(i<lines.length&&lines[i].trim()&&!startsBlock(lines[i],lines[i+1])){ buf.push(lines[i]); i++; }
+    blocks.push({type:"paragraph",text:buf.join("\n")});
+  }
+  return blocks;
+}
+
+function MarkdownMessage({ text, accent=C.gold }){
+  const blocks = parseMarkdown(text);
+  const moneyC=(s)=>{ const c=String(s||"").replace(/\*\*/g,"").trim(); if(!/\$/.test(c)) return null; if(/^-\$|^-[\d,]|^\(-/.test(c)) return C.red; if(/^\+\$/.test(c)) return C.green; return null; };
+  const valC=(raw)=>moneyC(raw)||C.text2;
+  const isKpi=(b)=> b.type==="table" && b.headers.length===2 && b.rows.length>=1 && b.rows.length<=8;
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:13, fontSize:13.5, color:C.text2, fontFamily:FONT, lineHeight:1.65 }}>
+      {blocks.map((b,i)=>{
+        /* ── Heading ── */
+        if(b.type==="heading"){ const big=b.level<=2; const sz=b.level===1?20:b.level===2?16:14; return (
+          <div key={i} style={{ display:"flex", alignItems:"center", gap:9, marginTop:i?6:0, paddingBottom:big?9:0, borderBottom:big?`1px solid ${accent}2a`:"none" }}>
+            <div style={{ width:3, height:sz+6, background:accent, borderRadius:2, flexShrink:0, opacity:big?1:0.6 }}/>
+            <span style={{ fontSize:sz, fontWeight:800, color:C.text, fontFamily:SERIF, lineHeight:1.25 }}>{mdInline(b.text)}</span>
+          </div>
+        ); }
+        /* ── Divider ── */
+        if(b.type==="hr") return (
+          <div key={i} style={{ display:"flex", alignItems:"center", gap:8, margin:"2px 0" }}>
+            <div style={{ flex:1, height:1, background:`linear-gradient(90deg,${accent}55,transparent)` }}/>
+            <div style={{ width:5, height:5, borderRadius:"50%", background:accent, opacity:0.4 }}/>
+            <div style={{ flex:1, height:1, background:`linear-gradient(90deg,transparent,${accent}33)` }}/>
+          </div>
+        );
+        /* ── Blockquote ── */
+        if(b.type==="quote") return (
+          <div key={i} style={{ borderLeft:`3px solid ${accent}`, background:accent+"11", padding:"10px 14px", borderRadius:"0 10px 10px 0", color:C.text2 }}>{mdInline(b.text)}</div>
+        );
+        /* ── Code ── */
+        if(b.type==="code") return (
+          <pre key={i} style={{ background:"#0c0c0c", border:`1px solid ${C.border}`, borderRadius:10, padding:"14px 16px", overflowX:"auto", margin:0, fontFamily:MONO, fontSize:12, color:C.text, lineHeight:1.5 }}>{b.text}</pre>
+        );
+        /* ── List ── */
+        if(b.type==="list") return (
+          <div key={i} style={{ display:"flex", flexDirection:"column", gap:6 }}>
+            {b.items.map((it,j)=>(
+              <div key={j} style={{ display:"flex", gap:9, alignItems:"flex-start" }}>
+                <div style={{ flexShrink:0, marginTop:b.ordered?2:7,
+                  ...(b.ordered
+                    ? { width:18, height:18, borderRadius:5, background:accent+"22", border:`1px solid ${accent}55`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:9, fontWeight:800, color:accent, fontFamily:MONO }
+                    : { width:5, height:5, borderRadius:"50%", background:accent }) }}>{b.ordered?j+1:""}</div>
+                <div style={{ flex:1, color:C.text2, lineHeight:1.65 }}>{mdInline(it)}</div>
+              </div>
+            ))}
+          </div>
+        );
+        /* ── KPI tiles: 2-col table ≤8 rows ── */
+        if(isKpi(b)) return (
+          <div key={i} style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(148px,1fr))", gap:9 }}>
+            {b.rows.map((r,ri)=>{
+              const raw=String(r[1]||""); const vc=valC(raw);
+              return (
+                <div key={ri} style={{ background:C.surface2, border:`1px solid ${vc!==C.text2?vc+"33":C.border}`, borderRadius:12, padding:"12px 14px" }}>
+                  <div style={{ fontSize:10, color:C.text3, textTransform:"uppercase", letterSpacing:"0.07em", fontWeight:700, marginBottom:5, fontFamily:FONT }}>{mdInline(r[0])}</div>
+                  <div style={{ fontSize:20, fontWeight:800, color:vc, fontFamily:SERIF, lineHeight:1 }}>{mdInline(raw)}</div>
+                </div>
+              );
+            })}
+          </div>
+        );
+        /* ── Table ── */
+        if(b.type==="table") return (
+          <div key={i} style={{ overflowX:"auto", borderRadius:12, border:`1px solid ${C.border}` }}>
+            <table style={{ borderCollapse:"collapse", width:"100%", fontSize:13, fontFamily:FONT }}>
+              <thead><tr style={{ background:`${accent}1a` }}>
+                {b.headers.map((hd,j)=><th key={j} style={{ textAlign:"left", padding:"10px 14px", color:C.text, fontWeight:700, fontFamily:SERIF, borderBottom:`2px solid ${accent}44`, whiteSpace:"nowrap", fontSize:12 }}>{mdInline(hd)}</th>)}
+              </tr></thead>
+              <tbody>{b.rows.map((r,ri)=>(
+                <tr key={ri} style={{ background:ri%2?C.surface2:"transparent" }}>
+                  {r.map((c,ci)=>{ const vc=ci>0?valC(c):null; return <td key={ci} style={{ padding:"9px 14px", color:vc||C.text2, borderTop:`1px solid ${C.border}`, whiteSpace:"nowrap", fontWeight:vc&&vc!==C.text2?700:400 }}>{mdInline(c)}</td>; })}
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        );
+        /* ── Paragraph ── */
+        return (
+          <div key={i} style={{ lineHeight:1.65, color:C.text2 }}>
+            {b.text.split("\n").map((ln,j)=> j===0?<span key={j}>{mdInline(ln)}</span>:[<br key={"br"+j}/>,<span key={"s"+j}>{mdInline(ln)}</span>])}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function loadScript(src){
+  return new Promise((res,rej)=>{
+    if(document.querySelector(`script[src="${src}"]`)) return res();
+    const s=document.createElement("script"); s.src=src; s.onload=()=>res(); s.onerror=()=>rej(new Error("load "+src)); document.head.appendChild(s);
+  });
+}
+const MD_CDN={
+  jspdf:"https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js",
+  autotable:"https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js",
+  pptx:"https://cdnjs.cloudflare.com/ajax/libs/pptxgenjs/3.12.0/pptxgen.bundle.min.js",
+  xlsx:"https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js",
+};
+const stripInline=(s)=> String(s==null?"":s).replace(/\*\*([^*]+)\*\*/g,"$1").replace(/__([^_]+)__/g,"$1").replace(/\*([^*]+)\*/g,"$1").replace(/`([^`]+)`/g,"$1").replace(/\[([^\]]+)\]\([^)]+\)/g,"$1").replace(/^#{1,6}\s+/,"").trim();
+const docName=(t,ext)=> (String(t||"prism").replace(/[^\w-]+/g,"_").slice(0,60)||"prism")+"."+ext;
+
+async function exportPDF(blocks,title){
+  await loadScript(MD_CDN.jspdf); await loadScript(MD_CDN.autotable);
+  const { jsPDF }=window.jspdf; const doc=new jsPDF({unit:"pt",format:"letter"});
+  const W=doc.internal.pageSize.getWidth(), H=doc.internal.pageSize.getHeight(), M=48; let y=64;
+  const ensure=(h)=>{ if(y+h>H-48){ doc.addPage(); y=64; } };
+  doc.setFont("helvetica","bold"); doc.setFontSize(18); doc.setTextColor(20); doc.text(stripInline(title)||"Prism Document",M,y); y+=10;
+  doc.setDrawColor(212,175,55); doc.setLineWidth(2); doc.line(M,y,W-M,y); y+=24; doc.setTextColor(40);
+  blocks.forEach(b=>{
+    if(b.type==="heading"){ ensure(28); doc.setFont("helvetica","bold"); doc.setFontSize(b.level<=1?15:b.level===2?13:12); doc.splitTextToSize(stripInline(b.text),W-2*M).forEach(ln=>{ ensure(20); doc.text(ln,M,y); y+=19; }); y+=3; }
+    else if(b.type==="paragraph"||b.type==="quote"){ doc.setFont("helvetica","normal"); doc.setFontSize(11); doc.splitTextToSize(stripInline(b.text),W-2*M).forEach(ln=>{ ensure(16); doc.text(ln,M,y); y+=15; }); y+=4; }
+    else if(b.type==="list"){ doc.setFont("helvetica","normal"); doc.setFontSize(11); b.items.forEach((it,k)=>{ const pre=b.ordered?`${k+1}. `:"\u2022 "; doc.splitTextToSize(pre+stripInline(it),W-2*M-12).forEach((ln,li)=>{ ensure(15); doc.text(ln,M+(li?14:6),y); y+=14; }); }); y+=4; }
+    else if(b.type==="code"){ doc.setFont("courier","normal"); doc.setFontSize(9.5); doc.splitTextToSize(b.text,W-2*M).forEach(ln=>{ ensure(13); doc.text(ln,M,y); y+=12; }); y+=4; }
+    else if(b.type==="hr"){ ensure(12); doc.setDrawColor(210); doc.setLineWidth(0.5); doc.line(M,y,W-M,y); y+=14; }
+    else if(b.type==="table"){ ensure(50); doc.autoTable({ startY:y, head:[b.headers.map(stripInline)], body:b.rows.map(r=>r.map(stripInline)), margin:{left:M,right:M}, styles:{fontSize:9,cellPadding:5,overflow:"linebreak"}, headStyles:{fillColor:[212,175,55],textColor:20,fontStyle:"bold"}, alternateRowStyles:{fillColor:[245,243,235]} }); y=doc.lastAutoTable.finalY+18; }
+  });
+  doc.save(docName(title,"pdf"));
+}
+
+async function exportXLSX(blocks,title){
+  await loadScript(MD_CDN.xlsx); const XLSX=window.XLSX; const wb=XLSX.utils.book_new();
+  const tables=blocks.filter(b=>b.type==="table");
+  const toNum=(c)=>{ const s=stripInline(c); const n=Number(s.replace(/[$,%\s]/g,"")); return (/^[-+]?\$?[\d,]+(\.\d+)?%?$/.test(s)&&!isNaN(n))?n:s; };
+  if(tables.length){ tables.forEach((t,i)=>{ const ws=XLSX.utils.aoa_to_sheet([t.headers.map(stripInline),...t.rows.map(r=>r.map(toNum))]); XLSX.utils.book_append_sheet(wb,ws,`Table ${i+1}`.slice(0,31)); }); }
+  else { const rows=blocks.map(b=> b.type==="list"?b.items.map(stripInline).join("; "):stripInline(b.text)).filter(Boolean).map(t=>[t]); const ws=XLSX.utils.aoa_to_sheet([[stripInline(title)||"Prism"],[],...rows]); XLSX.utils.book_append_sheet(wb,ws,"Notes"); }
+  XLSX.writeFile(wb,docName(title,"xlsx"));
+}
+
+async function exportPPTX(blocks,title){
+  await loadScript(MD_CDN.pptx); const pptx=new window.PptxGenJS(); pptx.layout="LAYOUT_WIDE"; // 13.33 x 7.5
+  const GOLD="D4AF37", DARK="0A0A0A";
+  let s=pptx.addSlide(); s.background={color:DARK};
+  s.addText(stripInline(title)||"Prism",{x:0.6,y:2.7,w:12.1,h:1.2,fontSize:40,bold:true,color:GOLD,align:"center",fontFace:"Arial"});
+  s.addText("Realty ONE Group Advantage  \u00b7  Prism",{x:0.6,y:3.9,w:12.1,h:0.5,fontSize:15,color:"FFFFFF",align:"center"});
+  const slides=[]; let cur=null;
+  blocks.forEach(b=>{
+    if(b.type==="heading"&&b.level<=2){ if(cur) slides.push(cur); cur={title:stripInline(b.text),items:[],tables:[]}; }
+    else { if(!cur) cur={title:stripInline(title)||"Overview",items:[],tables:[]};
+      if(b.type==="table") cur.tables.push(b);
+      else if(b.type==="list") b.items.forEach(it=>cur.items.push(stripInline(it)));
+      else if(b.type==="paragraph"||b.type==="quote"||b.type==="heading") cur.items.push(stripInline(b.text)); }
+  });
+  if(cur) slides.push(cur);
+  slides.forEach(sl=>{
+    const sld=pptx.addSlide(); sld.background={color:"FFFFFF"};
+    sld.addText(sl.title||"",{x:0.5,y:0.35,w:12.3,h:0.8,fontSize:26,bold:true,color:DARK,fontFace:"Arial"});
+    sld.addShape(pptx.ShapeType.line,{x:0.5,y:1.2,w:12.3,h:0,line:{color:GOLD,width:2}});
+    let yy=1.45;
+    if(sl.items.length){ const h=Math.min(4.2,0.32*sl.items.length+0.3); sld.addText(sl.items.map(t=>({text:t,options:{bullet:true,fontSize:15,color:"333333",paraSpaceAfter:6}})),{x:0.6,y:yy,w:12.1,h}); yy+=h+0.2; }
+    sl.tables.forEach(t=>{ const rows=[t.headers.map(hd=>({text:stripInline(hd),options:{bold:true,color:"FFFFFF",fill:GOLD}})),...t.rows.map(r=>r.map(c=>({text:stripInline(c),options:{color:"333333"}})))]; sld.addTable(rows,{x:0.6,y:yy,w:12.1,fontSize:11,border:{type:"solid",color:"DDDDDD",pt:0.5},autoPage:false}); yy+=0.35*(t.rows.length+1)+0.3; });
+  });
+  pptx.writeFile({fileName:docName(title,"pptx")});
+}
+
+function MsgDocBar({ text, accent=C.gold, who="Davenport" }){
+  const blocks = parseMarkdown(text);
+  const hasTable = blocks.some(b=>b.type==="table");
+  const [busy,setBusy]=useState("");
+  const [copied,setCopied]=useState(false);
+  const h=blocks.find(b=>b.type==="heading");
+  const title = h?stripInline(h.text):`${who} — Prism`;
+  const run=async(kind,fn)=>{ setBusy(kind); try{ await fn(); }catch(e){ alert("Couldn't generate that file — please try again."); } finally{ setBusy(""); } };
+  const Btn=({label,kind,onClick})=>(
+    <button onClick={onClick} disabled={!!busy} style={{ display:"inline-flex",alignItems:"center",gap:5,padding:"5px 11px",borderRadius:8,border:`1px solid ${C.border2}`,background:C.surface2,color:C.text2,fontSize:11,fontWeight:600,fontFamily:FONT,cursor:busy?"default":"pointer",opacity:busy&&busy!==kind?0.5:1,transition:"all 0.12s" }}
+      onMouseEnter={e=>{ if(!busy){ e.currentTarget.style.borderColor=accent; e.currentTarget.style.color=C.text; } }}
+      onMouseLeave={e=>{ e.currentTarget.style.borderColor=C.border2; e.currentTarget.style.color=C.text2; }}>
+      {busy===kind?"\u2026":label}
+    </button>
+  );
+  return (
+    <div style={{ display:"flex",gap:7,marginTop:8,flexWrap:"wrap",alignItems:"center" }}>
+      <span style={{ fontSize:9.5,fontWeight:700,color:C.text3,fontFamily:FONT,textTransform:"uppercase",letterSpacing:"0.06em",marginRight:2 }}>Export</span>
+      <Btn label="\uD83D\uDCC4 PDF" kind="pdf" onClick={()=>run("pdf",()=>exportPDF(blocks,title))} />
+      <Btn label="\uD83D\uDCDF Slides" kind="pptx" onClick={()=>run("pptx",()=>exportPPTX(blocks,title))} />
+      {hasTable && <Btn label="\uD83D\uDCC8 Excel" kind="xlsx" onClick={()=>run("xlsx",()=>exportXLSX(blocks,title))} />}
+      <button onClick={()=>{ try{navigator.clipboard.writeText(text); setCopied(true); setTimeout(()=>setCopied(false),1200);}catch(e){} }}
+        style={{ display:"inline-flex",alignItems:"center",gap:5,padding:"5px 11px",borderRadius:8,border:`1px solid ${C.border2}`,background:C.surface2,color:copied?C.green:C.text2,fontSize:11,fontWeight:600,fontFamily:FONT,cursor:"pointer" }}>
+        {copied?"\u2713 Copied":"\u29C9 Copy"}
+      </button>
+    </div>
+  );
+}
+
+
 function RobotsView({ user, deals, contacts, tasks }) {
   const isMobile = useIsMobile();
   const [robots, setRobots]       = useState([]);
@@ -5638,7 +5862,7 @@ function RobotsView({ user, deals, contacts, tasks }) {
     const scope = r?.finance_access
       ? `You have live read access to the brokerage's deals, contacts, agent roster, tasks, AND full financials — P&L by year, monthly cash flow, operating expenses by category, bank accounts, and agent production/payouts — all provided below. You report to the ROGA ownership team: discuss the numbers candidly and analytically, surface risks, trends, and opportunities, and do the math when asked. These financials are confidential to ownership — never share or expose them to agents.`
       : `You have live read access to the brokerage's deals, contacts, agent roster, and tasks when provided below. You do NOT have access to the brokerage's company financials; if asked about company finances (revenue, expenses, P&L, payroll, cash), say that's handled by the ROGA business unit leader and ownership team and that you don't have it.`;
-    return `${base}\n\nBe direct, sharp, and practical. Never start with "Certainly!" or "Of course!". Get to the point. Use bullet points for lists. Keep responses focused. ${scope}`;
+    return `${base}\n\nBe direct, sharp, and practical. Never start with "Certainly!" or "Of course!". Get to the point. Use bullet points for lists. Keep responses focused. ${scope}\n\nFORMATTING: Write in clean Markdown — use ## headings to organize, GFM tables (| Column | Column |) for any numeric or comparative data, bold for key figures, and bullet lists. When the user asks you to create a document, report, deck, spreadsheet, table, or PDF, produce well-structured Markdown with clear ## section headings and tables; the user can then download your message as a PDF, PowerPoint, or Excel file using the Export buttons beneath it (so build the content to look good in those formats).`;
   };
 
   const sendMessage = async () => {
@@ -5658,7 +5882,7 @@ function RobotsView({ user, deals, contacts, tasks }) {
         method:"POST",
         headers:{ "Content-Type":"application/json", "apikey":process.env.REACT_APP_SUPABASE_ANON_KEY, "Authorization":`Bearer ${session?.access_token}` },
         body: JSON.stringify({
-          model:"claude-haiku-4-5-20251001", max_tokens:1200,
+          model:"claude-haiku-4-5-20251001", max_tokens:2000,
           endpoint:`ari_admin:${robot.name}`, user_email:user?.email,
           system: robotPrompt(robot), messages: apiMessages,
         }),
@@ -5800,13 +6024,20 @@ function RobotsView({ user, deals, contacts, tasks }) {
           {messages.map((m,i)=>(
             <div key={i} style={{ display:"flex", gap:12, flexDirection:m.role==="user"?"row-reverse":"row", alignItems:"flex-start" }}>
               {m.role==="assistant" ? <RAvatar r={robot} size={32} /> : <Avatar name={user?.full_name} email={user?.email} size={32} />}
-              <div style={{ maxWidth:"72%", minWidth:0 }}>
+              <div style={{ maxWidth:m.role==="user"?"72%":"88%", minWidth:0 }}>
                 <div style={{ padding:"12px 16px", borderRadius:12,
                   background:m.role==="user"?C.goldDim:C.surface,
                   border:m.role==="user"?`1px solid ${C.goldBorder}`:`1px solid ${C.border}`,
-                  color:C.text, fontSize:13, fontFamily:FONT, lineHeight:1.65, whiteSpace:"pre-wrap", wordBreak:"break-word" }}>
-                  {m.content}
+                  wordBreak:"break-word",
+                  whiteSpace:m.role==="user"?"pre-wrap":"normal",
+                  fontSize:m.role==="user"?13:undefined }}>
+                  {m.role==="assistant"
+                    ? <MarkdownMessage text={m.content} accent={robot?.avatar_color||C.gold} />
+                    : m.content}
                 </div>
+                {m.role==="assistant" && m.content && m.content.trim().length>40 && (
+                  <MsgDocBar text={m.content} accent={robot?.avatar_color||C.gold} who={robot?.name||"Prism"} />
+                )}
                 <div style={{ fontSize:10, color:C.text3, fontFamily:FONT, marginTop:4, textAlign:m.role==="user"?"right":"left" }}>{fmtTime(m.ts)}</div>
               </div>
             </div>
