@@ -8851,104 +8851,259 @@ function SuarezConnectionCard({ sys }) {
   );
 }
 
-function QuoDashboard({ sys }) {
-  const [st, setSt] = useState({ status:"checking" });
-  const check = async () => {
-    setSt({ status:"checking" });
+function fmtDur(s){ s=Math.round(s||0); if(s<60) return `${s}s`; const m=Math.floor(s/60); const r=s%60; return `${m}m${r?" "+r+"s":""}`; }
+function EmptyQuo({ label }){ return <div style={{ fontSize:12.5, color:C.text3, fontFamily:FONT, padding:"10px 0", lineHeight:1.5 }}>{label}</div>; }
+
+function QuoBars({ data, color, height=130 }){
+  const max = Math.max(1, ...data.map(d=>d.count||0));
+  return (
+    <div style={{ display:"flex", alignItems:"flex-end", gap:3, height }}>
+      {data.map((d,i)=>(
+        <div key={i} style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", gap:5, minWidth:0 }}>
+          <div title={`${d.day}: ${d.count}`} style={{ width:"100%", maxWidth:24,
+            height:Math.max(d.count?4:0, Math.round((d.count/max)*(height-24))),
+            background:`linear-gradient(180deg, ${color}, ${color}66)`, borderRadius:"5px 5px 0 0", transition:"height 0.6s cubic-bezier(.2,.8,.2,1)" }} />
+          <span style={{ fontSize:8, color:C.text3, fontFamily:MONO, whiteSpace:"nowrap" }}>{d.day}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function QuoHBars({ data, color }){
+  const max = Math.max(1, ...data.map(d=>d.value||0));
+  if(!data.length) return <div style={{ fontSize:12, color:C.text3, fontFamily:FONT }}>No data yet.</div>;
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+      {data.map((d,i)=>(
+        <div key={i}>
+          <div style={{ display:"flex", justifyContent:"space-between", fontSize:11.5, fontFamily:FONT, marginBottom:4 }}>
+            <span style={{ color:C.text2, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", maxWidth:"74%" }}>{d.label}</span>
+            <span style={{ color:C.text, fontWeight:700 }}>{d.value}</span>
+          </div>
+          <div style={{ height:8, background:C.surface2, borderRadius:6, overflow:"hidden" }}>
+            <div style={{ width:`${Math.round((d.value/max)*100)}%`, height:"100%", background:`linear-gradient(90deg, ${color}, ${color}88)`, borderRadius:6, transition:"width 0.7s cubic-bezier(.2,.8,.2,1)" }} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function QuoTranscript({ t }){
+  const [open,setOpen]=useState(false);
+  return (
+    <div style={{ borderTop:`1px solid ${C.border}`, padding:"10px 0" }}>
+      <button onClick={()=>setOpen(o=>!o)} style={{ display:"flex", width:"100%", alignItems:"center", gap:10, background:"none", border:"none", cursor:"pointer", textAlign:"left" }}>
+        <span style={{ fontSize:12, color:C.text3 }}>{open?"▾":"▸"}</span>
+        <div style={{ flex:1, minWidth:0 }}>
+          <div style={{ fontSize:12.5, color:C.text, fontWeight:600, fontFamily:FONT }}>{t.participant||"Call"} · {t.line||""}</div>
+          <div style={{ fontSize:10.5, color:C.text3, fontFamily:FONT }}>{t.at? new Date(t.at).toLocaleString():""} · {fmtDur(t.duration||0)} · {(t.segments||[]).length} segments</div>
+        </div>
+      </button>
+      {open && (
+        <div style={{ marginTop:8, marginLeft:22, display:"flex", flexDirection:"column", gap:6, maxHeight:300, overflowY:"auto" }}>
+          {(t.segments||[]).map((s,i)=>(
+            <div key={i} style={{ fontSize:12, fontFamily:FONT, lineHeight:1.5 }}>
+              <span style={{ color:C.gold, fontWeight:700 }}>{s.who||"Speaker"}: </span>
+              <span style={{ color:C.text2 }}>{s.text}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function QuoDashboard({ sys, sub="overview" }){
+  const QUO = C.blue;
+  const [cache, setCache] = useState({});
+  const [loading, setLoading] = useState(false);
+  const [errMsg, setErrMsg] = useState(null);
+  const actionFor = { overview:"quo_overview", numbers:"quo_overview", calls:"quo_calls", texts:"quo_messages", transcripts:"quo_transcripts" };
+  const act = actionFor[sub] || "quo_overview";
+
+  const load = async (action, force) => {
+    if (cache[action] && !force) return;
+    setLoading(true); setErrMsg(null);
     try {
       const { data:{ session } } = await supabase.auth.getSession();
       const r = await fetch(`${process.env.REACT_APP_SUPABASE_URL}/functions/v1/systems`, {
-        method:"POST",
-        headers:{ "Content-Type":"application/json", "apikey":process.env.REACT_APP_SUPABASE_ANON_KEY, "Authorization":`Bearer ${session?.access_token}` },
-        body: JSON.stringify({ action:"quo_status" }),
+        method:"POST", headers:{ "Content-Type":"application/json", "apikey":process.env.REACT_APP_SUPABASE_ANON_KEY, "Authorization":`Bearer ${session?.access_token}` },
+        body: JSON.stringify({ action }),
       });
       const j = await r.json();
-      setSt({ status: j.connected ? "connected":"down", data:j });
-    } catch(e){ setSt({ status:"down", data:{ message:String(e) } }); }
+      setCache(c=>({ ...c, [action]:j }));
+      if (j && j.connected===false) setErrMsg(j.message||j.reason||"Not connected");
+    } catch(e){ setErrMsg(String(e)); }
+    finally { setLoading(false); }
   };
-  useEffect(()=>{ check(); /* eslint-disable-next-line */ }, []);
-  const j = st.data || {};
-  const lines = j.lines || [];
-  const users = j.users || [];
-  const QUO = C.blue;
-  const badge = st.status==="checking"
-    ? { t:"Checking…", c:C.text3, bg:C.surface2, dot:C.text3 }
-    : st.status==="connected"
-    ? { t:"Live · Connected", c:C.green, bg:C.goldDim, dot:C.green }
-    : { t:"Not connected", c:C.red, bg:"rgba(220,80,80,0.10)", dot:C.red };
+  useEffect(()=>{ load(act); /* eslint-disable-next-line */ }, [act]);
+
+  const d = cache[act] || {};
+  const ov = cache["quo_overview"] || {};
+  const titleMap = { overview:"Overview", calls:"Calls", texts:"Texts", transcripts:"Transcripts", numbers:"Phone numbers" };
+
+  const Card = ({ children, style }) => (<div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:"18px 20px", ...(style||{}) }}>{children}</div>);
+  const SecTitle = ({ children }) => (<div style={{ fontSize:11, fontWeight:800, color:C.text3, letterSpacing:"0.09em", textTransform:"uppercase", fontFamily:FONT, marginBottom:12 }}>{children}</div>);
+  const KPI = ({ label, value, accent }) => (
+    <div style={{ flex:"1 1 130px", background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:"14px 16px" }}>
+      <div style={{ fontSize:26, fontWeight:800, color:accent||C.text, fontFamily:SERIF, lineHeight:1 }}>{value}</div>
+      <div style={{ fontSize:10.5, color:C.text3, fontFamily:FONT, marginTop:5, textTransform:"uppercase", letterSpacing:"0.05em" }}>{label}</div>
+    </div>
+  );
 
   return (
-    <div style={{ maxWidth:760 }}>
-      <div style={{ background:`linear-gradient(135deg, ${QUO}18, ${C.surface} 60%)`, border:`1px solid ${C.border}`, borderRadius:16, padding:"22px 24px" }}>
-        <div style={{ display:"flex", alignItems:"center", gap:13 }}>
-          <div style={{ width:46, height:46, borderRadius:12, background:QUO+"22", border:`1px solid ${QUO}55`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:23 }}>📞</div>
-          <div style={{ flex:1, minWidth:0 }}>
-            <div style={{ fontSize:18, fontWeight:800, color:C.text, fontFamily:SERIF }}>Quo</div>
-            <div style={{ fontSize:12, color:C.text3, fontFamily:FONT }}>{sys.subtitle}</div>
-          </div>
-          <div style={{ display:"flex", alignItems:"center", gap:7, padding:"6px 12px", borderRadius:20, background:badge.bg, border:`1px solid ${badge.c}44` }}>
-            <span style={{ width:8, height:8, borderRadius:8, background:badge.dot, flexShrink:0 }} />
-            <span style={{ fontSize:12, fontWeight:700, color:badge.c, fontFamily:FONT, whiteSpace:"nowrap" }}>{badge.t}</span>
-          </div>
+    <div style={{ maxWidth:840 }}>
+      <div style={{ display:"flex", alignItems:"center", gap:13, marginBottom:18 }}>
+        <div style={{ width:44, height:44, borderRadius:12, background:QUO+"22", border:`1px solid ${QUO}55`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:22 }}>📞</div>
+        <div style={{ flex:1, minWidth:0 }}>
+          <div style={{ fontSize:18, fontWeight:800, color:C.text, fontFamily:SERIF }}>Quo · {titleMap[sub]}</div>
+          <div style={{ fontSize:12, color:C.text3, fontFamily:FONT }}>OpenPhone · live business phone</div>
         </div>
-        {st.status==="connected" && (
-          <div style={{ display:"flex", gap:12, marginTop:18, flexWrap:"wrap" }}>
-            {[["Phone lines", j.lineCount ?? lines.length],["Team members", j.userCount ?? users.length]].map(([k,v])=>(
-              <div key={k} style={{ flex:"1 1 140px", background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:"14px 16px" }}>
-                <div style={{ fontSize:26, fontWeight:800, color:C.text, fontFamily:SERIF, lineHeight:1 }}>{v}</div>
-                <div style={{ fontSize:11, color:C.text3, fontFamily:FONT, marginTop:5, textTransform:"uppercase", letterSpacing:"0.06em" }}>{k}</div>
-              </div>
-            ))}
-          </div>
-        )}
-        {st.status==="down" && (
-          <div style={{ marginTop:16, padding:"12px 14px", background:"rgba(220,80,80,0.08)", border:"1px solid rgba(220,80,80,0.30)", borderRadius:10 }}>
-            <div style={{ fontSize:12.5, fontWeight:700, color:C.red, fontFamily:FONT, marginBottom:4 }}>Couldn't reach Quo{j.http?` (HTTP ${j.http})`:""}</div>
-            <div style={{ fontSize:12, color:C.text2, fontFamily:FONT, lineHeight:1.5 }}>{j.message||j.reason||"Unknown error."}</div>
-            {String(j.message||"").toLowerCase().includes("ip") && (
-              <div style={{ fontSize:11.5, color:C.text3, fontFamily:FONT, marginTop:8, lineHeight:1.5 }}>An IP allowlist may be blocking server-side calls. Disable IP restrictions in OpenPhone's API settings, then re-check.</div>
-            )}
-          </div>
-        )}
-        <div style={{ display:"flex", alignItems:"center", gap:12, marginTop:16 }}>
-          <GoldButton small outline onClick={check} disabled={st.status==="checking"}>{st.status==="checking"?"Checking…":"Re-check"}</GoldButton>
-          {j.checkedAt && <span style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>Last checked {new Date(j.checkedAt).toLocaleTimeString()}</span>}
-        </div>
+        <GoldButton small outline onClick={()=>load(act,true)} disabled={loading}>{loading?"Loading…":"Refresh"}</GoldButton>
       </div>
 
-      {st.status==="connected" && lines.length>0 && (
-        <div style={{ marginTop:18 }}>
-          <div style={{ fontSize:11, fontWeight:800, color:C.text3, letterSpacing:"0.1em", textTransform:"uppercase", fontFamily:FONT, marginBottom:10 }}>Phone lines</div>
-          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))", gap:12 }}>
-            {lines.map((ln,i)=>(
-              <div key={ln.id||i} style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:"15px 16px" }}>
-                <div style={{ display:"flex", alignItems:"center", gap:9, marginBottom:8 }}>
-                  <div style={{ width:30, height:30, borderRadius:8, background:QUO+"1e", border:`1px solid ${QUO}44`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:14 }}>📱</div>
-                  <div style={{ fontSize:11, color:C.text3, fontFamily:FONT, fontWeight:600 }}>{ln.users?`${ln.users} user${ln.users>1?"s":""}`:"Shared"}</div>
-                </div>
-                <div style={{ fontSize:16, fontWeight:800, color:C.text, fontFamily:MONO, letterSpacing:"0.01em" }}>{ln.number||"—"}</div>
-                <div style={{ fontSize:12, color:C.text2, fontFamily:FONT, marginTop:3 }}>{ln.name||"Unnamed line"}</div>
-              </div>
-            ))}
+      {loading && !d.connected && <div style={{ fontSize:13, color:C.text3, fontFamily:FONT }}>Pulling live data from OpenPhone…</div>}
+      {errMsg && d.connected!==true && (
+        <Card style={{ borderColor:"rgba(220,80,80,0.3)" }}>
+          <div style={{ fontSize:13, fontWeight:700, color:C.red, fontFamily:FONT, marginBottom:4 }}>Couldn't reach Quo</div>
+          <div style={{ fontSize:12.5, color:C.text2, fontFamily:FONT, lineHeight:1.5 }}>{errMsg}</div>
+        </Card>
+      )}
+
+      {sub==="overview" && d.connected && (()=>{
+        const seats = d.userCount||0; const rate=20; const est = seats*rate;
+        const recs=[];
+        if((d.activeLast7||0)===0) recs.push("No conversation activity in the last 7 days — worth confirming the lines are in use.");
+        (d.byLine||[]).filter(l=>l.users===0).forEach(l=>recs.push(`Line "${l.name}" has no assigned users.`));
+        const top=(d.byLine||[]).slice().sort((a,b)=>b.count-a.count)[0];
+        if(top && top.count>0) recs.push(`Most activity is on "${top.name}" (${top.count} conversations).`);
+        if(seats<=2) recs.push(`Only ${seats} seat${seats===1?"":"s"} on Quo — add agents as the team grows.`);
+        if((d.topParticipants||[])[0]) recs.push(`Most-contacted number: ${d.topParticipants[0].num} (${d.topParticipants[0].count}x).`);
+        return (
+          <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+            <div style={{ display:"flex", gap:12, flexWrap:"wrap" }}>
+              <KPI label="Phone lines" value={d.lineCount||0} accent={QUO} />
+              <KPI label="Conversations" value={d.conversationCount||0} />
+              <KPI label="Active · 7 days" value={d.activeLast7||0} accent={C.green} />
+              <KPI label="Team seats" value={seats} />
+            </div>
+            <Card><SecTitle>Conversation activity · last 14 days</SecTitle><QuoBars data={d.activityByDay||[]} color={QUO} /></Card>
+            <div style={{ display:"flex", gap:16, flexWrap:"wrap" }}>
+              <Card style={{ flex:"1 1 320px" }}><SecTitle>Conversations by line</SecTitle><QuoHBars data={(d.byLine||[]).map(l=>({label:l.name, value:l.count}))} color={QUO} /></Card>
+              <Card style={{ flex:"1 1 320px" }}><SecTitle>Top contacts</SecTitle><QuoHBars data={(d.topParticipants||[]).map(p=>({label:p.num, value:p.count}))} color={C.gold} /></Card>
+            </div>
+            <div style={{ display:"flex", gap:16, flexWrap:"wrap" }}>
+              <Card style={{ flex:"1 1 300px" }}>
+                <SecTitle>Plan & billing</SecTitle>
+                <div style={{ display:"flex", justifyContent:"space-between", padding:"7px 0", fontFamily:FONT, fontSize:13 }}><span style={{color:C.text3}}>Seats</span><span style={{color:C.text2,fontWeight:700}}>{seats}</span></div>
+                <div style={{ display:"flex", justifyContent:"space-between", padding:"7px 0", borderTop:`1px solid ${C.border}`, fontFamily:FONT, fontSize:13 }}><span style={{color:C.text3}}>Phone lines</span><span style={{color:C.text2,fontWeight:700}}>{d.lineCount||0}</span></div>
+                <div style={{ display:"flex", justifyContent:"space-between", padding:"7px 0", borderTop:`1px solid ${C.border}`, fontFamily:FONT, fontSize:13 }}><span style={{color:C.text3}}>Est. monthly</span><span style={{color:C.gold,fontWeight:800}}>~${est}/mo</span></div>
+                <div style={{ fontSize:10.5, color:C.text3, fontFamily:FONT, marginTop:8, lineHeight:1.5 }}>Estimate assumes ~${rate}/seat. OpenPhone's API doesn't expose billing — actual invoices live in OpenPhone.</div>
+              </Card>
+              <Card style={{ flex:"1 1 300px" }}>
+                <SecTitle>Recommendations</SecTitle>
+                {recs.length===0 ? <div style={{fontSize:12.5,color:C.text3,fontFamily:FONT}}>All good — nothing flagged.</div> :
+                  <ul style={{ margin:0, paddingLeft:18, fontSize:12.5, color:C.text2, fontFamily:FONT, lineHeight:1.7 }}>{recs.slice(0,5).map((r,i)=><li key={i}>{r}</li>)}</ul>}
+              </Card>
+            </div>
+            <Card><SecTitle>Recent activity</SecTitle>
+              {(d.recent||[]).length===0 ? <EmptyQuo label="No recent conversations." /> :
+                (d.recent||[]).map((c,i)=>(
+                  <div key={c.id||i} style={{ display:"flex", alignItems:"center", gap:10, padding:"9px 0", borderTop:i?`1px solid ${C.border}`:"none", fontFamily:FONT }}>
+                    <div style={{ width:30, height:30, borderRadius:8, background:QUO+"1e", display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, flexShrink:0 }}>💬</div>
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <div style={{ fontSize:12.5, color:C.text, fontWeight:600, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{(c.participants||[]).join(", ")||"—"}</div>
+                      <div style={{ fontSize:10.5, color:C.text3 }}>{c.line}</div>
+                    </div>
+                    <div style={{ fontSize:10.5, color:C.text3, whiteSpace:"nowrap" }}>{c.lastActivityAt? new Date(c.lastActivityAt).toLocaleString():""}</div>
+                  </div>
+                ))}
+            </Card>
           </div>
+        );
+      })()}
+
+      {sub==="calls" && d.connected && (
+        <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+          <div style={{ display:"flex", gap:12, flexWrap:"wrap" }}>
+            <KPI label="Calls (recent)" value={d.total||0} accent={QUO} />
+            <KPI label="Inbound" value={d.inbound||0} accent={C.green} />
+            <KPI label="Outbound" value={d.outbound||0} accent={C.amber} />
+            <KPI label="Talk time" value={fmtDur(d.totalDuration||0)} />
+          </div>
+          <Card><SecTitle>Calls · last 14 days</SecTitle><QuoBars data={d.byDay||[]} color={QUO} /></Card>
+          <Card><SecTitle>Recent calls</SecTitle>
+            {(d.calls||[]).length===0 ? <EmptyQuo label="No calls in recent conversations yet — they'll appear here as calls come through." /> :
+              (d.calls||[]).map((c,i)=>(
+                <div key={c.id||i} style={{ display:"flex", alignItems:"center", gap:11, padding:"9px 0", borderTop:i?`1px solid ${C.border}`:"none", fontFamily:FONT }}>
+                  <span style={{ fontSize:14 }}>{/in/i.test(c.direction||"")?"📥":"📤"}</span>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ fontSize:12.5, color:C.text, fontWeight:600 }}>{c.participant||"—"}</div>
+                    <div style={{ fontSize:10.5, color:C.text3 }}>{c.line} · {c.status||""}</div>
+                  </div>
+                  <div style={{ fontSize:11, color:C.text2 }}>{fmtDur(c.duration||0)}</div>
+                  <div style={{ fontSize:10.5, color:C.text3, whiteSpace:"nowrap", minWidth:88, textAlign:"right" }}>{c.at? new Date(c.at).toLocaleString():""}</div>
+                </div>
+              ))}
+          </Card>
         </div>
       )}
 
-      {st.status==="connected" && users.length>0 && (
-        <div style={{ marginTop:18 }}>
-          <div style={{ fontSize:11, fontWeight:800, color:C.text3, letterSpacing:"0.1em", textTransform:"uppercase", fontFamily:FONT, marginBottom:10 }}>Team on Quo</div>
-          <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden" }}>
-            {users.map((u,i)=>(
-              <div key={i} style={{ display:"flex", alignItems:"center", gap:11, padding:"11px 15px", borderTop:i?`1px solid ${C.border}`:"none" }}>
-                <Avatar name={u.name} email={u.email} size={28} />
-                <div style={{ minWidth:0, flex:1 }}>
-                  <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:FONT }}>{u.name}</div>
-                  {u.email && <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>{u.email}</div>}
-                </div>
-                {u.role && <span style={{ fontSize:10, fontWeight:700, color:C.text3, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.05em" }}>{u.role}</span>}
-              </div>
-            ))}
+      {sub==="texts" && d.connected && (
+        <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+          <div style={{ display:"flex", gap:12, flexWrap:"wrap" }}>
+            <KPI label="Messages (recent)" value={d.total||0} accent={QUO} />
+            <KPI label="Inbound" value={d.inbound||0} accent={C.green} />
+            <KPI label="Outbound" value={d.outbound||0} accent={C.amber} />
           </div>
+          <Card><SecTitle>Texts · last 14 days</SecTitle><QuoBars data={d.byDay||[]} color={C.gold} /></Card>
+          <Card><SecTitle>Recent messages</SecTitle>
+            {(d.messages||[]).length===0 ? <EmptyQuo label="No texts in recent conversations yet." /> :
+              (d.messages||[]).map((m,i)=>(
+                <div key={m.id||i} style={{ display:"flex", gap:10, padding:"9px 0", borderTop:i?`1px solid ${C.border}`:"none", fontFamily:FONT, alignItems:"flex-start" }}>
+                  <span style={{ fontSize:13, marginTop:2 }}>{/in/i.test(m.direction||"")?"📥":"📤"}</span>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ fontSize:12.5, color:C.text2, lineHeight:1.5 }}>{m.text||"—"}</div>
+                    <div style={{ fontSize:10.5, color:C.text3, marginTop:2 }}>{m.participant} · {m.line}</div>
+                  </div>
+                  <div style={{ fontSize:10.5, color:C.text3, whiteSpace:"nowrap" }}>{m.at? new Date(m.at).toLocaleDateString():""}</div>
+                </div>
+              ))}
+          </Card>
+        </div>
+      )}
+
+      {sub==="transcripts" && d.connected && (
+        <Card><SecTitle>Call transcripts</SecTitle>
+          <div style={{ fontSize:11.5, color:C.text3, fontFamily:FONT, marginBottom:6 }}>Scanned {d.scanned||0} recent calls · {d.total||0} with transcripts.</div>
+          {(d.transcripts||[]).length===0 ? <EmptyQuo label="No transcripts available yet. They show up here once OpenPhone records and transcribes calls (enable call recording + transcription in OpenPhone)." /> :
+            (d.transcripts||[]).map((t,i)=>(<QuoTranscript key={t.callId||i} t={t} />))}
+        </Card>
+      )}
+
+      {sub==="numbers" && (
+        <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+          <div style={{ display:"flex", gap:12, flexWrap:"wrap" }}>
+            <KPI label="Phone lines" value={ov.lineCount||0} accent={QUO} />
+            <KPI label="Team seats" value={ov.userCount||0} />
+          </div>
+          {(ov.byLine||[]).length===0 ? <EmptyQuo label={loading?"Loading lines…":"No phone lines found."} /> : (
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(240px,1fr))", gap:12 }}>
+              {(ov.byLine||[]).map((l,i)=>(
+                <div key={i} style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:"16px 18px" }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:9, marginBottom:8 }}>
+                    <div style={{ width:30, height:30, borderRadius:8, background:QUO+"1e", border:`1px solid ${QUO}44`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:14 }}>📱</div>
+                    <div style={{ fontSize:11, color:C.text3, fontFamily:FONT, fontWeight:600 }}>{l.users?`${l.users} user${l.users>1?"s":""}`:"Shared"}</div>
+                  </div>
+                  <div style={{ fontSize:16, fontWeight:800, color:C.text, fontFamily:MONO }}>{l.number}</div>
+                  <div style={{ fontSize:12, color:C.text2, fontFamily:FONT, marginTop:3 }}>{l.name||"Unnamed line"}</div>
+                  <div style={{ marginTop:10, fontSize:11.5, color:C.text3, fontFamily:FONT }}>{l.count} conversation{l.count===1?"":"s"}</div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -8958,31 +9113,88 @@ function QuoDashboard({ sys }) {
 function SystemsView({ user }) {
   const isMobile = useIsMobile();
   const [sysKey, setSysKey] = useState("brevo");
+  const [quoOpen, setQuoOpen] = useState(false);
+  const [quoSub, setQuoSub] = useState("overview");
   const active = PRISM_SYSTEMS.find(s=>s.key===sysKey) || PRISM_SYSTEMS[0];
+  const QUO = C.blue;
+  const QUO_SUBS = [
+    { k:"overview", label:"Overview", icon:"📊" },
+    { k:"calls", label:"Calls", icon:"📞" },
+    { k:"texts", label:"Texts", icon:"💬" },
+    { k:"transcripts", label:"Transcripts", icon:"📝" },
+    { k:"numbers", label:"Phone numbers", icon:"#️⃣" },
+  ];
+
+  const railItem = (s) => {
+    const a = sysKey===s.key;
+    if (s.key==="quo") {
+      return (
+        <div key="quo" style={{ marginBottom:3 }}>
+          <button onClick={()=>{ setQuoOpen(o=> sysKey==="quo" ? !o : true); setSysKey("quo"); }}
+            style={{ width:"100%", display:"flex", alignItems:"center", gap:10, padding:"10px 12px", borderRadius:10, cursor:"pointer", textAlign:"left",
+              background: a? `linear-gradient(135deg, ${QUO}2e, ${QUO}12)` : C.surface2,
+              border:`1px solid ${a?QUO+"77":C.border}` }}>
+            <span style={{ fontSize:15 }}>{s.icon}</span>
+            <span style={{ display:"flex", flexDirection:"column", lineHeight:1.25, flex:1, minWidth:0 }}>
+              <span style={{ color:a?QUO:C.text, fontWeight:700, fontSize:13.5 }}>{s.label}</span>
+              <span style={{ fontSize:10, color:C.text3, fontWeight:400 }}>{s.desc}</span>
+            </span>
+            <span style={{ color:a?QUO:C.text3, fontSize:11, transform:quoOpen?"rotate(90deg)":"none", transition:"transform 0.15s" }}>▸</span>
+          </button>
+          {quoOpen && (
+            <div style={{ marginTop:4, marginLeft:11, paddingLeft:9, borderLeft:`2px solid ${QUO}55`, display:"flex", flexDirection:"column", gap:2 }}>
+              {QUO_SUBS.map(sub=>{ const sa = sysKey==="quo" && quoSub===sub.k; return (
+                <button key={sub.k} onClick={()=>{ setSysKey("quo"); setQuoSub(sub.k); }}
+                  style={{ display:"flex", alignItems:"center", gap:8, padding:"7px 10px", borderRadius:8, cursor:"pointer", textAlign:"left", border:"none",
+                    background: sa? QUO+"22":"transparent", color: sa?QUO:C.text2, fontSize:12.5, fontWeight:sa?700:500, fontFamily:FONT }}
+                  onMouseEnter={e=>{ if(!sa) e.currentTarget.style.background=C.surface2; }}
+                  onMouseLeave={e=>{ if(!sa) e.currentTarget.style.background="transparent"; }}>
+                  <span style={{ fontSize:12 }}>{sub.icon}</span>{sub.label}
+                </button>
+              ); })}
+            </div>
+          )}
+        </div>
+      );
+    }
+    return (
+      <button key={s.key} onClick={()=>setSysKey(s.key)} style={{ width:"100%", display:"flex", alignItems:"center", gap:10, padding:"9px 12px", marginBottom:2, borderRadius:8, border:"none", background:a?C.goldDim:"transparent", color:a?C.gold:C.text2, fontSize:13.5, fontWeight:a?700:500, fontFamily:FONT, cursor:"pointer", textAlign:"left" }}
+        onMouseEnter={e=>{ if(!a) e.currentTarget.style.background=C.surface2; }} onMouseLeave={e=>{ if(!a) e.currentTarget.style.background="transparent"; }}>
+        <span style={{ fontSize:15 }}>{s.icon}</span>
+        <span style={{ display:"flex", flexDirection:"column", lineHeight:1.25 }}><span>{s.label}</span><span style={{ fontSize:10, color:C.text3, fontWeight:400 }}>{s.desc}</span></span>
+      </button>
+    );
+  };
+
   return (
-    <div style={{ display:isMobile?"block":"flex", gap:20, padding:isMobile?"12px":"20px 24px", maxWidth:1200 }}>
+    <div style={{ display:isMobile?"block":"flex", gap:20, padding:isMobile?"12px":"20px 24px", maxWidth:1240 }}>
       {isMobile ? (
-        <div style={{ display:"flex", gap:8, overflowX:"auto", paddingBottom:12 }}>
-          {PRISM_SYSTEMS.map(s=>{ const a=sysKey===s.key; return (
-            <button key={s.key} onClick={()=>setSysKey(s.key)} style={{ flexShrink:0, display:"flex", alignItems:"center", gap:6, padding:"8px 14px", borderRadius:20, border:`1px solid ${a?C.goldBorder:C.border2}`, background:a?C.goldDim:"transparent", color:a?C.gold:C.text2, fontSize:13, fontWeight:a?700:500, fontFamily:FONT, cursor:"pointer", whiteSpace:"nowrap" }}>
-              <span>{s.icon}</span>{s.label}
-            </button>); })}
+        <div style={{ marginBottom:12 }}>
+          <div style={{ display:"flex", gap:8, overflowX:"auto", paddingBottom:8 }}>
+            {PRISM_SYSTEMS.map(s=>{ const a=sysKey===s.key; const isQuo=s.key==="quo"; return (
+              <button key={s.key} onClick={()=>{ setSysKey(s.key); if(isQuo) setQuoOpen(true); }} style={{ flexShrink:0, display:"flex", alignItems:"center", gap:6, padding:"8px 14px", borderRadius:20, border:`1px solid ${a?(isQuo?QUO+"77":C.goldBorder):C.border2}`, background:a?(isQuo?QUO+"22":C.goldDim):"transparent", color:a?(isQuo?QUO:C.gold):C.text2, fontSize:13, fontWeight:a?700:500, fontFamily:FONT, cursor:"pointer", whiteSpace:"nowrap" }}>
+                <span>{s.icon}</span>{s.label}
+              </button>); })}
+          </div>
+          {sysKey==="quo" && (
+            <div style={{ display:"flex", gap:8, overflowX:"auto" }}>
+              {QUO_SUBS.map(sub=>{ const sa=quoSub===sub.k; return (
+                <button key={sub.k} onClick={()=>setQuoSub(sub.k)} style={{ flexShrink:0, display:"flex", alignItems:"center", gap:5, padding:"6px 12px", borderRadius:16, border:`1px solid ${sa?QUO+"77":C.border}`, background:sa?QUO+"22":"transparent", color:sa?QUO:C.text2, fontSize:12, fontWeight:sa?700:500, fontFamily:FONT, cursor:"pointer", whiteSpace:"nowrap" }}>
+                  <span>{sub.icon}</span>{sub.label}
+                </button>); })}
+            </div>
+          )}
         </div>
       ) : (
-        <div style={{ width:180, flexShrink:0 }}>
-          <div style={{ fontSize:10, fontWeight:800, color:C.text3, letterSpacing:"0.1em", textTransform:"uppercase", fontFamily:FONT, padding:"4px 10px 8px" }}>Systems</div>
-          {PRISM_SYSTEMS.map(s=>{ const a=sysKey===s.key; return (
-            <button key={s.key} onClick={()=>setSysKey(s.key)} style={{ width:"100%", display:"flex", alignItems:"center", gap:10, padding:"9px 12px", marginBottom:2, borderRadius:8, border:"none", background:a?C.goldDim:"transparent", color:a?C.gold:C.text2, fontSize:13.5, fontWeight:a?700:500, fontFamily:FONT, cursor:"pointer", textAlign:"left" }}
-              onMouseEnter={e=>{ if(!a) e.currentTarget.style.background=C.surface2; }} onMouseLeave={e=>{ if(!a) e.currentTarget.style.background="transparent"; }}>
-              <span style={{ fontSize:15 }}>{s.icon}</span>
-              <span style={{ display:"flex", flexDirection:"column", lineHeight:1.25 }}><span>{s.label}</span><span style={{ fontSize:10, color:C.text3, fontWeight:400 }}>{s.desc}</span></span>
-            </button>); })}
-          <div style={{ fontSize:10.5, color:C.text3, fontFamily:FONT, padding:"12px 10px", lineHeight:1.5 }}>More systems coming soon…</div>
+        <div style={{ width:206, flexShrink:0, background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:"12px 10px", alignSelf:"flex-start" }}>
+          <div style={{ fontSize:10, fontWeight:800, color:C.text3, letterSpacing:"0.1em", textTransform:"uppercase", fontFamily:FONT, padding:"4px 10px 10px" }}>Systems</div>
+          {PRISM_SYSTEMS.map(s=>railItem(s))}
+          <div style={{ fontSize:10.5, color:C.text3, fontFamily:FONT, padding:"12px 10px 4px", lineHeight:1.5 }}>More systems coming soon…</div>
         </div>
       )}
       <div style={{ flex:1, minWidth:0 }}>
         {active.key==="suarez" ? <SuarezConnectionCard sys={active} />
-          : active.key==="quo" ? <QuoDashboard sys={active} />
+          : active.key==="quo" ? <QuoDashboard sys={active} sub={quoSub} />
           : <SystemStatusCard sys={active} />}
       </div>
     </div>
