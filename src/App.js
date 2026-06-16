@@ -5917,14 +5917,54 @@ function RobotsView({ user, deals, contacts, tasks }) {
       const botMsg = { role:"assistant", content:text, ts:new Date().toISOString() };
       const finalMsgs = [...newMsgs, botMsg];
       setMessages(finalMsgs);
+      let activeConvId = convId;
       if(convId){
         await supabase.from("robot_conversations").update({ messages:finalMsgs, updated_at:new Date().toISOString() }).eq("id",convId);
       } else {
         const {data:conv} = await supabase.from("robot_conversations").insert({
           robot_id:robot.id, org_id:ORG_ID, user_email:user?.email, messages:finalMsgs,
         }).select().single();
-        if(conv) setConvId(conv.id);
+        if(conv){ setConvId(conv.id); activeConvId=conv.id; }
       }
+      // ── Log + auto-extract memories (async, non-blocking) ──────────────
+      const _userMsg = input.trim();
+      const _botMsg  = text;
+      const _robot   = robot;
+      const _convId  = activeConvId;
+      const _session = session;
+      ;(async()=>{
+        try {
+          // 1. Log both turns to robot_conversation_log
+          for(const [role,content] of [["user",_userMsg],["assistant",_botMsg]]){
+            await supabase.from("robot_conversation_log").insert({
+              org_id:ORG_ID, robot_id:_robot.id, conversation_id:_convId,
+              user_email:user?.email, role, content:content.slice(0,8000)
+            });
+          }
+        } catch(_){}
+        try {
+          // 2. Auto-extract memories if this is a meaningful response (>200 chars)
+          if(_botMsg.length < 200) return;
+          const extractSys=`You are a memory extractor for a real estate brokerage AI. Given one exchange, extract any important facts worth saving permanently. Return ONLY a JSON array, no markdown. Each item: {"memory_type":"financial_insight|account_detail|data_quality|reconciliation|action_item|metric|strategic_finding","content":"1-2 concrete sentences with numbers/names/dates"}. Only specific, non-obvious facts. Return [] if nothing significant.`;
+          const extractRes=await fetch(`${process.env.REACT_APP_SUPABASE_URL}/functions/v1/ari-chat`,{
+            method:"POST",
+            headers:{"Content-Type":"application/json","apikey":process.env.REACT_APP_SUPABASE_ANON_KEY,"Authorization":`Bearer ${_session?.access_token}`},
+            body:JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:600,system:extractSys,
+              messages:[{role:"user",content:`User: ${_userMsg.slice(0,400)}\n\nAssistant: ${_botMsg.slice(0,1200)}`}]})
+          });
+          const ed=await extractRes.json();
+          const raw=(ed.content?.[0]?.text||"[]").replace(/```json|```/g,"").trim();
+          const arr=JSON.parse(raw.includes("[")?raw.slice(raw.indexOf("[")):"[]");
+          for(const m of arr){
+            if(!m?.memory_type||!m?.content) continue;
+            await supabase.from("robot_memories").insert({
+              robot_id:_robot.id, org_id:ORG_ID,
+              memory_type:m.memory_type, content:m.content,
+              auto_extracted:true, source_conversation_id:_convId
+            });
+          }
+        } catch(_){}
+      })();
     } catch(e){
       setMessages(m=>[...m,{role:"assistant",content:"Connection error — try again.",ts:new Date().toISOString()}]);
     } finally { setSending(false); setStatus("idle"); }
@@ -9516,6 +9556,141 @@ function SystemsView({ user }) {
   );
 }
 
+function DesignChatHistory({ user }) {
+  const isMobile = useIsMobile();
+  const [convs, setConvs]       = useState([]);
+  const [robots, setRobots]     = useState([]);
+  const [selConv, setSelConv]   = useState(null);
+  const [msgs, setMsgs]         = useState([]);
+  const [search, setSearch]     = useState("");
+  const [filter, setFilter]     = useState("all");
+  const [loading, setLoading]   = useState(true);
+  const [loadingMsgs, setLM]    = useState(false);
+
+  useEffect(()=>{
+    setLoading(true);
+    Promise.all([
+      supabase.from("robots").select("id,name,avatar_color").eq("org_id",ORG_ID),
+      supabase.from("robot_conversations")
+        .select("id,robot_id,user_email,messages,created_at,updated_at")
+        .eq("org_id",ORG_ID).order("updated_at",{ascending:false})
+    ]).then(([{data:rb},{data:cv}])=>{
+      setRobots(rb||[]);
+      setConvs((cv||[]).filter(c=>c.messages?.length>0));
+      setLoading(false);
+    });
+  },[]);
+
+  const openConv = async (conv) => {
+    setSelConv(conv); setLM(true);
+    const {data} = await supabase.from("robot_conversation_log")
+      .select("*").eq("conversation_id",conv.id).order("created_at",{ascending:true});
+    if(data?.length) { setMsgs(data); }
+    else {
+      // Fallback: use messages array from conversation
+      setMsgs((conv.messages||[]).map((m,i)=>({
+        id:i, role:m.role, content:m.content, created_at:m.ts||conv.created_at
+      })));
+    }
+    setLM(false);
+  };
+
+  const rMap = Object.fromEntries((robots||[]).map(r=>[r.id,r]));
+  const filtered = convs.filter(c=>{
+    const rname = rMap[c.robot_id]?.name||"";
+    if(filter!=="all" && c.robot_id!==filter) return false;
+    if(search){
+      const s=search.toLowerCase();
+      const preview=(c.messages||[]).map(m=>String(m.content||"")).join(" ").toLowerCase();
+      if(!rname.toLowerCase().includes(s)&&!preview.includes(s)&&!String(c.user_email||"").includes(s)) return false;
+    }
+    return true;
+  });
+
+  const GOLD=C.gold;
+
+  return (
+    <div style={{ maxWidth:980 }}>
+      <div style={{ fontSize:22, fontWeight:800, color:C.text, fontFamily:SERIF, marginBottom:4 }}>💬 Chat History</div>
+      <div style={{ fontSize:13, color:C.text3, fontFamily:FONT, marginBottom:18 }}>Every robot conversation logged and searchable.</div>
+
+      {selConv ? (
+        <div>
+          <button onClick={()=>{ setSelConv(null); setMsgs([]); }} style={{ display:"flex", alignItems:"center", gap:6, background:"none", border:`1px solid ${C.border2}`, color:C.text2, borderRadius:8, padding:"6px 12px", cursor:"pointer", fontFamily:FONT, fontSize:13, marginBottom:16 }}>← Back to all conversations</button>
+          <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:"16px 18px", marginBottom:12 }}>
+            <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+              <div style={{ width:34, height:34, borderRadius:9, background:(rMap[selConv.robot_id]?.avatar_color||GOLD)+"22", display:"flex", alignItems:"center", justifyContent:"center", fontSize:15, fontWeight:800, color:rMap[selConv.robot_id]?.avatar_color||GOLD, fontFamily:SERIF }}>{(rMap[selConv.robot_id]?.name||"?").charAt(0)}</div>
+              <div>
+                <div style={{ fontSize:14, fontWeight:700, color:C.text, fontFamily:FONT }}>{rMap[selConv.robot_id]?.name||"Robot"}</div>
+                <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>{selConv.user_email} · {new Date(selConv.updated_at).toLocaleString()} · {(selConv.messages||[]).length} messages</div>
+              </div>
+            </div>
+          </div>
+          {loadingMsgs ? <div style={{ color:C.text3, fontFamily:FONT }}>Loading messages…</div> :
+            <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+              {msgs.map((m,i)=>{
+                const isUser=m.role==="user";
+                let content=String(m.content||"");
+                if(content.includes("FINANCIAL CONTEXT")) content=content.slice(0,content.indexOf("FINANCIAL CONTEXT")).trim();
+                return (
+                  <div key={m.id||i} style={{ display:"flex", flexDirection:"column", alignItems:isUser?"flex-end":"flex-start" }}>
+                    <div style={{ fontSize:10, color:C.text3, fontFamily:FONT, marginBottom:3 }}>{isUser?"You":rMap[selConv.robot_id]?.name||"Robot"} · {m.created_at?new Date(m.created_at).toLocaleTimeString():""}</div>
+                    <div style={{ maxWidth:"84%", padding:"11px 14px", borderRadius:12, fontFamily:FONT, fontSize:13, lineHeight:1.6,
+                      background:isUser?C.goldDim:C.surface, border:`1px solid ${isUser?C.goldBorder:C.border}`,
+                      color:C.text, whiteSpace:isUser?"pre-wrap":"normal", wordBreak:"break-word" }}>
+                      {isUser ? content : <MarkdownMessage text={content} accent={rMap[selConv.robot_id]?.avatar_color||GOLD} />}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>}
+        </div>
+      ) : (
+        <div>
+          <div style={{ display:"flex", gap:10, marginBottom:16, flexWrap:"wrap" }}>
+            <Field value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search conversations…" style={{ flex:"1 1 220px", minWidth:0 }} />
+            <div style={{ display:"flex", gap:6 }}>
+              {[{k:"all",l:"All robots"},...(robots||[]).map(r=>({k:r.id,l:r.name}))].map(opt=>{
+                const a=filter===opt.k;
+                return <button key={opt.k} onClick={()=>setFilter(opt.k)} style={{ padding:"7px 13px", borderRadius:20, border:`1px solid ${a?C.goldBorder:C.border2}`, background:a?C.goldDim:"transparent", color:a?C.gold:C.text2, fontSize:12, fontWeight:a?700:500, fontFamily:FONT, cursor:"pointer", whiteSpace:"nowrap" }}>{opt.l}</button>;
+              })}
+            </div>
+          </div>
+          {loading ? <div style={{ color:C.text3, fontFamily:FONT }}>Loading…</div> :
+            filtered.length===0 ? <div style={{ color:C.text3, fontFamily:FONT }}>No conversations yet.</div> :
+            <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, overflow:"hidden" }}>
+              {filtered.map((c,i)=>{
+                const r=rMap[c.robot_id]; const rc=r?.avatar_color||GOLD;
+                const lastUser=(c.messages||[]).filter(m=>m.role==="user").slice(-1)[0];
+                const lastBot=(c.messages||[]).filter(m=>m.role==="assistant").slice(-1)[0];
+                let preview=String(lastUser?.content||lastBot?.content||"").slice(0,120);
+                if(preview.includes("FINANCIAL CONTEXT")) preview=preview.slice(0,preview.indexOf("FINANCIAL CONTEXT")).trim();
+                return (
+                  <button key={c.id} onClick={()=>openConv(c)} style={{ width:"100%", display:"flex", alignItems:"center", gap:12, padding:"13px 16px", borderTop:i?`1px solid ${C.border}`:"none", background:"none", border:"none", cursor:"pointer", textAlign:"left" }}
+                    onMouseEnter={e=>e.currentTarget.style.background=C.surface2}
+                    onMouseLeave={e=>e.currentTarget.style.background="none"}>
+                    <div style={{ width:36, height:36, borderRadius:9, background:rc+"22", border:`1px solid ${rc}44`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:16, fontWeight:800, color:rc, fontFamily:SERIF, flexShrink:0 }}>{(r?.name||"?").charAt(0)}</div>
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:2 }}>
+                        <span style={{ fontSize:13, fontWeight:700, color:C.text, fontFamily:FONT }}>{r?.name||"Robot"}</span>
+                        <span style={{ fontSize:10, color:C.text3, fontFamily:FONT }}>{c.user_email}</span>
+                      </div>
+                      <div style={{ fontSize:12, color:C.text2, fontFamily:FONT, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{preview||"—"}</div>
+                    </div>
+                    <div style={{ flexShrink:0, textAlign:"right" }}>
+                      <div style={{ fontSize:10, color:C.text3, fontFamily:FONT }}>{new Date(c.updated_at).toLocaleDateString()}</div>
+                      <div style={{ fontSize:10, color:C.text3, fontFamily:FONT, marginTop:2 }}>{(c.messages||[]).length} msgs</div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DesignView({ user }) {
   const isMobile = useIsMobile();
   const [sub, setSub] = useState("memory");
@@ -9524,6 +9699,7 @@ function DesignView({ user }) {
     { k:"soul",       label:"Soul",        icon:"✨", desc:"Org identity & principles" },
     { k:"styleguide", label:"Style Guide", icon:"🎨", desc:"Brand voice & guidelines" },
     { k:"skills",     label:"Skills",      icon:"⚡", desc:"What each robot can do" },
+    { k:"history",    label:"Chat History",icon:"💬", desc:"Every conversation logged" },
   ];
   const GOLD = C.gold;
 
@@ -9562,6 +9738,7 @@ function DesignView({ user }) {
         {sub==="soul"       && <DesignSoulPanel   user={user} />}
         {sub==="styleguide" && <DesignDocPanel    user={user} docType="style_guide" label="Style Guide" icon="🎨" />}
         {sub==="skills"     && <DesignDocPanel    user={user} docType="skills"      label="Skills"      icon="⚡" />}
+        {sub==="history"    && <DesignChatHistory user={user} />}
       </div>
     </div>
   );
