@@ -1,0 +1,290 @@
+════════════════════════════════════════════════════════════════════
+PRISM — HANDOFF DELTA
+Changes since June 14, 2026 handoff
+Session date: June 16, 2026
+════════════════════════════════════════════════════════════════════
+
+HOW TO USE THIS FILE
+  Read the June 14 master handoff first.  This delta documents only
+  what changed on June 16.  All credentials in the master handoff
+  are still valid unless superseded below.
+
+════════════════════════════════════════════════════════════════════
+CRITICAL CORRECTIONS TO THE JUNE 14 HANDOFF
+════════════════════════════════════════════════════════════════════
+
+  1. DEPLOY GUARD — NEW MANDATORY STEP
+     After `CI=false npm run build`, ALWAYS run:
+       node scripts/guard-deploy.js
+     THEN run the gh-pages push.
+
+     Full safe recipe:
+       CI=false npm run build
+       node scripts/guard-deploy.js          ← NEW — aborts if build broken
+       cp build/index.html build/404.html
+       cat build/CNAME                        ← must print app.winwithone.com
+       npx --yes gh-pages -d build --dotfiles -r "https://${PAT}@github.com/presidentsuarez/brokerage.git"
+       git add -A && git commit -m "..." && git pull --rebase && git push origin main
+
+     WHY: on June 16 a syntax error caused CRA to fail silently when
+     the build output was piped through grep (losing the exit code).
+     gh-pages then published an empty build/ dir, unmapping the
+     custom domain and serving a 404 for ~2 minutes until the fixed
+     build deployed.  guard-deploy.js catches this before it hits
+     gh-pages — it verifies index.html, 404.html, CNAME value, and
+     the main.*.js bundle all exist.
+
+  2. NEVER PIPE THE BUILD COMMAND
+     Bad:  CI=false npm run build 2>&1 | grep ...   ← swallows exit code
+     Good: CI=false npm run build
+           Then check output separately if needed.
+
+════════════════════════════════════════════════════════════════════
+NEW CREDENTIALS / SECRETS
+════════════════════════════════════════════════════════════════════
+
+  Two new secrets stored in Supabase (server-side only, set via the
+  Management API — not exposed in the browser bundle):
+
+  ANTHROPIC_API_KEY
+    <REDACTED — stored as Supabase secret ANTHROPIC_API_KEY; retrieve from Supabase dashboard or Javier's secure store>
+    Used by the ari-chat edge function to call Anthropic.
+    Do NOT commit this to the client bundle.
+
+  OPENPHONE_API_KEY
+    <REDACTED — stored as Supabase secret OPENPHONE_API_KEY; retrieve from Supabase dashboard or Javier's secure store>
+    Used by the systems edge function (quo_status / quo_overview /
+    quo_calls / quo_messages / quo_transcripts actions).
+
+════════════════════════════════════════════════════════════════════
+NEW EDGE FUNCTIONS
+════════════════════════════════════════════════════════════════════
+
+  supabase/functions/ari-chat/index.ts        [NEW]
+    Server-side Anthropic proxy.  Requires a valid Supabase JWT
+    (verify_jwt = true, set in supabase/config.toml).  Accepts:
+      { model, max_tokens, system, messages }
+    Returns raw Anthropic JSON.  Best-effort logs token cost to
+    api_usage_log (org_id, service, endpoint, user_email, cost_estimate).
+
+  supabase/functions/systems/index.ts         [UPDATED]
+    Added Quo (OpenPhone) actions alongside existing Brevo / GitHub /
+    Supabase status checks:
+      quo_status     — phone lines + team roster (connected/not badge)
+      quo_overview   — conversation counts, 14-day activity, by-line
+                       breakdown, top contacts, recommendations, billing est.
+      quo_calls      — call log, duration, inbound/outbound, 14-day chart
+      quo_messages   — SMS log, inbound/outbound, 14-day chart
+      quo_transcripts— per-call transcript segments (if enabled in OpenPhone)
+
+════════════════════════════════════════════════════════════════════
+DATABASE CHANGES
+════════════════════════════════════════════════════════════════════
+
+  ── New column ───────────────────────────────────────────────────
+  robots.finance_access  BOOLEAN DEFAULT false
+    Set true only for Davenport (ROGA BUL) — gates whether the robot
+    receives confidential financial context in its prompts.
+    Ari and Lindqvist: false.  Do not set to true for agent-facing robots.
+
+  ── New table ────────────────────────────────────────────────────
+  org_design_docs  (org_id, doc_type, content, updated_by, updated_at)
+    PK: (org_id, doc_type)
+    doc_type CHECK: 'style_guide' | 'skills'
+    RLS: prism_is_staff() — owner/admin/manager only.
+    Seeded with ROGA brand/style guide and robot skills doc.
+    Edited via the Design → Style Guide / Skills sub-pages.
+
+  ── Schema fix ───────────────────────────────────────────────────
+  monthly_cashflow_trends PRIMARY KEY changed from (org_id, month) to
+    (org_id, month, tax_year) — old PK only supported one year per
+    month name, silently blocking 2026 inserts.
+
+  ── Data backfill ────────────────────────────────────────────────
+  monthly_cashflow_trends now has 2026 rows (Jan–Jun) computed from
+    roga_financials and upserted.  The 2025 rows are unchanged.
+  Summary of 2026 P&L (from the ledger):
+    2026-01: income $174,099  expenses -$200,777  net -$26,678
+    2026-02: income $176,559  expenses -$164,190  net +$12,369
+    2026-03: income $244,090  expenses -$259,606  net -$15,515
+    2026-04: income $239,458  expenses -$257,006  net -$17,549
+    2026-05: income $207,921  expenses -$192,692  net +$15,229
+    2026-06: income $0        expenses -$352       net -$352 (partial)
+
+  ── Security hardening (Supabase Advisor — all 11 issues fixed) ──
+  RLS enabled:
+    public.api_usage_log          (+ admin read policy)
+    public._expenses_backup_2025_20260608
+  security_invoker = on (respect RLS rather than bypass it):
+    v_agent_leaderboard_yearly    v_agent_scorecard
+    v_brokerage_summary           v_commission_ledger
+    v_fee_ledger                  v_referrals
+    v_roga_cashflow_monthly       v_roga_pnl
+    v_roga_pnl_monthly
+
+════════════════════════════════════════════════════════════════════
+NEW APP FEATURES (src/App.js — now ~10,750 lines)
+════════════════════════════════════════════════════════════════════
+
+  ── Robots (was: single Ari toggle → multi-robot workspace) ──────
+  Nav item label/icon: "Ari" / ✨  →  "Robots" / 🤖
+  RobotsView now has a selectable roster rail (desktop) / tab row
+  (mobile).  Three robots:
+    • Ari          — general / agent-facing  (finance_access: false)
+    • Davenport    — ROGA Business Unit Leader (finance_access: TRUE)
+    • Lindqvist    — Prism Product BUL       (finance_access: false)
+  Each robot keeps its own conversation thread (robot_conversations,
+  keyed by robot_id).  "View Robot Profile" overlay shows system
+  prompt, memories, focus, capabilities.
+
+  ── Ari proxy (was: direct browser call with no key → silently fail)
+  Both the admin Robots view and the agent-portal Ari now POST to
+  /functions/v1/ari-chat instead of calling api.anthropic.com directly.
+  Model: claude-haiku-4-5-20251001  max_tokens: 2000 (was 1200).
+
+  ── Davenport financial context ──────────────────────────────────
+  When finance_access=true, each message to Davenport appends a live
+  financial snapshot pulled from the Supabase client (anon key, RLS
+  must allow admin reads on these tables):
+    • brokerage_performance_yearly  — annual P&L, all years
+    • roga_financials (1500 most recent rows) — the master ledger;
+      aggregated client-side into a monthly P&L by YYYY-MM + last
+      300 individual transaction lines (date, account, kind, vendor,
+      amount, category)
+    • agent_performance_lifetime (top 10) — top producers
+  Finance context is CONFIDENTIAL — Davenport's prompt instructs him
+  never to share it with agents.  Ari + Lindqvist explicitly decline
+  company-finance questions.
+
+  ── Chat markdown renderer (was: raw markdown / asterisks) ───────
+  New functions: mdInline(), parseMarkdown(), MarkdownMessage()
+  Renders: headings (gold bar + SERIF), bold/italic, color-coded
+  money (negative = red, positive = green), animated gold dividers,
+  styled lists (gold dots / numbered), blockquotes, code blocks.
+  Tables: 2-col tables with ≤8 rows render as KPI tile grids;
+  wider/longer tables render as styled HTML tables with gold headers.
+  Bot message bubble: no more white-space:pre-wrap (which was
+  printing raw markdown as text).
+
+  ── Document export bar (MsgDocBar) ─────────────────────────────
+  Appears under each assistant message.  Buttons:
+    📄 PDF    — jsPDF + jspdf-autotable (cdnjs, lazy-loaded)
+    🎞️ Slides — PptxGenJS  (cdnjs, lazy-loaded)
+    📊 Excel  — SheetJS xlsx (cdnjs, lazy-loaded; only if message
+                has a markdown table)
+    📋 Copy   — plain text to clipboard
+  Davenport's prompt tells him to structure reports with ## headings
+  + tables so these exports produce useful deliverables.  The "Use
+  the Export buttons" nag was removed from his instructions.
+
+  ── Quo in Systems ───────────────────────────────────────────────
+  The Systems side rail now has a Quo item with an expandable
+  submenu (▸ arrow, blue accent, indented sub-list):
+    Overview · Calls · Texts · Transcripts · Phone numbers
+  QuoDashboard renders per sub-view: KPI tiles, 14-day animated bar
+  charts, horizontal bar charts (by line, top contacts), Plan &
+  billing card (~$20/seat estimate), Recommendations, recent feed.
+  Verified live: 2 phone lines, 2 team members.
+
+  ── Design section (new nav item — Platform Admin only) ──────────
+  Nav: 🎨 Design, in Admin group, platformOnly:true.
+  Four sub-pages (left rail on desktop, chips on mobile):
+    🧠 Memory     — robot_memories per robot (tabbed) +
+                    bookkeeping_memories patterns (confidence dots)
+    ✨ Soul        — org_soul fields (editable: persona, principles,
+                    categorization_guidelines) + each robot's
+                    system_prompt (read-only view, tabs per robot)
+    🎨 Style Guide — editable markdown doc from org_design_docs
+                    (doc_type='style_guide'); pre-seeded with brand
+                    voice, colors, do/don't, comms guidelines
+    ⚡ Skills      — editable markdown doc from org_design_docs
+                    (doc_type='skills'); pre-seeded with per-robot
+                    capabilities and access boundaries
+
+  ── Self-heal for stale cache ────────────────────────────────────
+  public/index.html + build/404.html now include an inline script:
+  if the browser loads a stale cached index.html that references a
+  deleted bundle (404 on the JS), it auto-reloads once (guarded by
+  sessionStorage to prevent loops).  Clears the "blank page" failure
+  users see right after a deploy.
+
+════════════════════════════════════════════════════════════════════
+NOTEPAD ENTRIES ADDED
+════════════════════════════════════════════════════════════════════
+
+  🛠️ Session Log — June 16, 2026 (AI + Quo)
+    id: 85621967-b282-43cd-b4d0-0070525b4256 · pinned
+
+  📱 App Store Distribution — iOS + Android Plan
+    id: (see team_notes) · pinned
+    Covers: Capacitor wrapper, Apple $99/yr + D-U-N-S, Google Play
+    $25, native features needed (push notifications, biometric login,
+    deep links, offline shell, native share), per-platform steps,
+    brand assets needed, open questions for Javier.
+
+════════════════════════════════════════════════════════════════════
+CURRENT LIVE STATE (as of end of June 16 session)
+════════════════════════════════════════════════════════════════════
+
+  Live URL:    https://app.winwithone.com
+  Live bundle: main.0319139c.js
+  gh-pages branch CNAME: app.winwithone.com  ✓
+  Supabase edge functions deployed: ari-chat, systems
+
+  Latest git commits (main branch):
+    c329602  Fix: remove duplicate brace; Davenport reads roga_financials directly
+    bdd9651  (bad deploy — do not reference; superseded by c329602)
+    43644bc  Fix: populate 2026 monthly P&L into monthly_cashflow_trends
+    cd59d8f  Design nav: Memory/Soul/Style Guide/Skills sub-pages; ...
+    c618b19  Robots chat: elite markdown renderer — KPI tiles, ...
+    4bcf88c  Fix: self-heal stale-cache blank screen
+    cdf33ca  Robots: finance access for ROGA BUL (Davenport) only
+    d788a9b  Quo console: expandable colored Systems submenu; ...
+
+════════════════════════════════════════════════════════════════════
+OPEN ITEMS / KNOWN STATE GOING INTO NEXT SESSION
+════════════════════════════════════════════════════════════════════
+
+  1. Robots tool-actions — Davenport can discuss and analyze but
+     cannot yet CREATE tasks, UPDATE deals, or SAVE drafts inside
+     Prism via chat.  This requires wiring Anthropic tool_use calls
+     against Prism's Supabase tables through a server-side action.
+
+  2. App Store — Capacitor project not yet initialized in the repo.
+     See the 📱 notepad entry for the full step-by-step plan.
+
+  3. roga_statements / roga_transfers — only go through Dec 2025.
+     No 2026 bank statements have been uploaded yet (the line-item
+     data IS in roga_financials, but the PDF-statement summaries in
+     roga_statements stop at Dec 2025).
+
+  4. Alex Khoi's password — still "password"; should be changed.
+
+  5. SendGrid / winwithone.com branding — sender is still
+     @thesuarezcapital.com pending DNS validation of winwithone.com
+     (3 CNAME records, id 31370822 — see June 14 handoff §12).
+
+  6. agent_portal_access table — still legacy/empty; safe to drop
+     once confirmed no external reader.
+
+════════════════════════════════════════════════════════════════════
+REMINDERS FOR THE NEXT CLAUDE (ADDITIONS TO JUNE 14 LIST)
+════════════════════════════════════════════════════════════════════
+
+  13. ALWAYS run `node scripts/guard-deploy.js` BEFORE gh-pages push.
+      Never pipe `npm run build` through grep — it swallows exit codes.
+  14. roga_financials IS the master ledger.  Use it directly; do not
+      stitch together roga_statements + roga_transfers +
+      monthly_cashflow_trends when the answer is one table.
+  15. monthly_cashflow_trends PK is now (org_id, month, tax_year) —
+      upserts must include tax_year in the conflict clause.
+  16. Davenport's finance context loads 1500 rows from roga_financials
+      client-side; if row count grows past ~3000 use fetchAllRows().
+  17. Design sub-pages (Memory/Soul/Style Guide/Skills) are platform-
+      only — visible only to javier@thesuarezcapital.com.
+  18. The Robots model is claude-haiku-4-5-20251001, max_tokens 2000.
+      One-line change per surface to switch back to Sonnet.
+
+════════════════════════════════════════════════════════════════════
+END OF DELTA — June 16, 2026
+════════════════════════════════════════════════════════════════════
