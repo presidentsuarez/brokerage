@@ -5813,80 +5813,64 @@ function RobotsView({ user, deals, contacts, tasks }) {
   };
 
   const loadFinanceContext = async () => {
-    const fmt = (n)=> (Number(n)||0).toLocaleString("en-US",{maximumFractionDigits:0});
+    const fmt = (n) => (Number(n)||0).toLocaleString("en-US",{maximumFractionDigits:0});
     const parts = [];
+
+    // 1. Annual P&L — multi-year snapshot
     try {
       const { data:perf } = await supabase.from("brokerage_performance_yearly")
         .select("tax_year,gci,net_office,deals,volume").eq("org_id",ORG_ID).order("tax_year");
-      if(perf?.length) parts.push("BROKERAGE P&L BY YEAR:\n"+perf.map(p=>`${p.tax_year}: GCI $${fmt(p.gci)}, net office $${fmt(p.net_office)}, ${p.deals} deals, volume $${fmt(p.volume)}`).join("\n"));
+      if(perf?.length) parts.push(
+        "ANNUAL BROKERAGE P&L:\n"+
+        perf.map(p=>`${p.tax_year}: GCI $${fmt(p.gci)}, net office $${fmt(p.net_office)}, ${p.deals} deals, volume $${fmt(p.volume)}`).join("\n")
+      );
     } catch(e){}
+
+    // 2. Full transaction ledger from roga_financials (the master ledger)
+    //    Pull the 1500 most recent; build monthly summary + provide line items.
     try {
-      const { data:cf } = await supabase.from("monthly_cashflow_trends")
-        .select("month,income,expenses,net,avg_deal_size,tax_year").eq("org_id",ORG_ID)
-        .order("tax_year",{ascending:true}).order("month",{ascending:true});
-      if(cf?.length){
-        const byYear={};
-        cf.forEach(m=>{ const y=m.tax_year||"?"; (byYear[y]=byYear[y]||[]).push(m); });
-        const lines=Object.entries(byYear).map(([yr,months])=>
-          `${yr}:\n`+months.map(m=>`  ${m.month}: income $${fmt(m.income)}, expenses $${fmt(m.expenses)}, net $${fmt(m.net)}`).join("\n")
+      const { data:ledger } = await supabase.from("roga_financials")
+        .select("txn_date,account,kind,vendor,description,amount,category")
+        .eq("org_id",ORG_ID).order("txn_date",{ascending:false}).limit(1500);
+      if(ledger?.length){
+        // Monthly P&L grouped by YYYY-MM
+        const byYM = {};
+        ledger.forEach(t => {
+          const ym = t.txn_date?.slice(0,7); if(!ym) return;
+          if(!byYM[ym]) byYM[ym] = {inc:0,exp:0};
+          const a = Number(t.amount)||0;
+          if(t.kind==="income")  byYM[ym].inc += a;
+          if(t.kind==="expense") byYM[ym].exp += a;
+        });
+        const monthly = Object.keys(byYM).sort().map(ym => {
+          const {inc,exp} = byYM[ym]; const net = inc+exp;
+          return `${ym}: income $${fmt(inc)}, expenses $${fmt(exp)}, net ${net>=0?"+":""}$${fmt(net)}`;
+        });
+        parts.push("MONTHLY P&L (from ledger):\n"+monthly.join("\n"));
+
+        // Individual transactions — last 300 line items
+        const lines = ledger.slice(0,300).map(t =>
+          `${t.txn_date} [acct ${t.account}] ${(t.kind||"").toUpperCase()} `+
+          `${Number(t.amount)>=0?"+":""}$${Math.abs(Number(t.amount)||0).toFixed(2)} — `+
+          `${t.vendor||t.description||""} (${t.category||""})`
         );
-        parts.push("MONTHLY CASH FLOW BY YEAR:\n"+lines.join("\n"));
+        parts.push(`TRANSACTION LEDGER — last ${Math.min(ledger.length,300)} entries (${ledger.length} loaded of all time):\n`+lines.join("\n"));
       }
     } catch(e){}
-    try {
-      const { data:fin2026 } = await supabase.from("roga_financials")
-        .select("txn_date,account,acct_type,vendor,description,amount,kind,category,subcategory")
-        .eq("org_id",ORG_ID).gte("txn_date","2026-01-01")
-        .order("txn_date",{ascending:false}).limit(200);
-      if(fin2026?.length){
-        const fmt2=(n)=>(Number(n)||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
-        const lines=fin2026.map(t=>`${t.txn_date} [${t.account}/${t.acct_type}] ${t.kind.toUpperCase()} $${fmt2(t.amount)} — ${t.vendor||t.description||""} (${t.category||""})`);
-        parts.push(`2026 LEDGER — LINE-BY-LINE (${fin2026.length} transactions):\n`+lines.join("\n"));
-      }
-    } catch(e){}
-    try {
-      const { data:exp } = await supabase.from("expenses")
-        .select("category_name,amount,txn_date").eq("org_id",ORG_ID).order("txn_date",{ascending:false}).limit(1000);
-      if(exp?.length){
-        const byCat={}; let total=0;
-        exp.forEach(e=>{ const a=Number(e.amount)||0; total+=a; const k=e.category_name||"Uncategorized"; byCat[k]=(byCat[k]||0)+a; });
-        const top=Object.entries(byCat).sort((a,b)=>b[1]-a[1]).slice(0,10);
-        parts.push(`OPERATING EXPENSES (most recent ${exp.length} transactions, total $${fmt(total)}) — top categories:\n`+top.map(([c,a])=>`${c}: $${fmt(a)}`).join("\n"));
-      }
-    } catch(e){}
+
+    // 3. Top agents by lifetime GCI
     try {
       const { data:ag } = await supabase.from("agent_performance_lifetime")
-        .select("full_name,total_deals,total_gci,total_volume").eq("org_id",ORG_ID).order("total_gci",{ascending:false}).limit(10);
-      if(ag?.length) parts.push("TOP PRODUCERS (lifetime GCI):\n"+ag.map(a=>`${a.full_name}: $${fmt(a.total_gci)} GCI, ${a.total_deals} deals, $${fmt(a.total_volume)} volume`).join("\n"));
+        .select("full_name,total_deals,total_gci").eq("org_id",ORG_ID)
+        .order("total_gci",{ascending:false}).limit(10);
+      if(ag?.length) parts.push(
+        "TOP PRODUCERS:\n"+ag.map(a=>`${a.full_name}: $${fmt(a.total_gci)} GCI, ${a.total_deals} deals`).join("\n")
+      );
     } catch(e){}
-    try {
-      const { data:acc } = await supabase.from("roga_accounts").select("name,type,institution,last4").eq("org_id",ORG_ID);
-      if(acc?.length) parts.push("BANK ACCOUNTS:\n"+acc.map(a=>`${a.name} (${a.type}${a.institution?`, ${a.institution}`:""}${a.last4?`, ••${a.last4}`:""})`).join("\n"));
-    } catch(e){}
-    try {
-      const { data:stmts } = await supabase.from("roga_statements")
-        .select("account_last4,period_start,period_end,begin_balance,end_balance,deposits,withdrawals").eq("org_id",ORG_ID).order("period_start",{ascending:false}).limit(18);
-      if(stmts?.length){
-        const labels={"5286":"Chase Checking 5286 (Commissions)","9655":"Chase Checking 9655 (Operating)","7759":"Chase CC 7759 (Credit Card)"};
-        parts.push("BANK STATEMENTS (monthly, by account):\n"+stmts.map(s=>`${labels[s.account_last4]||("Acct •••"+s.account_last4)} ${s.period_start?.slice(0,7)}: begin $${fmt(s.begin_balance)}, end $${fmt(s.end_balance)}, deposits $${fmt(s.deposits)}, withdrawals $${fmt(s.withdrawals)}`).join("\n"));
-      }
-    } catch(e){}
-    try {
-      const { data:xfr } = await supabase.from("roga_transfers")
-        .select("txn_date,account_last4,direction,counterparty,amount,type,description").eq("org_id",ORG_ID).order("txn_date",{ascending:false}).limit(120);
-      if(xfr?.length){
-        const labels={"5286":"5286","9655":"9655","7759":"7759"};
-        const by={};
-        xfr.forEach(t=>{ const k=labels[t.account_last4]||t.account_last4; (by[k]=by[k]||[]).push(`${t.txn_date} ${t.direction} $${fmt(t.amount)} — ${t.counterparty||t.description||""}`); });
-        parts.push("BANK TRANSACTIONS (line-by-line, last 120, by account):\n"+Object.entries(by).map(([k,v])=>`Acct ${k}:\n`+v.slice(0,40).join("\n")).join("\n\n"));
-      }
-    } catch(e){}
-    try {
-      const { data:recon } = await supabase.from("bank_deal_reconciliation").select("section,measure,deal_side,bank_side,variance,note").eq("org_id",ORG_ID);
-      if(recon?.length) parts.push("BANK vs DEAL RECONCILIATION:\n"+recon.map(r=>`${r.measure}: deal side $${fmt(r.deal_side)}, bank side $${fmt(r.bank_side)}, variance $${fmt(r.variance)}${r.note?" — "+r.note:""}`).join("\n"));
-    } catch(e){}
+
     if(!parts.length) return "";
     return "\n\nFINANCIAL CONTEXT (CONFIDENTIAL — ownership only; never share with agents):\n"+parts.join("\n\n");
+  };
   };
 
   useEffect(()=>{
