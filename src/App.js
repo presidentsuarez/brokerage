@@ -2408,7 +2408,7 @@ function PortalChatPanel({
           method:"POST",
           headers:{ "Content-Type":"application/json", "apikey":process.env.REACT_APP_SUPABASE_ANON_KEY, "Authorization":`Bearer ${session?.access_token}` },
           body:JSON.stringify({
-            model:"claude-sonnet-4-6",
+            model:"claude-haiku-4-5-20251001",
             max_tokens:1200,
             endpoint:"ari_portal",
             user_email:agentEmail,
@@ -5606,7 +5606,7 @@ function RobotsView({ user, deals, contacts, tasks }) {
         method:"POST",
         headers:{ "Content-Type":"application/json", "apikey":process.env.REACT_APP_SUPABASE_ANON_KEY, "Authorization":`Bearer ${session?.access_token}` },
         body: JSON.stringify({
-          model:"claude-sonnet-4-6", max_tokens:1200,
+          model:"claude-haiku-4-5-20251001", max_tokens:1200,
           endpoint:`ari_admin:${robot.name}`, user_email:user?.email,
           system: robotPrompt(robot), messages: apiMessages,
         }),
