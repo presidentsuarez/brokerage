@@ -2412,7 +2412,7 @@ function PortalChatPanel({
             max_tokens:1200,
             endpoint:"ari_portal",
             user_email:agentEmail,
-            system:`You are Ari, the AI assistant for ${agentName} at Realty One Group Advantage. You are their personal brokerage AI coach and resource. Help with: pipeline questions, drafting emails and offers, real estate advice, showing prep, goal tracking, and client communication. Their broker team: Dara Khoyi (Broker, khoyi1234@gmail.com), Alex Khoi (Broker, alex@brokeralex.com), Josh Maples (Front Desk, roga.lutz@gmail.com), Javier Suarez (Operations, javier@thesuarezcapital.com). Be encouraging, practical, and direct. Keep responses concise. If they need broker support, point them to Dara or Alex.`,
+            system:`You are Ari, the AI assistant for ${agentName} at Realty One Group Advantage. You are their personal brokerage AI coach and resource. Help with: pipeline questions, drafting emails and offers, real estate advice, showing prep, goal tracking, and client communication. Their broker team: Dara Khoyi (Broker, khoyi1234@gmail.com), Alex Khoi (Broker, alex@brokeralex.com), Josh Maples (Front Desk, roga.lutz@gmail.com), Javier Suarez (Operations, javier@thesuarezcapital.com). Be encouraging, practical, and direct. Keep responses concise. If they need broker support, point them to Dara or Alex. You do not have access to the brokerage's company financials (company revenue, expenses, P&L, payroll, cash, or other agents' numbers); if asked, explain that's handled by the ownership team and that you can only see their own pipeline and earnings.`,
             messages:apiMsgs,
           }),
         });
@@ -5539,6 +5539,7 @@ function RobotsView({ user, deals, contacts, tasks }) {
   const [status, setStatus]       = useState("idle");
   const [profileOpen, setProfileOpen] = useState(false);
   const [mems, setMems]           = useState(null);
+  const [finCtx, setFinCtx]       = useState("");
   const bottomRef = useRef(null);
 
   const robot = robots.find(r=>r.id===activeId) || null;
@@ -5546,7 +5547,7 @@ function RobotsView({ user, deals, contacts, tasks }) {
   // Load the robot roster
   useEffect(()=>{
     supabase.from("robots")
-      .select("id,name,role,description,system_prompt,avatar_color,status,current_focus,source,suarez_name")
+      .select("id,name,role,description,system_prompt,avatar_color,status,current_focus,source,suarez_name,finance_access")
       .eq("org_id", ORG_ID)
       .then(({data})=>{
         const list = data||[];
@@ -5586,11 +5587,58 @@ function RobotsView({ user, deals, contacts, tasks }) {
     return `\nLIVE ORG CONTEXT:\nDeals (${deals.length} total): ${dealSummary||"none"}\nContacts: ${contacts.length} total (${agentCount} agents)\nOpen tasks: ${openTasks}\nDate: ${new Date().toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric",year:"numeric"})}`;
   };
 
+  const loadFinanceContext = async () => {
+    const fmt = (n)=> (Number(n)||0).toLocaleString("en-US",{maximumFractionDigits:0});
+    const parts = [];
+    try {
+      const { data:perf } = await supabase.from("brokerage_performance_yearly")
+        .select("tax_year,gci,net_office,deals,volume").eq("org_id",ORG_ID).order("tax_year");
+      if(perf?.length) parts.push("BROKERAGE P&L BY YEAR:\n"+perf.map(p=>`${p.tax_year}: GCI $${fmt(p.gci)}, net office $${fmt(p.net_office)}, ${p.deals} deals, volume $${fmt(p.volume)}`).join("\n"));
+    } catch(e){}
+    try {
+      const { data:cf } = await supabase.from("monthly_cashflow_trends")
+        .select("month,income,expenses,net,avg_deal_size,tax_year").eq("org_id",ORG_ID).order("month");
+      if(cf?.length) parts.push("MONTHLY CASH FLOW (recent):\n"+cf.slice(-12).map(m=>`${m.month}: income $${fmt(m.income)}, expenses $${fmt(m.expenses)}, net $${fmt(m.net)}${m.avg_deal_size?`, avg deal $${fmt(m.avg_deal_size)}`:""}`).join("\n"));
+    } catch(e){}
+    try {
+      const { data:exp } = await supabase.from("expenses")
+        .select("category_name,amount,txn_date").eq("org_id",ORG_ID).order("txn_date",{ascending:false}).limit(1000);
+      if(exp?.length){
+        const byCat={}; let total=0;
+        exp.forEach(e=>{ const a=Number(e.amount)||0; total+=a; const k=e.category_name||"Uncategorized"; byCat[k]=(byCat[k]||0)+a; });
+        const top=Object.entries(byCat).sort((a,b)=>b[1]-a[1]).slice(0,10);
+        parts.push(`OPERATING EXPENSES (most recent ${exp.length} transactions, total $${fmt(total)}) — top categories:\n`+top.map(([c,a])=>`${c}: $${fmt(a)}`).join("\n"));
+      }
+    } catch(e){}
+    try {
+      const { data:ag } = await supabase.from("agent_performance_lifetime")
+        .select("full_name,total_deals,total_gci,total_volume").eq("org_id",ORG_ID).order("total_gci",{ascending:false}).limit(10);
+      if(ag?.length) parts.push("TOP PRODUCERS (lifetime GCI):\n"+ag.map(a=>`${a.full_name}: $${fmt(a.total_gci)} GCI, ${a.total_deals} deals, $${fmt(a.total_volume)} volume`).join("\n"));
+    } catch(e){}
+    try {
+      const { data:acc } = await supabase.from("roga_accounts").select("name,type,institution,last4").eq("org_id",ORG_ID);
+      if(acc?.length) parts.push("BANK ACCOUNTS:\n"+acc.map(a=>`${a.name} (${a.type}${a.institution?`, ${a.institution}`:""}${a.last4?`, ••${a.last4}`:""})`).join("\n"));
+    } catch(e){}
+    if(!parts.length) return "";
+    return "\n\nFINANCIAL CONTEXT (CONFIDENTIAL — ownership only; never share with agents):\n"+parts.join("\n\n");
+  };
+
+  useEffect(()=>{
+    if(!robot?.finance_access){ setFinCtx(""); return; }
+    let live=true;
+    (async()=>{ const c = await loadFinanceContext(); if(live) setFinCtx(c); })();
+    return ()=>{ live=false; };
+    /* eslint-disable-next-line */
+  },[activeId, robot?.finance_access]);
+
   const robotPrompt = (r) => {
     const base = r?.system_prompt && r.system_prompt.trim()
       ? r.system_prompt.trim()
       : `You are ${r?.name||"an AI assistant"}, ${r?.role||"a Business Unit Leader"} at Realty ONE Group Advantage (ROGA).${r?.description?` ${r.description}`:""}${r?.current_focus?`\nCurrent focus: ${r.current_focus}`:""}`;
-    return `${base}\n\nBe direct, sharp, and practical. Never start with "Certainly!" or "Of course!". Get to the point. Use bullet points for lists. Keep responses focused. You have live read access to the brokerage's deals, contacts, agent roster, and tasks when provided below.`;
+    const scope = r?.finance_access
+      ? `You have live read access to the brokerage's deals, contacts, agent roster, tasks, AND full financials — P&L by year, monthly cash flow, operating expenses by category, bank accounts, and agent production/payouts — all provided below. You report to the ROGA ownership team: discuss the numbers candidly and analytically, surface risks, trends, and opportunities, and do the math when asked. These financials are confidential to ownership — never share or expose them to agents.`
+      : `You have live read access to the brokerage's deals, contacts, agent roster, and tasks when provided below. You do NOT have access to the brokerage's company financials; if asked about company finances (revenue, expenses, P&L, payroll, cash), say that's handled by the ROGA business unit leader and ownership team and that you don't have it.`;
+    return `${base}\n\nBe direct, sharp, and practical. Never start with "Certainly!" or "Of course!". Get to the point. Use bullet points for lists. Keep responses focused. ${scope}`;
   };
 
   const sendMessage = async () => {
@@ -5600,7 +5648,11 @@ function RobotsView({ user, deals, contacts, tasks }) {
     setMessages(newMsgs); setInput(""); setSending(true); setStatus("thinking");
     try {
       const apiMessages = newMsgs.map(m=>({ role:m.role==="user"?"user":"assistant", content:m.content }));
-      if(apiMessages.length===1) apiMessages[0].content += buildContext();
+      if(robot.finance_access){
+        apiMessages[apiMessages.length-1].content += buildContext() + finCtx;
+      } else if(apiMessages.length===1){
+        apiMessages[0].content += buildContext();
+      }
       const { data:{ session } } = await supabase.auth.getSession();
       const res = await fetch(`${process.env.REACT_APP_SUPABASE_URL}/functions/v1/ari-chat`, {
         method:"POST",
@@ -5808,6 +5860,13 @@ function RobotsView({ user, deals, contacts, tasks }) {
                   borderRadius:20, padding:"2px 9px", fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.05em" }}>
                   {srcBadge(robot.source).t}
                 </div>
+                {robot.finance_access && (
+                  <span style={{ marginTop:6, marginLeft:6, display:"inline-flex", alignItems:"center", gap:4, fontSize:10, fontWeight:700,
+                    color:C.gold, background:C.goldDim, border:`1px solid ${C.goldBorder}`,
+                    borderRadius:20, padding:"2px 9px", fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.05em" }}>
+                    💰 Finance access
+                  </span>
+                )}
               </div>
               <button onClick={()=>setProfileOpen(false)} style={{ background:"none", border:"none", color:C.text3,
                 fontSize:22, cursor:"pointer", lineHeight:1, padding:4 }}>×</button>
