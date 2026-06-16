@@ -106,6 +106,7 @@ const NAV = [
   { id:"performance", label:"Performance", icon:"📈", adminOnly:true },
   { id:"systems",    label:"Systems",   icon:"🛰️", ownerOnly:true },
   { id:"robots",    label:"Robots",    icon:"🤖", platformOnly:true },
+  { id:"design",    label:"Design",    icon:"🎨", platformOnly:true },
   { id:"notepad",   label:"Notepad",   icon:"📝", platformOnly:true },
   { id:"settings",  label:"Settings",  icon:"⚙️", platformOnly:true },
 ];
@@ -116,7 +117,7 @@ const NAV_GROUPS = [
   { group:"people",     label:"People",      icon:"👥", items:["contacts","recruiting","applications"] },
   { group:"finance",    label:"Finance",     icon:"💰", items:["financials","performance"] },
   { group:"workspace",  label:"Workspace",   icon:"🗂️", items:["planning","calendar"] },
-  { group:"admin",      label:"Admin",       icon:"🛠️", items:["organization","systems","robots","notepad","settings"] },
+  { group:"admin",      label:"Admin",       icon:"🛠️", items:["organization","systems","robots","design","notepad","settings"] },
 ];
 const NAV_BY_ID = Object.fromEntries(NAV.map(n=>[n.id,n]));
 
@@ -5740,9 +5741,9 @@ function MsgDocBar({ text, accent=C.gold, who="Davenport" }){
   return (
     <div style={{ display:"flex",gap:7,marginTop:8,flexWrap:"wrap",alignItems:"center" }}>
       <span style={{ fontSize:9.5,fontWeight:700,color:C.text3,fontFamily:FONT,textTransform:"uppercase",letterSpacing:"0.06em",marginRight:2 }}>Export</span>
-      <Btn label="\uD83D\uDCC4 PDF" kind="pdf" onClick={()=>run("pdf",()=>exportPDF(blocks,title))} />
-      <Btn label="\uD83D\uDCDF Slides" kind="pptx" onClick={()=>run("pptx",()=>exportPPTX(blocks,title))} />
-      {hasTable && <Btn label="\uD83D\uDCC8 Excel" kind="xlsx" onClick={()=>run("xlsx",()=>exportXLSX(blocks,title))} />}
+      <Btn label="📄 PDF" kind="pdf" onClick={()=>run("pdf",()=>exportPDF(blocks,title))} />
+      <Btn label="🎞️ Slides" kind="pptx" onClick={()=>run("pptx",()=>exportPPTX(blocks,title))} />
+      {hasTable && <Btn label="📊 Excel" kind="xlsx" onClick={()=>run("xlsx",()=>exportXLSX(blocks,title))} />}
       <button onClick={()=>{ try{navigator.clipboard.writeText(text); setCopied(true); setTimeout(()=>setCopied(false),1200);}catch(e){} }}
         style={{ display:"inline-flex",alignItems:"center",gap:5,padding:"5px 11px",borderRadius:8,border:`1px solid ${C.border2}`,background:C.surface2,color:copied?C.green:C.text2,fontSize:11,fontWeight:600,fontFamily:FONT,cursor:"pointer" }}>
         {copied?"\u2713 Copied":"\u29C9 Copy"}
@@ -5843,6 +5844,28 @@ function RobotsView({ user, deals, contacts, tasks }) {
       const { data:acc } = await supabase.from("roga_accounts").select("name,type,institution,last4").eq("org_id",ORG_ID);
       if(acc?.length) parts.push("BANK ACCOUNTS:\n"+acc.map(a=>`${a.name} (${a.type}${a.institution?`, ${a.institution}`:""}${a.last4?`, ••${a.last4}`:""})`).join("\n"));
     } catch(e){}
+    try {
+      const { data:stmts } = await supabase.from("roga_statements")
+        .select("account_last4,period_start,period_end,begin_balance,end_balance,deposits,withdrawals").eq("org_id",ORG_ID).order("period_start",{ascending:false}).limit(18);
+      if(stmts?.length){
+        const labels={"5286":"Chase Checking 5286 (Commissions)","9655":"Chase Checking 9655 (Operating)","7759":"Chase CC 7759 (Credit Card)"};
+        parts.push("BANK STATEMENTS (monthly, by account):\n"+stmts.map(s=>`${labels[s.account_last4]||("Acct •••"+s.account_last4)} ${s.period_start?.slice(0,7)}: begin $${fmt(s.begin_balance)}, end $${fmt(s.end_balance)}, deposits $${fmt(s.deposits)}, withdrawals $${fmt(s.withdrawals)}`).join("\n"));
+      }
+    } catch(e){}
+    try {
+      const { data:xfr } = await supabase.from("roga_transfers")
+        .select("txn_date,account_last4,direction,counterparty,amount,type,description").eq("org_id",ORG_ID).order("txn_date",{ascending:false}).limit(120);
+      if(xfr?.length){
+        const labels={"5286":"5286","9655":"9655","7759":"7759"};
+        const by={};
+        xfr.forEach(t=>{ const k=labels[t.account_last4]||t.account_last4; (by[k]=by[k]||[]).push(`${t.txn_date} ${t.direction} $${fmt(t.amount)} — ${t.counterparty||t.description||""}`); });
+        parts.push("BANK TRANSACTIONS (line-by-line, last 120, by account):\n"+Object.entries(by).map(([k,v])=>`Acct ${k}:\n`+v.slice(0,40).join("\n")).join("\n\n"));
+      }
+    } catch(e){}
+    try {
+      const { data:recon } = await supabase.from("bank_deal_reconciliation").select("section,measure,deal_side,bank_side,variance,note").eq("org_id",ORG_ID);
+      if(recon?.length) parts.push("BANK vs DEAL RECONCILIATION:\n"+recon.map(r=>`${r.measure}: deal side $${fmt(r.deal_side)}, bank side $${fmt(r.bank_side)}, variance $${fmt(r.variance)}${r.note?" — "+r.note:""}`).join("\n"));
+    } catch(e){}
     if(!parts.length) return "";
     return "\n\nFINANCIAL CONTEXT (CONFIDENTIAL — ownership only; never share with agents):\n"+parts.join("\n\n");
   };
@@ -5862,7 +5885,7 @@ function RobotsView({ user, deals, contacts, tasks }) {
     const scope = r?.finance_access
       ? `You have live read access to the brokerage's deals, contacts, agent roster, tasks, AND full financials — P&L by year, monthly cash flow, operating expenses by category, bank accounts, and agent production/payouts — all provided below. You report to the ROGA ownership team: discuss the numbers candidly and analytically, surface risks, trends, and opportunities, and do the math when asked. These financials are confidential to ownership — never share or expose them to agents.`
       : `You have live read access to the brokerage's deals, contacts, agent roster, and tasks when provided below. You do NOT have access to the brokerage's company financials; if asked about company finances (revenue, expenses, P&L, payroll, cash), say that's handled by the ROGA business unit leader and ownership team and that you don't have it.`;
-    return `${base}\n\nBe direct, sharp, and practical. Never start with "Certainly!" or "Of course!". Get to the point. Use bullet points for lists. Keep responses focused. ${scope}\n\nFORMATTING: Write in clean Markdown — use ## headings to organize, GFM tables (| Column | Column |) for any numeric or comparative data, bold for key figures, and bullet lists. When the user asks you to create a document, report, deck, spreadsheet, table, or PDF, produce well-structured Markdown with clear ## section headings and tables; the user can then download your message as a PDF, PowerPoint, or Excel file using the Export buttons beneath it (so build the content to look good in those formats).`;
+    return `${base}\n\nBe direct, sharp, and practical. Never start with "Certainly!" or "Of course!". Get to the point. Use bullet points for lists. Keep responses focused. ${scope}\n\nFORMATTING: Write in clean Markdown — use ## headings to organize, GFM tables (| Column | Column |) for any numeric or comparative data, bold for key figures, and bullet lists. When the user asks you to build a report, deck, spreadsheet, table, or PDF, produce well-structured Markdown with ## sections and tables — the system will handle the rest.`;
   };
 
   const sendMessage = async () => {
@@ -9491,6 +9514,243 @@ function SystemsView({ user }) {
   );
 }
 
+function DesignView({ user }) {
+  const isMobile = useIsMobile();
+  const [sub, setSub] = useState("memory");
+  const SUBS = [
+    { k:"memory",     label:"Memory",      icon:"🧠", desc:"What the robots know" },
+    { k:"soul",       label:"Soul",        icon:"✨", desc:"Org identity & principles" },
+    { k:"styleguide", label:"Style Guide", icon:"🎨", desc:"Brand voice & guidelines" },
+    { k:"skills",     label:"Skills",      icon:"⚡", desc:"What each robot can do" },
+  ];
+  const GOLD = C.gold;
+
+  return (
+    <div style={{ display:isMobile?"block":"flex", gap:0, minHeight:"100%", padding:0 }}>
+      {/* ── Side rail ── */}
+      {isMobile ? (
+        <div style={{ display:"flex", gap:8, overflowX:"auto", padding:"12px 14px 0" }}>
+          {SUBS.map(s=>{ const a=sub===s.k; return (
+            <button key={s.k} onClick={()=>setSub(s.k)} style={{ flexShrink:0, display:"flex", alignItems:"center", gap:6, padding:"7px 14px", borderRadius:20, cursor:"pointer", fontFamily:FONT, fontSize:13, fontWeight:a?700:500, border:`1px solid ${a?GOLD+"88":C.border2}`, background:a?C.goldDim:"transparent", color:a?GOLD:C.text2, whiteSpace:"nowrap" }}>
+              {s.icon} {s.label}
+            </button>); })}
+        </div>
+      ) : (
+        <div style={{ width:210, flexShrink:0, borderRight:`1px solid ${C.border}`, padding:"20px 12px", minHeight:"100%" }}>
+          <div style={{ fontSize:10, fontWeight:800, color:C.text3, letterSpacing:"0.1em", textTransform:"uppercase", fontFamily:FONT, padding:"0 8px 12px" }}>Design</div>
+          {SUBS.map(s=>{ const a=sub===s.k; return (
+            <button key={s.k} onClick={()=>setSub(s.k)} style={{ width:"100%", display:"flex", alignItems:"center", gap:10, padding:"10px 12px", marginBottom:3, borderRadius:10, cursor:"pointer", textAlign:"left", fontFamily:FONT,
+              background:a?`linear-gradient(135deg,${GOLD}22,${GOLD}0a)`:C.surface2,
+              border:`1px solid ${a?GOLD+"66":C.border}`,
+              color:a?GOLD:C.text2, fontWeight:a?700:500, fontSize:13.5 }}
+              onMouseEnter={e=>{ if(!a){ e.currentTarget.style.background=C.surface2; e.currentTarget.style.borderColor=C.border2; } }}
+              onMouseLeave={e=>{ if(!a){ e.currentTarget.style.background="transparent"; e.currentTarget.style.borderColor=C.border; } }}>
+              <span style={{ fontSize:16 }}>{s.icon}</span>
+              <span style={{ display:"flex", flexDirection:"column", lineHeight:1.25 }}>
+                <span>{s.label}</span>
+                <span style={{ fontSize:10, color:a?GOLD+"99":C.text3, fontWeight:400 }}>{s.desc}</span>
+              </span>
+            </button>); })}
+        </div>
+      )}
+
+      {/* ── Right panel ── */}
+      <div style={{ flex:1, minWidth:0, padding:isMobile?"14px":"24px 28px", overflowY:"auto" }}>
+        {sub==="memory"     && <DesignMemoryPanel user={user} />}
+        {sub==="soul"       && <DesignSoulPanel   user={user} />}
+        {sub==="styleguide" && <DesignDocPanel    user={user} docType="style_guide" label="Style Guide" icon="🎨" />}
+        {sub==="skills"     && <DesignDocPanel    user={user} docType="skills"      label="Skills"      icon="⚡" />}
+      </div>
+    </div>
+  );
+}
+
+function DesignMemoryPanel({ user }) {
+  const [robots, setRobots]   = useState([]);
+  const [rmems, setRmems]     = useState([]);
+  const [bkmems, setBkmems]   = useState([]);
+  const [tab, setTab]         = useState("robots");
+  const [loading, setLoading] = useState(true);
+  useEffect(()=>{
+    (async()=>{
+      setLoading(true);
+      const [{ data:rb }, { data:rm }, { data:bk }] = await Promise.all([
+        supabase.from("robots").select("id,name,avatar_color,role").eq("org_id",ORG_ID).order("name"),
+        supabase.from("robot_memories").select("*").eq("org_id",ORG_ID).order("updated_at",{ascending:false}),
+        supabase.from("bookkeeping_memories").select("*").eq("org_id",ORG_ID).eq("active",true).order("times_applied",{ascending:false}).limit(60),
+      ]);
+      setRobots(rb||[]); setRmems(rm||[]); setBkmems(bk||[]); setLoading(false);
+    })();
+  },[]);
+  const TABS=[{k:"robots",label:"Robot memories"},{k:"bookkeeping",label:"Bookkeeping patterns"}];
+  return (
+    <div style={{ maxWidth:820 }}>
+      <div style={{ fontSize:22, fontWeight:800, color:C.text, fontFamily:SERIF, marginBottom:4 }}>🧠 Memory</div>
+      <div style={{ fontSize:13, color:C.text3, fontFamily:FONT, marginBottom:18 }}>What the system has learned and remembers about your org.</div>
+      <div style={{ display:"flex", gap:8, marginBottom:20 }}>
+        {TABS.map(t=>{ const a=tab===t.k; return (
+          <button key={t.k} onClick={()=>setTab(t.k)} style={{ padding:"7px 16px", borderRadius:20, border:`1px solid ${a?C.goldBorder:C.border2}`, background:a?C.goldDim:"transparent", color:a?C.gold:C.text2, fontSize:12.5, fontWeight:a?700:500, fontFamily:FONT, cursor:"pointer" }}>{t.label}</button>
+        );})}
+      </div>
+      {loading ? <div style={{ color:C.text3, fontFamily:FONT, fontSize:13 }}>Loading…</div> : tab==="robots" ? (
+        robots.length===0 ? <div style={{ color:C.text3, fontFamily:FONT }}>No robots found.</div> :
+        robots.map(r=>{
+          const mems = rmems.filter(m=>m.robot_id===r.id);
+          const c = r.avatar_color||C.gold;
+          return (
+            <div key={r.id} style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:"16px 18px", marginBottom:14 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:10 }}>
+                <div style={{ width:34, height:34, borderRadius:9, background:c+"22", border:`1px solid ${c}55`, display:"flex", alignItems:"center", justifyContent:"center", fontWeight:800, fontSize:15, color:c, fontFamily:SERIF }}>{r.name.charAt(0)}</div>
+                <div>
+                  <div style={{ fontSize:14, fontWeight:700, color:C.text, fontFamily:FONT }}>{r.name}</div>
+                  <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>{r.role}</div>
+                </div>
+                <span style={{ marginLeft:"auto", fontSize:11, color:C.text3, fontFamily:FONT }}>{mems.length} memor{mems.length===1?"y":"ies"}</span>
+              </div>
+              {mems.length===0 ? <div style={{ fontSize:12.5, color:C.text3, fontFamily:FONT }}>No stored memories yet — {r.name} learns from conversation context each session.</div> :
+                mems.map((m,i)=>(
+                  <div key={m.id||i} style={{ padding:"10px 12px", background:C.surface2, borderRadius:9, marginBottom:6, border:`1px solid ${C.border}` }}>
+                    <div style={{ fontSize:10, fontWeight:700, color:C.text3, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:4 }}>{m.memory_type||"memory"}</div>
+                    <div style={{ fontSize:13, color:C.text2, fontFamily:FONT, lineHeight:1.55, whiteSpace:"pre-wrap" }}>{m.content}</div>
+                    <div style={{ fontSize:10, color:C.text3, fontFamily:FONT, marginTop:6 }}>{m.updated_at?new Date(m.updated_at).toLocaleString():""}</div>
+                  </div>
+                ))}
+            </div>
+          );
+        })
+      ) : (
+        <div>
+          <div style={{ fontSize:13, color:C.text3, fontFamily:FONT, marginBottom:12 }}>{bkmems.length} active categorization rules learned from your transactions.</div>
+          <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden" }}>
+            {bkmems.slice(0,40).map((m,i)=>(
+              <div key={m.id||i} style={{ display:"flex", alignItems:"center", gap:12, padding:"10px 14px", borderTop:i?`1px solid ${C.border}`:"none" }}>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ fontSize:13, color:C.text, fontFamily:FONT, fontWeight:600 }}>{m.pattern}</div>
+                  {m.note && <div style={{ fontSize:11.5, color:C.text3, fontFamily:FONT, marginTop:1 }}>{m.note}</div>}
+                </div>
+                <div style={{ flexShrink:0, fontSize:11.5, color:C.text2, fontFamily:FONT, textAlign:"right" }}>
+                  <div style={{ fontWeight:600 }}>{m.category_name||"—"}</div>
+                  <div style={{ fontSize:10, color:C.text3 }}>{m.times_applied||0}× applied</div>
+                </div>
+                <div style={{ width:8, height:8, borderRadius:8, background:m.confidence>=0.9?C.green:m.confidence>=0.7?C.amber:C.red, flexShrink:0 }} />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DesignSoulPanel({ user }) {
+  const [soul, setSoul]   = useState(null);
+  const [robots, setRobots] = useState([]);
+  const [selRobot, setSelRobot] = useState(null);
+  const [editSoul, setEditSoul] = useState(false);
+  const [soulForm, setSoulForm] = useState({});
+  const [saving, setSaving]     = useState(false);
+  const [msg, setMsg]           = useState("");
+  useEffect(()=>{
+    supabase.from("org_soul").select("*").eq("org_id",ORG_ID).maybeSingle().then(({data})=>{ setSoul(data||{}); setSoulForm(data||{}); });
+    supabase.from("robots").select("id,name,avatar_color,role,system_prompt,source").eq("org_id",ORG_ID).order("name").then(({data})=>{ setRobots(data||[]); if(data&&data[0]) setSelRobot(data[0].id); });
+  },[]);
+  const saveSoul = async () => {
+    setSaving(true);
+    await supabase.from("org_soul").upsert({...soulForm, org_id:ORG_ID, updated_by:user?.email, updated_at:new Date().toISOString()});
+    setSoul(soulForm); setEditSoul(false); setSaving(false); setMsg("Saved ✓");
+    setTimeout(()=>setMsg(""),2000);
+  };
+  const robot = robots.find(r=>r.id===selRobot);
+  const GOLD = C.gold;
+  return (
+    <div style={{ maxWidth:820 }}>
+      <div style={{ fontSize:22, fontWeight:800, color:C.text, fontFamily:SERIF, marginBottom:4 }}>✨ Soul</div>
+      <div style={{ fontSize:13, color:C.text3, fontFamily:FONT, marginBottom:24 }}>The core identity, principles, and personality of ROGA and its robots.</div>
+
+      {/* Org soul */}
+      <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:"18px 20px", marginBottom:20 }}>
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12 }}>
+          <div style={{ fontSize:15, fontWeight:800, color:C.text, fontFamily:SERIF }}>🏛️ Organization Soul</div>
+          {!editSoul ? <GoldButton small outline onClick={()=>setEditSoul(true)}>Edit</GoldButton>
+            : <div style={{ display:"flex", gap:8 }}><GoldButton small onClick={saveSoul} disabled={saving}>{saving?"Saving…":"Save"}</GoldButton><GoldButton small outline onClick={()=>{ setEditSoul(false); setSoulForm(soul||{}); }}>Cancel</GoldButton></div>}
+        </div>
+        {msg && <div style={{ fontSize:12, color:C.green, fontFamily:FONT, marginBottom:8 }}>{msg}</div>}
+        {["persona","principles","categorization_guidelines"].map(field=>(
+          <div key={field} style={{ marginBottom:14 }}>
+            <div style={{ fontSize:10, fontWeight:800, color:C.text3, textTransform:"uppercase", letterSpacing:"0.07em", fontFamily:FONT, marginBottom:5 }}>{field.replace(/_/g," ")}</div>
+            {editSoul
+              ? <textarea value={soulForm[field]||""} onChange={e=>setSoulForm(f=>({...f,[field]:e.target.value}))} rows={4}
+                  style={{ width:"100%", background:C.surface2, border:`1px solid ${C.border}`, borderRadius:8, padding:"10px 12px", color:C.text, fontFamily:FONT, fontSize:13, lineHeight:1.6, resize:"vertical" }} />
+              : <div style={{ fontSize:13, color:C.text2, fontFamily:FONT, lineHeight:1.65, whiteSpace:"pre-wrap", padding:"8px 0" }}>{soul?.[field]||<span style={{color:C.text3,fontStyle:"italic"}}>Not set</span>}</div>}
+          </div>
+        ))}
+      </div>
+
+      {/* Robot soul / system prompts */}
+      <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:"18px 20px" }}>
+        <div style={{ fontSize:15, fontWeight:800, color:C.text, fontFamily:SERIF, marginBottom:14 }}>🤖 Robot Instructions</div>
+        <div style={{ display:"flex", gap:8, marginBottom:16, flexWrap:"wrap" }}>
+          {robots.map(r=>{ const a=selRobot===r.id; const c=r.avatar_color||GOLD; return (
+            <button key={r.id} onClick={()=>setSelRobot(r.id)} style={{ padding:"6px 14px", borderRadius:20, border:`1px solid ${a?c+"88":C.border2}`, background:a?c+"22":"transparent", color:a?c:C.text2, fontSize:12.5, fontWeight:a?700:500, fontFamily:FONT, cursor:"pointer" }}>{r.name}</button>
+          );})}
+        </div>
+        {robot && (
+          <div>
+            <div style={{ fontSize:11, color:C.text3, fontFamily:FONT, marginBottom:6 }}>{robot.role} · <span style={{ textTransform:"uppercase", letterSpacing:"0.05em" }}>{robot.source}</span></div>
+            <pre style={{ background:C.surface2, border:`1px solid ${C.border}`, borderRadius:10, padding:"14px 16px", fontFamily:MONO, fontSize:11.5, color:C.text2, lineHeight:1.6, overflowX:"auto", whiteSpace:"pre-wrap", wordBreak:"break-word", maxHeight:360, overflowY:"auto" }}>{robot.system_prompt||"(no system prompt stored — using default role description)"}</pre>
+            <div style={{ fontSize:11, color:C.text3, fontFamily:FONT, marginTop:8 }}>To edit a robot's soul, go to Robots → select robot → View Profile → Instructions. Changes go live immediately on next message.</div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function DesignDocPanel({ user, docType, label, icon }) {
+  const [content, setContent] = useState(null);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft]     = useState("");
+  const [saving, setSaving]   = useState(false);
+  const [msg, setMsg]         = useState("");
+  useEffect(()=>{
+    supabase.from("org_design_docs").select("content,updated_by,updated_at").eq("org_id",ORG_ID).eq("doc_type",docType).maybeSingle()
+      .then(({data})=>{ setContent(data?.content||""); });
+  },[docType]);
+  const save = async () => {
+    setSaving(true);
+    await supabase.from("org_design_docs").upsert({ org_id:ORG_ID, doc_type:docType, content:draft, updated_by:user?.email, updated_at:new Date().toISOString() });
+    setContent(draft); setEditing(false); setSaving(false); setMsg("Saved ✓");
+    setTimeout(()=>setMsg(""),2000);
+  };
+  return (
+    <div style={{ maxWidth:820 }}>
+      <div style={{ fontSize:22, fontWeight:800, color:C.text, fontFamily:SERIF, marginBottom:4 }}>{icon} {label}</div>
+      <div style={{ fontSize:13, color:C.text3, fontFamily:FONT, marginBottom:20 }}>
+        {docType==="style_guide"?"Brand voice, communication guidelines, and design standards for ROGA.":"What each robot can access and do — capabilities and boundaries."}
+      </div>
+      {content===null ? <div style={{ color:C.text3, fontFamily:FONT }}>Loading…</div> : editing ? (
+        <div>
+          <textarea value={draft} onChange={e=>setDraft(e.target.value)} rows={28}
+            style={{ width:"100%", background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:"16px 18px", color:C.text, fontFamily:MONO, fontSize:12.5, lineHeight:1.7, resize:"vertical" }} />
+          {msg && <div style={{ color:C.green, fontFamily:FONT, fontSize:12, marginTop:6 }}>{msg}</div>}
+          <div style={{ display:"flex", gap:10, marginTop:12 }}>
+            <GoldButton onClick={save} disabled={saving}>{saving?"Saving…":"Save"}</GoldButton>
+            <GoldButton outline onClick={()=>{ setEditing(false); setDraft(content); }}>Cancel</GoldButton>
+          </div>
+        </div>
+      ) : (
+        <div>
+          <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:"18px 20px", marginBottom:14 }}>
+            <MarkdownMessage text={content||`*No ${label.toLowerCase()} set yet.*`} accent={C.gold} />
+          </div>
+          <GoldButton small outline onClick={()=>{ setEditing(true); setDraft(content||""); }}>✏️ Edit</GoldButton>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 function OrganizationView({ user }) {
   const isMobile = useIsMobile();
   const [staff, setStaff] = useState(null);
@@ -10397,6 +10657,7 @@ function MainApp() {
     systems:["Systems","Integrations & status"],
     organization:["Organization","Leadership & structure"],
     robots:  ["Robots", "Your AI team"],
+    design:   ["Design", "Brand, memory & robot configuration"],
     calendar:   ["Calendar",   "Realty One Group Advantage"],
     listings:   ["Listings Pipeline", "Seller-side opportunities"],
     buyers:     ["Buyers Pipeline", "Buyer-side opportunities"],
@@ -10454,6 +10715,7 @@ function MainApp() {
           {view==="settings" &&<SettingsView  user={cu} onProfileSaved={onProfileSaved} theme={theme} onToggleTheme={toggleTheme} />}
           {view==="notepad"  &&<NotesView     user={cu} />}
           {view==="robots"   &&<RobotsView    user={cu} deals={deals} contacts={contacts} tasks={tasks} />}
+          {view==="design"   &&<DesignView    user={cu} />}
           {view==="calendar"   &&<CalendarView    user={cu} />}
           {view==="listings"   &&<PipelineView pipeline="listing" user={cu} />}
           {view==="buyers"     &&<PipelineView pipeline="buyer"   user={cu} />}
