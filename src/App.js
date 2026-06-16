@@ -5822,8 +5822,27 @@ function RobotsView({ user, deals, contacts, tasks }) {
     } catch(e){}
     try {
       const { data:cf } = await supabase.from("monthly_cashflow_trends")
-        .select("month,income,expenses,net,avg_deal_size,tax_year").eq("org_id",ORG_ID).order("month");
-      if(cf?.length) parts.push("MONTHLY CASH FLOW (recent):\n"+cf.slice(-12).map(m=>`${m.month}: income $${fmt(m.income)}, expenses $${fmt(m.expenses)}, net $${fmt(m.net)}${m.avg_deal_size?`, avg deal $${fmt(m.avg_deal_size)}`:""}`).join("\n"));
+        .select("month,income,expenses,net,avg_deal_size,tax_year").eq("org_id",ORG_ID)
+        .order("tax_year",{ascending:true}).order("month",{ascending:true});
+      if(cf?.length){
+        const byYear={};
+        cf.forEach(m=>{ const y=m.tax_year||"?"; (byYear[y]=byYear[y]||[]).push(m); });
+        const lines=Object.entries(byYear).map(([yr,months])=>
+          `${yr}:\n`+months.map(m=>`  ${m.month}: income $${fmt(m.income)}, expenses $${fmt(m.expenses)}, net $${fmt(m.net)}`).join("\n")
+        );
+        parts.push("MONTHLY CASH FLOW BY YEAR:\n"+lines.join("\n"));
+      }
+    } catch(e){}
+    try {
+      const { data:fin2026 } = await supabase.from("roga_financials")
+        .select("txn_date,account,acct_type,vendor,description,amount,kind,category,subcategory")
+        .eq("org_id",ORG_ID).gte("txn_date","2026-01-01")
+        .order("txn_date",{ascending:false}).limit(200);
+      if(fin2026?.length){
+        const fmt2=(n)=>(Number(n)||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+        const lines=fin2026.map(t=>`${t.txn_date} [${t.account}/${t.acct_type}] ${t.kind.toUpperCase()} $${fmt2(t.amount)} — ${t.vendor||t.description||""} (${t.category||""})`);
+        parts.push(`2026 LEDGER — LINE-BY-LINE (${fin2026.length} transactions):\n`+lines.join("\n"));
+      }
     } catch(e){}
     try {
       const { data:exp } = await supabase.from("expenses")
