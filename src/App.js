@@ -6679,26 +6679,27 @@ function PipePanel({ card, cfg, pipeline, user, contacts, deals, links:initLinks
             </div>
             <button onClick={onClose} style={{ background:"none", border:"none", color:C.text2, fontSize:22, cursor:"pointer" }}>✕</button>
           </div>
+          {(primary?.phone || primary?.email) && (
+            <div style={{ display:"flex", flexDirection:"column", gap:6, marginTop:14 }}>
+              {primary?.phone && (
+                <div style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 12px", background:C.surface2, border:`1px solid ${C.border}`, borderRadius:8 }}>
+                  <span style={{ fontSize:12, color:C.text3, fontFamily:FONT, fontWeight:600, width:44, flexShrink:0 }}>Phone</span>
+                  <span style={{ fontSize:13, color:C.text, fontFamily:MONO, fontWeight:700, flex:1, letterSpacing:"0.01em" }}>{primary.phone}</span>
+                </div>
+              )}
+              {primary?.email && (
+                <div style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 12px", background:C.surface2, border:`1px solid ${C.border}`, borderRadius:8 }}>
+                  <span style={{ fontSize:12, color:C.text3, fontFamily:FONT, fontWeight:600, width:44, flexShrink:0 }}>Email</span>
+                  <span style={{ fontSize:13, color:C.text, fontFamily:FONT, fontWeight:600, flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{primary.email}</span>
+                </div>
+              )}
+            </div>
+          )}
           {(tel||sms||mail) && (
-            <div style={{ display:"flex", gap:8, marginTop:14, flexWrap:"wrap" }}>
-              {tel && (
-                <a href={tel} onClick={()=>logTouch("call")} style={{...pipeQa(C.green), display:"flex", flexDirection:"column", alignItems:"center", gap:2}}>
-                  <span>📞 Call</span>
-                  <span style={{ fontSize:10, fontWeight:500, opacity:0.85, letterSpacing:"0.01em" }}>{primary?.phone}</span>
-                </a>
-              )}
-              {sms && (
-                <a href={sms} onClick={()=>logTouch("text")} style={{...pipeQa(C.blue), display:"flex", flexDirection:"column", alignItems:"center", gap:2}}>
-                  <span>💬 Text</span>
-                  <span style={{ fontSize:10, fontWeight:500, opacity:0.85, letterSpacing:"0.01em" }}>{primary?.phone}</span>
-                </a>
-              )}
-              {mail && (
-                <a href={mail} onClick={()=>logTouch("email")} style={{...pipeQa(C.gold), display:"flex", flexDirection:"column", alignItems:"center", gap:2, whiteSpace:"normal", textAlign:"center", wordBreak:"break-all"}}>
-                  <span>✉️ Email</span>
-                  <span style={{ fontSize:10, fontWeight:500, opacity:0.85 }}>{primary?.email}</span>
-                </a>
-              )}
+            <div style={{ display:"flex", gap:8, marginTop:10, flexWrap:"wrap" }}>
+              {tel && <a href={tel} onClick={()=>logTouch("call")} style={pipeQa(C.green)}>📞 Call</a>}
+              {sms && <a href={sms} onClick={()=>logTouch("text")} style={pipeQa(C.blue)}>💬 Text</a>}
+              {mail && <a href={mail} onClick={()=>logTouch("email")} style={pipeQa(C.gold)}>✉️ Email</a>}
             </div>
           )}
         </div>
