@@ -1,4 +1,4 @@
-// Prism — signing edge function (server-side trust boundary)
+// Ari — signing edge function (server-side trust boundary)
 // Phase 1: token resolution + audit logging. Sealing/email/Stripe land in later phases.
 // Supabase auto-injects SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY at runtime.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";

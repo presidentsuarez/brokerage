@@ -25,7 +25,7 @@ async function fetchAllRows(buildQuery) {
   return all;
 }
 
-const APP_NAME = "Prism";
+const APP_NAME = "Ari";
 const ORG_NAME = "Realty One Group Advantage";
 const ORG_ID          = "8cc1004c-c4da-4aab-b79a-f8b507983303";
 const PLATFORM_ADMIN  = "javier@thesuarezcapital.com";
@@ -57,7 +57,7 @@ const C_LIGHT = {
 };
 const C = { ...C_DARK };
 function applyPalette(mode){ Object.assign(C, mode==="light" ? C_LIGHT : C_DARK); }
-try { if (typeof localStorage!=="undefined" && localStorage.getItem("prism-theme")==="light") applyPalette("light"); } catch(e){}
+try { if (typeof localStorage!=="undefined" && localStorage.getItem("ari-theme")==="light") applyPalette("light"); } catch(e){}
 const FONT  = "'DM Sans', sans-serif";
 const SERIF = "'Playfair Display', serif";
 const MONO  = "'DM Mono', monospace";
@@ -123,7 +123,7 @@ const NAV_BY_ID = Object.fromEntries(NAV.map(n=>[n.id,n]));
 
 // ── Shared atoms ──────────────────────────────────────────────
 
-function PrismMark({ size=32 }) {
+function AriMark({ size=32 }) {
   return (
     <img src={`${process.env.PUBLIC_URL}/logo512.png?v=4`} alt="Realty ONE Group Advantage" width={size} height={size}
       style={{ width:size, height:size, flexShrink:0, display:"block", borderRadius:size*0.22, objectFit:"cover" }} />
@@ -139,7 +139,7 @@ function BrandWordmark({ variant="sidebar" }) {
           Realty {ONE} Group Advantage
         </div>
         <div style={{ fontSize:11, color:C.text3, fontFamily:FONT, letterSpacing:"0.10em", textTransform:"uppercase", marginTop:7 }}>
-          Powered by Prism
+          Powered by Ari
         </div>
       </div>
     );
@@ -150,7 +150,7 @@ function BrandWordmark({ variant="sidebar" }) {
         Realty {ONE} Group
       </div>
       <div style={{ fontSize:8.5, color:C.text3, fontFamily:FONT, whiteSpace:"nowrap", letterSpacing:"0.03em", textTransform:"uppercase" }}>
-        Advantage · Powered by Prism
+        Advantage · Powered by Ari
       </div>
     </div>
   );
@@ -326,7 +326,7 @@ function LoadingScreen({ message="Loading\u2026" }) {
     <div style={{ minHeight:"100vh", background:C.bg, display:"flex",
       flexDirection:"column", alignItems:"center", justifyContent:"center", gap:20 }}>
       <div style={{ animation:"pulse 1.8s ease-in-out infinite" }}>
-        <PrismMark size={48} />
+        <AriMark size={48} />
       </div>
       <p style={{ color:C.text2, fontSize:13, fontFamily:FONT, margin:0 }}>{message}</p>
       <style>{`@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.55;transform:scale(0.88)}}`}</style>
@@ -341,7 +341,7 @@ function AuthCard({ children }) {
       <div style={{ width:"100%", maxWidth:400 }}>
         <div style={{ textAlign:"center", marginBottom:34 }}>
           <div style={{ display:"flex", justifyContent:"center", marginBottom:16 }}>
-            <PrismMark size={52} />
+            <AriMark size={52} />
           </div>
           <BrandWordmark variant="auth" />
         </div>
@@ -548,7 +548,7 @@ function Sidebar({ activeView, onNav, user, onSignOut, collapsed, mobileOpen, on
           borderBottom:`1px solid ${C.border}`, minHeight:56 }}>
           <div onClick={()=>handleNav("dashboard")} title="Dashboard"
             style={{ display:"flex", alignItems:"center", gap:10, cursor:"pointer" }}>
-            <PrismMark size={26} />
+            <AriMark size={26} />
             {(!collapsed||isMobile) && <BrandWordmark variant="sidebar" />}
           </div>
           {isMobile && (
@@ -2865,8 +2865,8 @@ function AgentPortalApp(
 { agentContact, session, onSignOut, isPreview=false, initialView, onViewChange }) {
   const [view, setView]       = useState(initialView||"portal_dashboard");
   useEffect(()=>{ if(onViewChange) onViewChange(view); },[view]); // eslint-disable-line react-hooks/exhaustive-deps
-  const [theme,setTheme] = useState(()=>{ try{ return (typeof localStorage!=="undefined" && localStorage.getItem("prism-theme"))||"dark"; }catch(e){ return "dark"; } });
-  const toggleTheme = ()=>{ const nx=theme==="dark"?"light":"dark"; applyPalette(nx); try{ localStorage.setItem("prism-theme",nx); }catch(e){} setTheme(nx); };
+  const [theme,setTheme] = useState(()=>{ try{ return (typeof localStorage!=="undefined" && localStorage.getItem("ari-theme"))||"dark"; }catch(e){ return "dark"; } });
+  const toggleTheme = ()=>{ const nx=theme==="dark"?"light":"dark"; applyPalette(nx); try{ localStorage.setItem("ari-theme",nx); }catch(e){} setTheme(nx); };
   const [myDeals, setMyDeals] = useState([]);
   const [myContacts, setMyCon] = useState([]);
   const [myTasks, setMyTasks] = useState([]);
@@ -2987,7 +2987,7 @@ function AgentPortalApp(
       <div style={{ padding:sidebarCollapsed?"16px 14px":"16px 18px",
         display:"flex", alignItems:"center", gap:10,
         borderBottom:`1px solid ${C.border}`, minHeight:56 }}>
-        <PrismMark size={26} />
+        <AriMark size={26} />
         {!sidebarCollapsed && (
           <div style={{ overflow:"hidden" }}>
             <div style={{ fontSize:13, fontWeight:700, color:C.text,
@@ -5668,14 +5668,14 @@ const MD_CDN={
   xlsx:"https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js",
 };
 const stripInline=(s)=> String(s==null?"":s).replace(/\*\*([^*]+)\*\*/g,"$1").replace(/__([^_]+)__/g,"$1").replace(/\*([^*]+)\*/g,"$1").replace(/`([^`]+)`/g,"$1").replace(/\[([^\]]+)\]\([^)]+\)/g,"$1").replace(/^#{1,6}\s+/,"").trim();
-const docName=(t,ext)=> (String(t||"prism").replace(/[^\w-]+/g,"_").slice(0,60)||"prism")+"."+ext;
+const docName=(t,ext)=> (String(t||"ari").replace(/[^\w-]+/g,"_").slice(0,60)||"ari")+"."+ext;
 
 async function exportPDF(blocks,title){
   await loadScript(MD_CDN.jspdf); await loadScript(MD_CDN.autotable);
   const { jsPDF }=window.jspdf; const doc=new jsPDF({unit:"pt",format:"letter"});
   const W=doc.internal.pageSize.getWidth(), H=doc.internal.pageSize.getHeight(), M=48; let y=64;
   const ensure=(h)=>{ if(y+h>H-48){ doc.addPage(); y=64; } };
-  doc.setFont("helvetica","bold"); doc.setFontSize(18); doc.setTextColor(20); doc.text(stripInline(title)||"Prism Document",M,y); y+=10;
+  doc.setFont("helvetica","bold"); doc.setFontSize(18); doc.setTextColor(20); doc.text(stripInline(title)||"Ari Document",M,y); y+=10;
   doc.setDrawColor(212,175,55); doc.setLineWidth(2); doc.line(M,y,W-M,y); y+=24; doc.setTextColor(40);
   blocks.forEach(b=>{
     if(b.type==="heading"){ ensure(28); doc.setFont("helvetica","bold"); doc.setFontSize(b.level<=1?15:b.level===2?13:12); doc.splitTextToSize(stripInline(b.text),W-2*M).forEach(ln=>{ ensure(20); doc.text(ln,M,y); y+=19; }); y+=3; }
@@ -5693,7 +5693,7 @@ async function exportXLSX(blocks,title){
   const tables=blocks.filter(b=>b.type==="table");
   const toNum=(c)=>{ const s=stripInline(c); const n=Number(s.replace(/[$,%\s]/g,"")); return (/^[-+]?\$?[\d,]+(\.\d+)?%?$/.test(s)&&!isNaN(n))?n:s; };
   if(tables.length){ tables.forEach((t,i)=>{ const ws=XLSX.utils.aoa_to_sheet([t.headers.map(stripInline),...t.rows.map(r=>r.map(toNum))]); XLSX.utils.book_append_sheet(wb,ws,`Table ${i+1}`.slice(0,31)); }); }
-  else { const rows=blocks.map(b=> b.type==="list"?b.items.map(stripInline).join("; "):stripInline(b.text)).filter(Boolean).map(t=>[t]); const ws=XLSX.utils.aoa_to_sheet([[stripInline(title)||"Prism"],[],...rows]); XLSX.utils.book_append_sheet(wb,ws,"Notes"); }
+  else { const rows=blocks.map(b=> b.type==="list"?b.items.map(stripInline).join("; "):stripInline(b.text)).filter(Boolean).map(t=>[t]); const ws=XLSX.utils.aoa_to_sheet([[stripInline(title)||"Ari"],[],...rows]); XLSX.utils.book_append_sheet(wb,ws,"Notes"); }
   XLSX.writeFile(wb,docName(title,"xlsx"));
 }
 
@@ -5701,8 +5701,8 @@ async function exportPPTX(blocks,title){
   await loadScript(MD_CDN.pptx); const pptx=new window.PptxGenJS(); pptx.layout="LAYOUT_WIDE"; // 13.33 x 7.5
   const GOLD="D4AF37", DARK="0A0A0A";
   let s=pptx.addSlide(); s.background={color:DARK};
-  s.addText(stripInline(title)||"Prism",{x:0.6,y:2.7,w:12.1,h:1.2,fontSize:40,bold:true,color:GOLD,align:"center",fontFace:"Arial"});
-  s.addText("Realty ONE Group Advantage  \u00b7  Prism",{x:0.6,y:3.9,w:12.1,h:0.5,fontSize:15,color:"FFFFFF",align:"center"});
+  s.addText(stripInline(title)||"Ari",{x:0.6,y:2.7,w:12.1,h:1.2,fontSize:40,bold:true,color:GOLD,align:"center",fontFace:"Arial"});
+  s.addText("Realty ONE Group Advantage  \u00b7  Ari",{x:0.6,y:3.9,w:12.1,h:0.5,fontSize:15,color:"FFFFFF",align:"center"});
   const slides=[]; let cur=null;
   blocks.forEach(b=>{
     if(b.type==="heading"&&b.level<=2){ if(cur) slides.push(cur); cur={title:stripInline(b.text),items:[],tables:[]}; }
@@ -5729,7 +5729,7 @@ function MsgDocBar({ text, accent=C.gold, who="Davenport" }){
   const [busy,setBusy]=useState("");
   const [copied,setCopied]=useState(false);
   const h=blocks.find(b=>b.type==="heading");
-  const title = h?stripInline(h.text):`${who} — Prism`;
+  const title = h?stripInline(h.text):`${who} — Ari`;
   const run=async(kind,fn)=>{ setBusy(kind); try{ await fn(); }catch(e){ alert("Couldn't generate that file — please try again."); } finally{ setBusy(""); } };
   const Btn=({label,kind,onClick})=>(
     <button onClick={onClick} disabled={!!busy} style={{ display:"inline-flex",alignItems:"center",gap:5,padding:"5px 11px",borderRadius:8,border:`1px solid ${C.border2}`,background:C.surface2,color:C.text2,fontSize:11,fontWeight:600,fontFamily:FONT,cursor:busy?"default":"pointer",opacity:busy&&busy!==kind?0.5:1,transition:"all 0.12s" }}
@@ -5990,7 +5990,7 @@ function RobotsView({ user, deals, contacts, tasks }) {
       {children}
     </div>
   );
-  const srcBadge = (src) => src==="prism" ? { t:"Native · Prism", c:C.gold } : { t:"Synced · Suarez OS", c:C.purple };
+  const srcBadge = (src) => (src==="ari"||src==="prism") ? { t:"Native · Ari", c:C.gold } : { t:"Synced · Suarez OS", c:C.purple };
 
   return (
     <div style={{ display:"flex", height:"calc(100vh - 56px)", overflow:"hidden", position:"relative" }}>
@@ -6101,7 +6101,7 @@ function RobotsView({ user, deals, contacts, tasks }) {
                     : m.content}
                 </div>
                 {m.role==="assistant" && m.content && m.content.trim().length>40 && (
-                  <MsgDocBar text={m.content} accent={robot?.avatar_color||C.gold} who={robot?.name||"Prism"} />
+                  <MsgDocBar text={m.content} accent={robot?.avatar_color||C.gold} who={robot?.name||"Ari"} />
                 )}
                 <div style={{ fontSize:10, color:C.text3, fontFamily:FONT, marginTop:4, textAlign:m.role==="user"?"right":"left" }}>{fmtTime(m.ts)}</div>
               </div>
@@ -7325,7 +7325,7 @@ function RecruitPanel({ lead, user, onClose, onRefresh, onUpdated, setToast, sta
             </div>
             <div style={{ marginTop:10, paddingTop:10, borderTop:`1px solid ${C.border}` }}>
               {mm.ec.sameLane ? (
-                <div style={{ fontSize:12, color:C.text2, fontFamily:FONT }}>Already on a 100%-style model — <b style={{color:C.gold}}>lead with value, not split</b>: The Edge AI program, Prism tech, local broker access, culture.</div>
+                <div style={{ fontSize:12, color:C.text2, fontFamily:FONT }}>Already on a 100%-style model — <b style={{color:C.gold}}>lead with value, not split</b>: The Edge AI program, Ari tech, local broker access, culture.</div>
               ) : (
                 <div style={{ fontSize:13, color:C.text, fontFamily:FONT }}>Estimated left on the table: <b style={{ color:C.green, fontFamily:MONO }}>{fmt$(Math.max(mm.diff,0))}/yr</b></div>
               )}
@@ -7432,8 +7432,8 @@ function RecruitPlaybook({ onClose }) {
         <Section h="Daily standard (per caller)" b="20–50 dials/day. Work the Pipeline board left to right: New Lead → Attempted → Connected → Appointment Set. Hot prospects first, then Warm. Log every touch with a disposition so nothing falls through." />
         <Section h="The cadence (≈7 touches / 21 days)" b="Day 1: Call + voicemail, then Text 1. Day 3: Call. Day 5: Text 2 (the money line). Day 8: Call + Text 3 (the invite). Day 12: Email. Day 18: Last call. No answer after that → long-nurture, recycle in 60 days." />
         <Section h="High-EQ posture" b="Lead with genuine respect for their numbers (these are real top producers). Never trash their current shop. Ask what they'd change — then listen. Give before you ask: a market stat, a free CMA demo, an invite to The Edge." />
-        <Section h="The angle, by brand" b="Split houses (KW, Compass, Century 21, Coldwell, Sotheby's): lead with the money math — what they keep at 100%. Already-100% shops (LPT, Charles Rutenberg, Dalton Wade): money won't move them — lead with what's wrapped around it: The Edge AI program, Prism, local broker access, culture." />
-        <Section h="What ROGA offers" b="$100/month + $1,000/transaction + keep 100% of your commission. Plus The Edge (weekly AI education), the Prism platform, and hands-on brokers in Lutz/Tampa." />
+        <Section h="The angle, by brand" b="Split houses (KW, Compass, Century 21, Coldwell, Sotheby's): lead with the money math — what they keep at 100%. Already-100% shops (LPT, Charles Rutenberg, Dalton Wade): money won't move them — lead with what's wrapped around it: The Edge AI program, Ari, local broker access, culture." />
+        <Section h="What ROGA offers" b="$100/month + $1,000/transaction + keep 100% of your commission. Plus The Edge (weekly AI education), the Ari platform, and hands-on brokers in Lutz/Tampa." />
         <Section h="The handoff" b="Once they say yes to a meeting, hit 'Book w/ Javier' or 'Book w/ Dara' — that flips them to Appointment Set and logs it. Our job is done; the brokers take it from there." />
       </div>
     </Modal>
@@ -9094,7 +9094,7 @@ function SystemStatusCard({ sys }) {
   );
 }
 
-const PRISM_SYSTEMS = [
+const ARI_SYSTEMS = [
   { key:"brevo", icon:"\u{1F4E7}", label:"Brevo", desc:"Email marketing", action:"brevo_status",
     subtitle:"Email marketing · bulk campaigns & contacts",
     fields:[["Account","email"],["Company","company"],["Plan","plan"],["Email credits","credits"]] },
@@ -9200,7 +9200,7 @@ function SuarezConnectionCard({ sys }) {
             })}
           </div>
           <div style={{ fontSize:11, color:C.text3, fontFamily:FONT, marginTop:12, lineHeight:1.5 }}>
-            These robots are defined in Suarez Global OS and synced into Prism. They're available to deploy here. Editing the canonical definition happens in Suarez; re-running the sync refreshes them.
+            These robots are defined in Suarez Global OS and synced into Ari. They're available to deploy here. Editing the canonical definition happens in Suarez; re-running the sync refreshes them.
           </div>
         </div>
       )}
@@ -9624,7 +9624,7 @@ function SystemsView({ user }) {
   const [sysKey, setSysKey] = useState("brevo");
   const [quoOpen, setQuoOpen] = useState(false);
   const [quoSub, setQuoSub] = useState("overview");
-  const active = PRISM_SYSTEMS.find(s=>s.key===sysKey) || PRISM_SYSTEMS[0];
+  const active = ARI_SYSTEMS.find(s=>s.key===sysKey) || ARI_SYSTEMS[0];
   const QUO = C.blue;
   const QUO_SUBS = [
     { k:"overview", label:"Overview", icon:"📊" },
@@ -9680,7 +9680,7 @@ function SystemsView({ user }) {
       {isMobile ? (
         <div style={{ marginBottom:12 }}>
           <div style={{ display:"flex", gap:8, overflowX:"auto", paddingBottom:8 }}>
-            {PRISM_SYSTEMS.map(s=>{ const a=sysKey===s.key; const isQuo=s.key==="quo"; return (
+            {ARI_SYSTEMS.map(s=>{ const a=sysKey===s.key; const isQuo=s.key==="quo"; return (
               <button key={s.key} onClick={()=>{ setSysKey(s.key); if(isQuo) setQuoOpen(true); }} style={{ flexShrink:0, display:"flex", alignItems:"center", gap:6, padding:"8px 14px", borderRadius:20, border:`1px solid ${a?(isQuo?QUO+"77":C.goldBorder):C.border2}`, background:a?(isQuo?QUO+"22":C.goldDim):"transparent", color:a?(isQuo?QUO:C.gold):C.text2, fontSize:13, fontWeight:a?700:500, fontFamily:FONT, cursor:"pointer", whiteSpace:"nowrap" }}>
                 <span>{s.icon}</span>{s.label}
               </button>); })}
@@ -9697,7 +9697,7 @@ function SystemsView({ user }) {
       ) : (
         <div style={{ width:206, flexShrink:0, background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:"12px 10px", alignSelf:"flex-start" }}>
           <div style={{ fontSize:10, fontWeight:800, color:C.text3, letterSpacing:"0.1em", textTransform:"uppercase", fontFamily:FONT, padding:"4px 10px 10px" }}>Systems</div>
-          {PRISM_SYSTEMS.map(s=>railItem(s))}
+          {ARI_SYSTEMS.map(s=>railItem(s))}
           <div style={{ fontSize:10.5, color:C.text3, fontFamily:FONT, padding:"12px 10px 4px", lineHeight:1.5 }}>More systems coming soon…</div>
         </div>
       )}
@@ -10220,7 +10220,7 @@ function SettingsView({ user, onProfileSaved, theme, onToggleTheme }) {
         <div style={{ display:"flex", alignItems:"center", gap:12 }}>
           <div style={{ width:40, height:40, borderRadius:10, background:C.goldDim, border:`1px solid ${C.goldBorder}`,
             display:"flex", alignItems:"center", justifyContent:"center" }}>
-            <PrismMark size={20} />
+            <AriMark size={20} />
           </div>
           <div>
             <div style={{ fontSize:14, fontWeight:700, color:C.text, fontFamily:SERIF }}>{ORG_NAME}</div>
@@ -10951,12 +10951,12 @@ function MainApp() {
 
   useEffect(()=>{ if(session) loadData(); },[session,loadData]);
 
-  const [theme,setTheme] = useState(()=>{ try{ return (typeof localStorage!=="undefined" && localStorage.getItem("prism-theme"))||"dark"; }catch(e){ return "dark"; } });
-  const toggleTheme = ()=>{ const nx=theme==="dark"?"light":"dark"; applyPalette(nx); try{ localStorage.setItem("prism-theme",nx); }catch(e){} setTheme(nx); };
+  const [theme,setTheme] = useState(()=>{ try{ return (typeof localStorage!=="undefined" && localStorage.getItem("ari-theme"))||"dark"; }catch(e){ return "dark"; } });
+  const toggleTheme = ()=>{ const nx=theme==="dark"?"light":"dark"; applyPalette(nx); try{ localStorage.setItem("ari-theme",nx); }catch(e){} setTheme(nx); };
   const signOut = ()=>supabase.auth.signOut();
   const onProfileSaved = updates => setUserProfile(p=>({...p,...updates}));
 
-  if(authLoading) return <LoadingScreen message="Starting Prism\u2026" />;
+  if(authLoading) return <LoadingScreen message="Starting Ari…" />;
 
   if(!session){
     if(authScreen==="forgot") return <ForgotScreen onBack={()=>setAuthScreen("login")} />;
@@ -11001,7 +11001,7 @@ function MainApp() {
     financials:  ["Financials",   "Agent Packages & Deal P&L"],
     performance:["Brokerage Performance", ORG_NAME],
   };
-  const [title,subtitle] = TITLES[view]||["Prism",""];
+  const [title,subtitle] = TITLES[view]||["Ari",""];
   const cu = userProfile||{email:session.user.email,role:"member"};
   const sw = isMobile ? 0 : sidebarCollapsed ? 56 : 220;
 

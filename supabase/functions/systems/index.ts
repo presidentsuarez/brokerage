@@ -1,4 +1,4 @@
-// Prism — systems edge function. Holds integration secrets server-side and reports status.
+// Ari — systems edge function. Holds integration secrets server-side and reports status.
 // Owner/admin only. Systems: Brevo (email), GitHub (source/deploy), Supabase (backend).
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -64,7 +64,7 @@ Deno.serve(async (req) => {
       const pat = Deno.env.get("GITHUB_PAT");
       if (!pat) return json({ system: "github", connected: false, reason: "no_token", checkedAt });
       const r = await fetch("https://api.github.com/repos/presidentsuarez/brokerage", {
-        headers: { "Authorization": `Bearer ${pat}`, "Accept": "application/vnd.github+json", "User-Agent": "PrismApp" },
+        headers: { "Authorization": `Bearer ${pat}`, "Accept": "application/vnd.github+json", "User-Agent": "AriApp" },
       });
       const d = await r.json().catch(() => ({}));
       if (r.ok) return json({ system: "github", connected: true, http: r.status, repo: d.full_name, visibility: d.private ? "private" : "public", branch: d.default_branch, pushedAt: d.pushed_at ? String(d.pushed_at).replace("T", " ").replace("Z", " UTC") : null, checkedAt });
