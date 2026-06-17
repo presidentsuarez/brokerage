@@ -183,6 +183,56 @@ Deno.serve(async (req) => {
       return json({ connected: true, total: transcripts.length, scanned: calls.length, transcripts, checkedAt });
     }
 
+    if (action === "reap_status" || action === "reap_overview") {
+      const reapUrl = Deno.env.get("REAP_SUPABASE_URL");
+      const reapKey = Deno.env.get("REAP_ANON_KEY");
+      if (!reapUrl || !reapKey) return json({ system:"reap", connected:false, reason:"no_credentials", checkedAt });
+      const reapSvc = Deno.env.get("REAP_SERVICE_KEY") || reapKey;
+      const rh = { "apikey": reapSvc, "Authorization": `Bearer ${reapSvc}` };
+
+      // Health check
+      const hc = await fetch(`${reapUrl}/auth/v1/health`, { headers: rh }).catch(()=>null);
+      if (!hc?.ok) return json({ system:"reap", connected:false, http:hc?.status, message:"REAP unreachable", checkedAt });
+
+      // Deal pipeline counts
+      const ds = await fetch(`${reapUrl}/rest/v1/deals?select=deal_status,type,reap_score,arv_value,asking_price&limit=2000`, { headers: rh }).then(r=>r.json()).catch(()=>[]);
+      const dealArr: any[] = Array.isArray(ds) ? ds : [];
+
+      const byStatus: Record<string,number> = {};
+      let totalArv = 0, totalAsking = 0, reapScoreSum = 0, scoredCount = 0;
+      dealArr.forEach((d: any) => {
+        const st = d.deal_status || "Unknown";
+        byStatus[st] = (byStatus[st]||0) + 1;
+        if(d.arv_value) totalArv += Number(d.arv_value)||0;
+        if(d.asking_price) totalAsking += Number(d.asking_price)||0;
+        if(d.reap_score){ reapScoreSum += Number(d.reap_score)||0; scoredCount++; }
+      });
+      const pipeline = ["New","Review","Underwriting","Offer","Under Contract","Owned","Sold"]
+        .map(st => ({ status:st, count:byStatus[st]||0 }));
+      const active = ["New","Review","Underwriting","Offer","Under Contract","Owned"]
+        .reduce((n,st)=>n+(byStatus[st]||0), 0);
+
+      // Users
+      const up = await fetch(`${reapUrl}/rest/v1/user_profiles?select=id,email,role,full_name&limit=100`, { headers: rh }).then(r=>r.json()).catch(()=>[]);
+      const users = (Array.isArray(up)?up:[]).map((u:any)=>({ name:u.full_name||u.email, email:u.email, role:u.role }));
+
+      if (action === "reap_status") {
+        return json({ system:"reap", connected:true, totalDeals:dealArr.length, activeDeals:active,
+          userCount:users.length, avgReapScore:scoredCount?Math.round(reapScoreSum/scoredCount):null,
+          pipeline, users, checkedAt });
+      }
+      // reap_overview — full breakdown
+      const byType: Record<string,number> = {};
+      dealArr.forEach((d:any) => { const t=d.type||"Unknown"; byType[t]=(byType[t]||0)+1; });
+      const topTypes = Object.entries(byType).sort((a,b)=>(b[1] as number)-(a[1] as number)).slice(0,6).map(([type,count])=>({type,count}));
+      return json({ system:"reap", connected:true, totalDeals:dealArr.length, activeDeals:active,
+        totalArv:Math.round(totalArv), totalAsking:Math.round(totalAsking),
+        avgReapScore:scoredCount?Math.round(reapScoreSum/scoredCount):null,
+        byStatus:Object.entries(byStatus).sort((a,b)=>(b[1] as number)-(a[1] as number)).map(([status,count])=>({status,count})),
+        pipeline, topTypes, userCount:users.length, users,
+        liveUrl:"https://app.getreap.ai", checkedAt });
+    }
+
     return json({ error: "unknown action" }, 400);
   } catch (e) {
     return json({ error: String(e) }, 500);

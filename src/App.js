@@ -9104,6 +9104,8 @@ const PRISM_SYSTEMS = [
   { key:"supabase", icon:"\u{1F5C4}\uFE0F", label:"Supabase", desc:"Backend", action:"supabase_status",
     subtitle:"Postgres · Auth · Storage · Edge functions",
     fields:[["Project ref","ref"],["URL","url"],["Database","db"]] },
+    { key:"reap", icon:"🏗️", label:"REAP", desc:"Deal analytics platform", action:"reap_status", custom:true,
+    subtitle:"Real Estate Analytics Platform · app.getreap.ai" },
   { key:"quo", icon:"\u{1F4DE}", label:"Quo", desc:"Phone & SMS", action:"quo_status", custom:true,
     subtitle:"OpenPhone · business phone lines, calls & texts" },
   { key:"suarez", icon:"\u{1F310}", label:"Suarez", desc:"Global OS sync", custom:true,
@@ -9465,6 +9467,158 @@ function QuoDashboard({ sys, sub="overview" }){
   );
 }
 
+function ReapDashboard({ sys }) {
+  const REAP_GREEN = "#1C7C4A";
+  const [ov, setOv]   = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState(null);
+
+  const load = async (force) => {
+    if (ov && !force) return;
+    setLoading(true); setErr(null);
+    try {
+      const { data:{ session } } = await supabase.auth.getSession();
+      const r = await fetch(`${process.env.REACT_APP_SUPABASE_URL}/functions/v1/systems`, {
+        method:"POST",
+        headers:{ "Content-Type":"application/json","apikey":process.env.REACT_APP_SUPABASE_ANON_KEY,"Authorization":`Bearer ${session?.access_token}` },
+        body: JSON.stringify({ action:"reap_overview" }),
+      });
+      const j = await r.json();
+      if(j.connected===false) setErr(j.message||j.reason||"Not connected");
+      else setOv(j);
+    } catch(e){ setErr(String(e)); }
+    finally { setLoading(false); }
+  };
+  useEffect(()=>{ load(); /* eslint-disable-next-line */ },[]);
+
+  const fmt = (n) => (Number(n)||0).toLocaleString("en-US",{maximumFractionDigits:0});
+  const PIPELINE_COLORS = { New:C.blue, Review:C.amber, Underwriting:C.gold, Offer:"#a855f7",
+    "Under Contract":C.green, Owned:"#06b6d4", Sold:C.green };
+
+  return (
+    <div style={{ maxWidth:840 }}>
+      {/* Header */}
+      <div style={{ background:`linear-gradient(135deg,${REAP_GREEN}1a,${C.surface} 60%)`, border:`1px solid ${C.border}`, borderRadius:16, padding:"22px 24px", marginBottom:18 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:14 }}>
+          <div style={{ width:48, height:48, borderRadius:13, background:REAP_GREEN+"22", border:`1px solid ${REAP_GREEN}55`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:24 }}>🏗️</div>
+          <div style={{ flex:1, minWidth:0 }}>
+            <div style={{ fontSize:19, fontWeight:800, color:C.text, fontFamily:SERIF }}>REAP</div>
+            <div style={{ fontSize:12, color:C.text3, fontFamily:FONT }}>Real Estate Analytics Platform · Tampa Development Group LLC</div>
+          </div>
+          <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:6 }}>
+            <div style={{ display:"flex", alignItems:"center", gap:6, padding:"5px 12px", borderRadius:20,
+              background:ov?`${REAP_GREEN}22`:"rgba(180,80,80,0.12)", border:`1px solid ${ov?REAP_GREEN+"66":"rgba(180,80,80,0.35)"}` }}>
+              <div style={{ width:7, height:7, borderRadius:"50%", background:ov?REAP_GREEN:C.red }} />
+              <span style={{ fontSize:11.5, fontWeight:700, fontFamily:FONT, color:ov?REAP_GREEN:C.red }}>
+                {loading?"Checking…":ov?"Live · Connected":err?"Not connected":"—"}
+              </span>
+            </div>
+            <a href="https://app.getreap.ai" target="_blank" rel="noreferrer"
+               style={{ fontSize:11, color:C.blue, fontFamily:FONT, textDecoration:"none" }}>
+              Open REAP ↗
+            </a>
+          </div>
+        </div>
+        <div style={{ display:"flex", gap:10, marginTop:14, flexWrap:"wrap" }}>
+          {[["Total Deals",(ov?.totalDeals||0)+(ov?.totalDeals===1000?" (1,000+)":""),REAP_GREEN],
+            ["Active Pipeline",ov?.activeDeals||0,C.amber],
+            ["Avg REAP Score",ov?.avgReapScore?`${ov.avgReapScore}/100`:"—",C.gold],
+            ["Users",ov?.userCount||26,C.blue]].map(([label,val,accent])=>(
+            <div key={label} style={{ flex:"1 1 130px", background:C.surface2, border:`1px solid ${C.border}`, borderRadius:11, padding:"12px 14px" }}>
+              <div style={{ fontSize:20, fontWeight:800, color:accent, fontFamily:SERIF, lineHeight:1 }}>{String(val)}</div>
+              <div style={{ fontSize:10, color:C.text3, fontFamily:FONT, marginTop:4, textTransform:"uppercase", letterSpacing:"0.06em" }}>{label}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{ display:"flex", gap:10, marginTop:10 }}>
+          <GoldButton small outline onClick={()=>load(true)} disabled={loading}>{loading?"Refreshing…":"Refresh"}</GoldButton>
+          {ov?.checkedAt && <span style={{ fontSize:11, color:C.text3, fontFamily:FONT, alignSelf:"center" }}>Updated {new Date(ov.checkedAt).toLocaleTimeString()}</span>}
+        </div>
+      </div>
+
+      {err && <div style={{ background:"rgba(220,80,80,0.08)", border:"1px solid rgba(220,80,80,0.3)", borderRadius:10, padding:"12px 14px", marginBottom:14 }}>
+        <div style={{ fontSize:13, fontWeight:700, color:C.red, fontFamily:FONT }}>{err}</div>
+      </div>}
+
+      {ov && (<>
+        {/* Deal Pipeline */}
+        <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:"18px 20px", marginBottom:16 }}>
+          <div style={{ fontSize:11, fontWeight:800, color:C.text3, letterSpacing:"0.09em", textTransform:"uppercase", fontFamily:FONT, marginBottom:14 }}>Deal Pipeline</div>
+          <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+            {(ov.pipeline||[]).filter(p=>p.count>0).map(p=>{
+              const total = (ov.pipeline||[]).reduce((s,x)=>s+x.count,0)||1;
+              const pct = Math.round((p.count/total)*100);
+              const accent = PIPELINE_COLORS[p.status]||C.text3;
+              return (
+                <div key={p.status}>
+                  <div style={{ display:"flex", justifyContent:"space-between", fontSize:12, fontFamily:FONT, marginBottom:4 }}>
+                    <span style={{ color:C.text2, fontWeight:600 }}>{p.status}</span>
+                    <span style={{ color:accent, fontWeight:700 }}>{p.count} <span style={{ color:C.text3, fontWeight:400 }}>({pct}%)</span></span>
+                  </div>
+                  <div style={{ height:7, background:C.surface2, borderRadius:5, overflow:"hidden" }}>
+                    <div style={{ width:`${pct}%`, height:"100%", background:`linear-gradient(90deg,${accent},${accent}88)`, borderRadius:5, transition:"width 0.7s cubic-bezier(.2,.8,.2,1)" }} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Deal types + top stats */}
+        <div style={{ display:"flex", gap:14, flexWrap:"wrap", marginBottom:16 }}>
+          <div style={{ flex:"1 1 280px", background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:"18px 20px" }}>
+            <div style={{ fontSize:11, fontWeight:800, color:C.text3, letterSpacing:"0.09em", textTransform:"uppercase", fontFamily:FONT, marginBottom:12 }}>By Asset Type</div>
+            {(ov.topTypes||[]).map((t,i)=>{
+              const max = (ov.topTypes||[])[0]?.count||1;
+              return (
+                <div key={t.type} style={{ marginBottom:10 }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", fontSize:12, fontFamily:FONT, marginBottom:3 }}>
+                    <span style={{ color:C.text2 }}>{t.type}</span>
+                    <span style={{ color:C.text, fontWeight:700 }}>{t.count}</span>
+                  </div>
+                  <div style={{ height:6, background:C.surface2, borderRadius:4, overflow:"hidden" }}>
+                    <div style={{ width:`${Math.round((t.count/max)*100)}%`, height:"100%", background:`linear-gradient(90deg,${REAP_GREEN},${REAP_GREEN}88)`, borderRadius:4, transition:"width 0.7s cubic-bezier(.2,.8,.2,1)" }} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div style={{ flex:"1 1 280px", background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:"18px 20px" }}>
+            <div style={{ fontSize:11, fontWeight:800, color:C.text3, letterSpacing:"0.09em", textTransform:"uppercase", fontFamily:FONT, marginBottom:12 }}>Portfolio Value</div>
+            {[["Total ARV",`$${fmt(ov.totalArv)}`],["Total Asking",`$${fmt(ov.totalAsking)}`],
+              ["ARV Premium",ov.totalAsking?`${Math.round(((ov.totalArv-ov.totalAsking)/ov.totalAsking)*100)}%`:"—"],
+              ["Avg REAP Score",ov.avgReapScore?`${ov.avgReapScore}/100`:"—"],
+            ].map(([k,v])=>(
+              <div key={k} style={{ display:"flex", justifyContent:"space-between", padding:"8px 0", borderBottom:`1px solid ${C.border}`, fontFamily:FONT }}>
+                <span style={{ fontSize:12.5, color:C.text3 }}>{k}</span>
+                <span style={{ fontSize:12.5, color:C.text, fontWeight:700 }}>{v}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Users */}
+        {(ov.users||[]).length>0 && (
+          <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:"18px 20px" }}>
+            <div style={{ fontSize:11, fontWeight:800, color:C.text3, letterSpacing:"0.09em", textTransform:"uppercase", fontFamily:FONT, marginBottom:12 }}>REAP Team</div>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))", gap:8 }}>
+              {(ov.users||[]).map((u,i)=>(
+                <div key={i} style={{ display:"flex", alignItems:"center", gap:9, padding:"8px 10px", background:C.surface2, borderRadius:9, border:`1px solid ${C.border}` }}>
+                  <Avatar name={u.name} email={u.email} size={28} />
+                  <div style={{ minWidth:0 }}>
+                    <div style={{ fontSize:12.5, fontWeight:600, color:C.text, fontFamily:FONT, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{u.name||u.email}</div>
+                    {u.role && <div style={{ fontSize:10, color:C.text3, fontFamily:FONT }}>{u.role}</div>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </>)}
+    </div>
+  );
+}
+
 function SystemsView({ user }) {
   const isMobile = useIsMobile();
   const [sysKey, setSysKey] = useState("brevo");
@@ -9548,7 +9702,8 @@ function SystemsView({ user }) {
         </div>
       )}
       <div style={{ flex:1, minWidth:0 }}>
-        {active.key==="suarez" ? <SuarezConnectionCard sys={active} />
+        {active.key==="reap"   ? <ReapDashboard sys={active} />
+          : active.key==="suarez" ? <SuarezConnectionCard sys={active} />
           : active.key==="quo" ? <QuoDashboard sys={active} sub={quoSub} />
           : <SystemStatusCard sys={active} />}
       </div>
