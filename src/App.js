@@ -6681,9 +6681,24 @@ function PipePanel({ card, cfg, pipeline, user, contacts, deals, links:initLinks
           </div>
           {(tel||sms||mail) && (
             <div style={{ display:"flex", gap:8, marginTop:14, flexWrap:"wrap" }}>
-              {tel && <a href={tel} onClick={()=>logTouch("call")} style={pipeQa(C.green)}>📞 Call</a>}
-              {sms && <a href={sms} onClick={()=>logTouch("text")} style={pipeQa(C.blue)}>💬 Text</a>}
-              {mail && <a href={mail} onClick={()=>logTouch("email")} style={pipeQa(C.gold)}>✉️ Email</a>}
+              {tel && (
+                <a href={tel} onClick={()=>logTouch("call")} style={{...pipeQa(C.green), display:"flex", flexDirection:"column", alignItems:"center", gap:2}}>
+                  <span>📞 Call</span>
+                  <span style={{ fontSize:10, fontWeight:500, opacity:0.85, letterSpacing:"0.01em" }}>{primary?.phone}</span>
+                </a>
+              )}
+              {sms && (
+                <a href={sms} onClick={()=>logTouch("text")} style={{...pipeQa(C.blue), display:"flex", flexDirection:"column", alignItems:"center", gap:2}}>
+                  <span>💬 Text</span>
+                  <span style={{ fontSize:10, fontWeight:500, opacity:0.85, letterSpacing:"0.01em" }}>{primary?.phone}</span>
+                </a>
+              )}
+              {mail && (
+                <a href={mail} onClick={()=>logTouch("email")} style={{...pipeQa(C.gold), display:"flex", flexDirection:"column", alignItems:"center", gap:2, whiteSpace:"normal", textAlign:"center", wordBreak:"break-all"}}>
+                  <span>✉️ Email</span>
+                  <span style={{ fontSize:10, fontWeight:500, opacity:0.85 }}>{primary?.email}</span>
+                </a>
+              )}
             </div>
           )}
         </div>
@@ -6707,8 +6722,18 @@ function PipePanel({ card, cfg, pipeline, user, contacts, deals, links:initLinks
                   <div key={l.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"7px 10px", background:C.surface2, borderRadius:8 }}>
                     <Avatar name={l.contacts?.full_name||"?"} email={l.contacts?.email} size={28} />
                     <div style={{ flex:1, minWidth:0 }}>
-                      <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:FONT }}>{l.contacts?.full_name}</div>
-                      {l.contacts?.phone && <div style={{ fontSize:10, color:C.text3, fontFamily:FONT }}>{l.contacts.phone}</div>}
+                    <div style={{ fontSize:13, fontWeight:600, color:C.text, fontFamily:FONT }}>{l.contacts?.full_name}</div>
+                    <div style={{ display:"flex", flexDirection:"column", gap:2, marginTop:2 }}>
+                      {l.contacts?.phone && (
+                        <a href={`tel:${(l.contacts.phone).replace(/\D/g,"")}`} style={{ fontSize:11, color:C.green, fontFamily:MONO, textDecoration:"none", letterSpacing:"0.01em" }}>📞 {l.contacts.phone}</a>
+                      )}
+                      {l.contacts?.email && (
+                        <a href={`mailto:${l.contacts.email}`} style={{ fontSize:11, color:C.gold, fontFamily:FONT, textDecoration:"none", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>✉️ {l.contacts.email}</a>
+                      )}
+                      {!l.contacts?.phone && !l.contacts?.email && (
+                        <span style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>No contact info</span>
+                      )}
+                    </div>
                     </div>
                     <select value={l.role||cfg.roles[0]} onChange={e=>setRole(l.id,e.target.value)} style={{ fontSize:10, padding:"3px 5px", background:C.surface, border:`1px solid ${C.border2}`, borderRadius:6, color:C.text2, fontFamily:FONT }}>
                       {cfg.roles.map(r=><option key={r} value={r}>{r}</option>)}
