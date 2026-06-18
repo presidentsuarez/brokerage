@@ -6274,6 +6274,210 @@ const CARD_EMOJIS = ["🏡","🏠","🏘️","🔑","📋","💎","⭐","🔥","
 function pipe$(n){ return n==null||n===""?"—":"$"+Math.round(Number(n)).toLocaleString(); }
 function pipeDate(d){ return d ? new Date(d+"T00:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "—"; }
 
+function PipeDashboard({ cards, allCards, cfg, linksByCard, pipeline }) {
+  const isLease = pipeline === "leasing";
+  const wonId   = isLease ? "Signed" : "Closed";
+  const lostId  = "Lost";
+  const openStages = cfg.stages.filter(s=>![wonId,lostId].includes(s.id)).map(s=>s.id);
+  const f = (n) => (Number(n)||0).toLocaleString("en-US",{maximumFractionDigits:0});
+
+  // Stage funnel data
+  const stageData = cfg.stages.map(st => ({
+    ...st,
+    count: cards.filter(c=>c.stage===st.id).length,
+    value: cards.filter(c=>c.stage===st.id).reduce((a,c)=>a+(Number(c.price)||0),0),
+  }));
+  const maxCount = Math.max(1, ...stageData.map(d=>d.count));
+
+  // KPIs
+  const active  = cards.filter(c=>openStages.includes(c.stage));
+  const signed  = cards.filter(c=>c.stage===wonId);
+  const lost    = cards.filter(c=>c.stage===lostId);
+  const totalRent = active.reduce((a,c)=>a+(Number(c.price)||0),0);
+  const avgRent   = active.length ? Math.round(totalRent/active.length) : 0;
+  const convRate  = cards.length ? Math.round((signed.length/cards.length)*100) : 0;
+
+  // Rent distribution
+  const rentBuckets = [
+    { label:"<$1k",       min:0,    max:999 },
+    { label:"$1k–$1.5k",  min:1000, max:1499 },
+    { label:"$1.5k–$2k",  min:1500, max:1999 },
+    { label:"$2k–$3k",    min:2000, max:2999 },
+    { label:"$3k+",       min:3000, max:Infinity },
+  ];
+  const rentDist = rentBuckets.map(b=>({ ...b, count:cards.filter(c=>{ const p=Number(c.price)||0; return p>=b.min&&p<=b.max; }).length }));
+  const maxRent  = Math.max(1,...rentDist.map(b=>b.count));
+
+  // Move-in calendar: upcoming 60 days
+  const today = new Date(); today.setHours(0,0,0,0);
+  const in60  = new Date(today); in60.setDate(today.getDate()+60);
+  const upcoming = cards
+    .filter(c=>c.target_date && openStages.includes(c.stage))
+    .map(c=>({ ...c, d:new Date(c.target_date+"T00:00:00") }))
+    .filter(c=>c.d>=today&&c.d<=in60)
+    .sort((a,b)=>a.d-b.d);
+  const overdue = cards
+    .filter(c=>c.target_date && openStages.includes(c.stage))
+    .filter(c=>new Date(c.target_date+"T00:00:00")<today);
+
+  // Agent breakdown
+  const byAgent = {};
+  cards.forEach(c=>{ const a=c.assigned_to?.split("@")[0]||"Unassigned"; byAgent[a]=(byAgent[a]||{count:0,rent:0}); byAgent[a].count++; byAgent[a].rent+=Number(c.price)||0; });
+  const agents = Object.entries(byAgent).sort((a,b)=>b[1].count-a[1].count).slice(0,6);
+
+  // No-contact cards
+  const noPhone = cards.filter(c=>(linksByCard[c.id]||[]).length>0 && !(linksByCard[c.id]||[]).some(l=>l.contacts?.phone));
+  const noEmail = cards.filter(c=>(linksByCard[c.id]||[]).length>0 && !(linksByCard[c.id]||[]).some(l=>l.contacts?.email));
+  const noContact = cards.filter(c=>!(linksByCard[c.id]||[]).length);
+
+  const SecTitle = ({children}) => (
+    <div style={{ fontSize:10, fontWeight:800, color:C.text3, letterSpacing:"0.09em", textTransform:"uppercase", fontFamily:FONT, marginBottom:12 }}>{children}</div>
+  );
+  const Card = ({children, style}) => (
+    <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:"18px 20px", ...style }}>{children}</div>
+  );
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+
+      {/* KPI row */}
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(148px,1fr))", gap:10 }}>
+        {[
+          { l:"Total in pipeline", v:cards.length,          c:C.gold },
+          { l:"Active",            v:active.length,          c:C.blue },
+          { l:wonId,               v:signed.length,          c:C.green },
+          { l:"Lost",              v:lost.length,            c:C.red },
+          { l:"Avg rent/mo",       v:`$${f(avgRent)}`,       c:C.amber },
+          { l:"Conv. rate",        v:`${convRate}%`,         c:C.purple||C.gold },
+        ].map(k=>(
+          <div key={k.l} style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:"14px 16px" }}>
+            <div style={{ fontSize:22, fontWeight:800, color:k.c, fontFamily:SERIF, lineHeight:1 }}>{k.v}</div>
+            <div style={{ fontSize:10, fontWeight:700, color:C.text3, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.07em", marginTop:5 }}>{k.l}</div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display:"flex", gap:16, flexWrap:"wrap" }}>
+
+        {/* Stage funnel */}
+        <Card style={{ flex:"1 1 340px" }}>
+          <SecTitle>Stage funnel</SecTitle>
+          <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
+            {stageData.map(st=>(
+              <div key={st.id}>
+                <div style={{ display:"flex", justifyContent:"space-between", fontSize:12, fontFamily:FONT, marginBottom:4 }}>
+                  <span style={{ color:C.text2 }}>{st.emoji} {st.label}</span>
+                  <span style={{ color:st.color, fontWeight:700 }}>{st.count}{isLease&&st.value>0?<span style={{color:C.text3,fontWeight:400}}> · ${f(st.value)}/mo</span>:""}</span>
+                </div>
+                <div style={{ height:8, background:C.surface2, borderRadius:5, overflow:"hidden" }}>
+                  <div style={{ width:`${Math.round((st.count/maxCount)*100)}%`, height:"100%", background:`linear-gradient(90deg,${st.color},${st.color}88)`, borderRadius:5, transition:"width 0.7s cubic-bezier(.2,.8,.2,1)" }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+
+        {/* Rent distribution — leasing only */}
+        {isLease && (
+          <Card style={{ flex:"1 1 260px" }}>
+            <SecTitle>Rent distribution</SecTitle>
+            <div style={{ display:"flex", flexDirection:"column", gap:9 }}>
+              {rentDist.map(b=>(
+                <div key={b.label}>
+                  <div style={{ display:"flex", justifyContent:"space-between", fontSize:12, fontFamily:FONT, marginBottom:4 }}>
+                    <span style={{ color:C.text2 }}>{b.label}</span>
+                    <span style={{ color:C.gold, fontWeight:700 }}>{b.count}</span>
+                  </div>
+                  <div style={{ height:8, background:C.surface2, borderRadius:5, overflow:"hidden" }}>
+                    <div style={{ width:`${Math.round((b.count/maxRent)*100)}%`, height:"100%", background:`linear-gradient(90deg,${C.gold},${C.gold}66)`, borderRadius:5, transition:"width 0.7s cubic-bezier(.2,.8,.2,1)" }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+        )}
+
+        {/* Agent breakdown */}
+        {agents.length>0 && (
+          <Card style={{ flex:"1 1 260px" }}>
+            <SecTitle>By agent</SecTitle>
+            <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+              {agents.map(([name,d])=>(
+                <div key={name} style={{ display:"flex", alignItems:"center", gap:10 }}>
+                  <div style={{ width:28, height:28, borderRadius:7, background:C.surface2, border:`1px solid ${C.border}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, fontWeight:700, color:C.gold, fontFamily:SERIF, flexShrink:0 }}>{name.charAt(0).toUpperCase()}</div>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ fontSize:12, fontWeight:600, color:C.text, fontFamily:FONT }}>{name}</div>
+                    {isLease && d.rent>0 && <div style={{ fontSize:10, color:C.text3, fontFamily:MONO }}>${f(d.rent)}/mo total</div>}
+                  </div>
+                  <span style={{ fontSize:14, fontWeight:800, color:C.text, fontFamily:SERIF }}>{d.count}</span>
+                </div>
+              ))}
+            </div>
+          </Card>
+        )}
+      </div>
+
+      <div style={{ display:"flex", gap:16, flexWrap:"wrap" }}>
+
+        {/* Upcoming move-ins */}
+        <Card style={{ flex:"1 1 340px" }}>
+          <SecTitle>Upcoming move-ins (next 60 days)</SecTitle>
+          {overdue.length>0 && (
+            <div style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 12px", background:"rgba(239,68,68,0.08)", border:"1px solid rgba(239,68,68,0.25)", borderRadius:8, marginBottom:12 }}>
+              <span style={{ fontSize:14 }}>⚠️</span>
+              <span style={{ fontSize:12, fontWeight:700, color:C.red, fontFamily:FONT }}>{overdue.length} overdue — move-in date has passed</span>
+            </div>
+          )}
+          {upcoming.length===0 ? (
+            <div style={{ fontSize:12, color:C.text3, fontFamily:FONT }}>No upcoming move-ins with a target date set.</div>
+          ) : (
+            <div style={{ display:"flex", flexDirection:"column", gap:7 }}>
+              {upcoming.slice(0,8).map(c=>{
+                const daysOut = Math.round((c.d-today)/(1000*60*60*24));
+                const stg = cfg.stages.find(s=>s.id===c.stage)||cfg.stages[0];
+                return (
+                  <div key={c.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 10px", background:C.surface2, borderRadius:8 }}>
+                    <div style={{ width:38, flexShrink:0, textAlign:"center" }}>
+                      <div style={{ fontSize:15, fontWeight:800, color:daysOut<=7?C.red:daysOut<=14?C.amber:C.text, fontFamily:SERIF, lineHeight:1 }}>{daysOut}</div>
+                      <div style={{ fontSize:9, color:C.text3, fontFamily:FONT }}>days</div>
+                    </div>
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <div style={{ fontSize:12.5, fontWeight:600, color:C.text, fontFamily:FONT, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{c.title||(linksByCard[c.id]||[])[0]?.contacts?.full_name||c.property_address||"(untitled)"}</div>
+                      <div style={{ fontSize:10, color:C.text3, fontFamily:FONT }}>{c.d.toLocaleDateString("en-US",{month:"short",day:"numeric"})} · {stg.emoji} {stg.label}</div>
+                    </div>
+                    <span style={{ fontSize:11, fontWeight:700, color:C.gold, fontFamily:MONO, whiteSpace:"nowrap" }}>{pipe$(c.price)}/mo</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </Card>
+
+        {/* Contact gaps */}
+        <Card style={{ flex:"1 1 280px" }}>
+          <SecTitle>Contact info gaps</SecTitle>
+          {[
+            { label:"Missing contact entirely", count:noContact.length, icon:"👤", color:C.red },
+            { label:"No phone number",          count:noPhone.length,   icon:"📵", color:C.amber },
+            { label:"No email address",         count:noEmail.length,   icon:"📭", color:C.amber },
+          ].map(row=>(
+            <div key={row.label} style={{ display:"flex", alignItems:"center", gap:10, padding:"9px 0", borderBottom:`1px solid ${C.border}` }}>
+              <span style={{ fontSize:16 }}>{row.icon}</span>
+              <span style={{ flex:1, fontSize:12.5, color:C.text2, fontFamily:FONT }}>{row.label}</span>
+              <span style={{ fontSize:16, fontWeight:800, color:row.count>0?row.color:C.green, fontFamily:SERIF }}>{row.count}</span>
+            </div>
+          ))}
+          <div style={{ fontSize:11, color:C.text3, fontFamily:FONT, marginTop:10, lineHeight:1.5 }}>
+            {noContact.length+noPhone.length+noEmail.length===0
+              ? "✅ All contacts have full info."
+              : "Open the card and fill in the missing info so Call and Email buttons work."}
+          </div>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
 function PipelineView({ pipeline, user }) {
   const isMobile = useIsMobile();
   const cfg = PIPELINE_CONFIG[pipeline];
@@ -6286,6 +6490,10 @@ function PipelineView({ pipeline, user }) {
   const [mode, setMode] = useState("pipeline");
   const [q, setQ] = useState("");
   const [fAssign, setFAssign] = useState("all");
+  const [fStage,  setFStage]  = useState("all");
+  const [fRent,   setFRent]   = useState("all");
+  const [fMovein, setFMovein] = useState("all");
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [showNew, setShowNew] = useState(false);
   const [toast, setToast] = useState(null);
 
@@ -6306,6 +6514,25 @@ function PipelineView({ pipeline, user }) {
   const cardTitle = (c)=> c.title || c.property_address || (linksByCard[c.id]?.[0]?.contacts?.full_name) || "(untitled)";
   const filtered = cards.filter(c=>{
     if(fAssign!=="all" && (c.assigned_to||"")!==fAssign) return false;
+    if(fStage!=="all"  && c.stage!==fStage) return false;
+    if(fRent!=="all"){
+      const p=Number(c.price)||0;
+      if(fRent==="lt1000"  && p>=1000) return false;
+      if(fRent==="1k2k"    && (p<1000||p>=2000)) return false;
+      if(fRent==="2k3k"    && (p<2000||p>=3000)) return false;
+      if(fRent==="gt3k"    && p<3000) return false;
+    }
+    if(fMovein!=="all" && c.target_date){
+      const today=new Date(); today.setHours(0,0,0,0);
+      const d=new Date(c.target_date+"T00:00:00");
+      const monthStart=new Date(today.getFullYear(),today.getMonth(),1);
+      const monthEnd=new Date(today.getFullYear(),today.getMonth()+1,0);
+      const nextMonthStart=new Date(today.getFullYear(),today.getMonth()+1,1);
+      const nextMonthEnd=new Date(today.getFullYear(),today.getMonth()+2,0);
+      if(fMovein==="this_month" && (d<monthStart||d>monthEnd)) return false;
+      if(fMovein==="next_month" && (d<nextMonthStart||d>nextMonthEnd)) return false;
+      if(fMovein==="overdue"    && d>=today) return false;
+    } else if(fMovein!=="all" && !c.target_date) return false;
     if(q){
       const names=(linksByCard[c.id]||[]).map(l=>l.contacts?.full_name||"").join(" ");
       const hay=`${cardTitle(c)} ${c.property_address} ${c.property_city} ${names}`.toLowerCase();
@@ -6313,6 +6540,12 @@ function PipelineView({ pipeline, user }) {
     }
     return true;
   });
+  const activeFilters = [
+    fAssign!=="all"?"Agent":"",
+    fStage!=="all"?"Stage":"",
+    fRent!=="all"?"Rent":"",
+    fMovein!=="all"?"Move-in":"",
+  ].filter(Boolean);
 
   const openStages = cfg.stages.filter(s=>!["Closed","Signed","Lost"].includes(s.id)).map(s=>s.id);
   const wonId = pipeline==="leasing" ? "Signed" : "Closed";
@@ -6341,22 +6574,73 @@ function PipelineView({ pipeline, user }) {
         ))}
       </div>
 
-      <div style={{ display:"flex", flexWrap:"wrap", gap:8, alignItems:"center", marginBottom:14 }}>
+      <div style={{ display:"flex", flexWrap:"wrap", gap:8, alignItems:"center", marginBottom:8 }}>
         <div style={{ display:"flex", gap:4, background:C.surface2, borderRadius:8, padding:3 }}>
-          {[["pipeline","Board"],["list","List"]].map(([v,l])=>(
+          {[["pipeline","Board"],["list","List"],["dashboard","Dashboard"]].map(([v,l])=>(
             <button key={v} onClick={()=>setMode(v)} style={{ padding:"6px 14px", borderRadius:6, border:"none",
-              background:mode===v?C.gold:"transparent", color:mode===v?"#0a0a0a":C.text2, fontSize:12, fontWeight:600, fontFamily:FONT, cursor:"pointer" }}>{l}</button>
+              background:mode===v?C.gold:"transparent", color:mode===v?"#0a0a0a":C.text2,
+              fontSize:12, fontWeight:600, fontFamily:FONT, cursor:"pointer" }}>{l}</button>
           ))}
         </div>
         <input value={q} onChange={e=>setQ(e.target.value)} placeholder={`Search ${cfg.name.toLowerCase()}…`}
-          style={{ flex:"1 1 200px", minWidth:160, padding:"8px 12px", background:C.surface2, border:`1.5px solid ${C.border2}`, borderRadius:8, color:C.text, fontSize:13, fontFamily:FONT, outline:"none" }} />
-        {assignees.length>0 && (
-          <select value={fAssign} onChange={e=>setFAssign(e.target.value)} style={pipeSelStyle()}>
-            <option value="all">All agents</option>{assignees.map(c=><option key={c} value={c}>{c.split("@")[0]}</option>)}
-          </select>
-        )}
+          style={{ flex:"1 1 180px", minWidth:140, padding:"8px 12px", background:C.surface2, border:`1.5px solid ${C.border2}`, borderRadius:8, color:C.text, fontSize:13, fontFamily:FONT, outline:"none" }} />
+        <button onClick={()=>setFiltersOpen(o=>!o)} style={{ display:"flex", alignItems:"center", gap:6, padding:"8px 12px", borderRadius:8, border:`1.5px solid ${activeFilters.length>0?C.goldBorder:C.border2}`, background:activeFilters.length>0?C.goldDim:"transparent", color:activeFilters.length>0?C.gold:C.text2, fontSize:12, fontWeight:600, fontFamily:FONT, cursor:"pointer", whiteSpace:"nowrap" }}>
+          🎛 Filters{activeFilters.length>0?` (${activeFilters.length})`:""}
+        </button>
         <GoldButton small onClick={()=>setShowNew(true)}>{cfg.emoji} New {cfg.noun}</GoldButton>
       </div>
+      {filtersOpen && (
+        <div style={{ display:"flex", flexWrap:"wrap", gap:8, marginBottom:12, padding:"12px 14px", background:C.surface, border:`1px solid ${C.border}`, borderRadius:10 }}>
+          {assignees.length>0 && (
+            <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
+              <span style={{ fontSize:10, fontWeight:700, color:C.text3, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.06em" }}>Agent</span>
+              <select value={fAssign} onChange={e=>setFAssign(e.target.value)} style={pipeSelStyle()}>
+                <option value="all">All agents</option>
+                {assignees.map(a=><option key={a} value={a}>{a.split("@")[0]}</option>)}
+              </select>
+            </div>
+          )}
+          <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
+            <span style={{ fontSize:10, fontWeight:700, color:C.text3, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.06em" }}>Stage</span>
+            <select value={fStage} onChange={e=>setFStage(e.target.value)} style={pipeSelStyle()}>
+              <option value="all">All stages</option>
+              {cfg.stages.map(s=><option key={s.id} value={s.id}>{s.emoji} {s.label}</option>)}
+            </select>
+          </div>
+          {pipeline==="leasing" && (
+            <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
+              <span style={{ fontSize:10, fontWeight:700, color:C.text3, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.06em" }}>Monthly Rent</span>
+              <select value={fRent} onChange={e=>setFRent(e.target.value)} style={pipeSelStyle()}>
+                <option value="all">Any rent</option>
+                <option value="lt1000">Under $1,000</option>
+                <option value="1k2k">$1,000 – $1,999</option>
+                <option value="2k3k">$2,000 – $2,999</option>
+                <option value="gt3k">$3,000+</option>
+              </select>
+            </div>
+          )}
+          <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
+            <span style={{ fontSize:10, fontWeight:700, color:C.text3, fontFamily:FONT, textTransform:"uppercase", letterSpacing:"0.06em" }}>{pipeline==="leasing"?"Move-in":"Target close"}</span>
+            <select value={fMovein} onChange={e=>setFMovein(e.target.value)} style={pipeSelStyle()}>
+              <option value="all">Any date</option>
+              <option value="this_month">This month</option>
+              <option value="next_month">Next month</option>
+              <option value="overdue">Overdue</option>
+            </select>
+          </div>
+          {activeFilters.length>0 && (
+            <div style={{ display:"flex", alignItems:"flex-end" }}>
+              <button onClick={()=>{ setFAssign("all"); setFStage("all"); setFRent("all"); setFMovein("all"); }}
+                style={{ padding:"7px 12px", borderRadius:8, border:`1px solid ${C.border2}`, background:"transparent", color:C.red, fontSize:11, fontWeight:700, fontFamily:FONT, cursor:"pointer" }}>
+                ✕ Clear all
+              </button>
+            </div>
+          )}
+          <div style={{ width:"100%", fontSize:11, color:C.text3, fontFamily:FONT, marginTop:2 }}>
+            Showing {filtered.length} of {cards.length} {cfg.name.toLowerCase()}
+          </div>
+        </div>
+      )}
 
       {loading ? (
         <div style={{ padding:"40px 0", textAlign:"center", color:C.text3, fontSize:13, fontFamily:FONT }}>Loading {cfg.name.toLowerCase()}…</div>
@@ -6385,6 +6669,8 @@ function PipelineView({ pipeline, user }) {
             );
           })}
         </div>
+      ) : mode==="dashboard" ? (
+        <PipeDashboard cards={filtered} allCards={cards} cfg={cfg} linksByCard={linksByCard} pipeline={pipeline} />
       ) : (
         <div style={{ display:"flex", flexDirection:"column", gap:7 }}>
           <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>{filtered.length} of {cards.length}</div>
