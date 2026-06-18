@@ -6281,6 +6281,68 @@ function PipeDashboard({ cards, allCards, cfg, linksByCard, pipeline }) {
   const openStages = cfg.stages.filter(s=>![wonId,lostId].includes(s.id)).map(s=>s.id);
   const f = (n) => (Number(n)||0).toLocaleString("en-US",{maximumFractionDigits:0});
 
+  // Activity feed
+  const [activities, setActivities] = useState([]);
+  const [actLoading, setActLoading] = useState(true);
+  useEffect(()=>{
+    const cardIds = allCards.map(c=>c.id);
+    if(!cardIds.length){ setActLoading(false); return; }
+    (async()=>{
+      const { data } = await supabase.from("pipeline_card_activities")
+        .select("id,card_id,activity_type,channel,content,created_by,created_at")
+        .in("card_id", cardIds)
+        .order("created_at",{ascending:false})
+        .limit(80);
+      // Build a card lookup from allCards
+      setActivities(data||[]);
+      setActLoading(false);
+    })();
+    /* eslint-disable-next-line */
+  },[pipeline]);
+
+  // Also synthesize recent card changes (stage moves, edits) from updated_at
+  const recentMoves = [...allCards]
+    .filter(c=>c.updated_at && new Date(c.updated_at)-new Date(c.created_at) > 60000)
+    .sort((a,b)=>new Date(b.updated_at)-new Date(a.updated_at))
+    .slice(0,20)
+    .map(c=>({
+      id:"move_"+c.id,
+      card_id:c.id,
+      activity_type:"stage_update",
+      content:`Moved to ${cfg.stages.find(s=>s.id===c.stage)?.label||c.stage}`,
+      created_by:c.assigned_to||"",
+      created_at:c.updated_at,
+      _synthetic:true,
+    }));
+
+  // Merge and sort real activities + stage moves, deduplicate by timestamp window
+  const cardById = Object.fromEntries(allCards.map(c=>[c.id,c]));
+  const allActivity = [...activities,...recentMoves]
+    .sort((a,b)=>new Date(b.created_at)-new Date(a.created_at))
+    .slice(0,60);
+
+  const actIcon = (type,channel) => {
+    const k=type||channel||"";
+    if(/call/i.test(k)) return {i:"📞",c:C.green,l:"Call"};
+    if(/text|sms/i.test(k)) return {i:"💬",c:C.blue,l:"Text"};
+    if(/email/i.test(k)) return {i:"✉️",c:C.gold,l:"Email"};
+    if(/note|comment/i.test(k)) return {i:"📝",c:C.amber,l:"Note"};
+    if(/stage|move/i.test(k)) return {i:"↕️",c:C.purple||C.text3,l:"Stage"};
+    if(/view/i.test(k)) return {i:"👁️",c:C.text3,l:"View"};
+    return {i:"•",c:C.text3,l:"Update"};
+  };
+
+  const relTime = (iso) => {
+    const diff = Date.now()-new Date(iso).getTime();
+    const m=Math.floor(diff/60000),h=Math.floor(m/60),d=Math.floor(h/24);
+    if(m<2) return "just now";
+    if(m<60) return `${m}m ago`;
+    if(h<24) return `${h}h ago`;
+    if(d===1) return "yesterday";
+    if(d<7) return `${d}d ago`;
+    return new Date(iso).toLocaleDateString("en-US",{month:"short",day:"numeric"});
+  };
+
   // Stage funnel data
   const stageData = cfg.stages.map(st => ({
     ...st,
@@ -6474,6 +6536,47 @@ function PipeDashboard({ cards, allCards, cfg, linksByCard, pipeline }) {
           </div>
         </Card>
       </div>
+
+      {/* Activity log */}
+      <Card>
+        <SecTitle>Activity log</SecTitle>
+        {actLoading ? (
+          <div style={{ fontSize:12, color:C.text3, fontFamily:FONT }}>Loading activity…</div>
+        ) : allActivity.length===0 ? (
+          <div style={{ fontSize:12, color:C.text3, fontFamily:FONT }}>No activity recorded yet. Calls, texts, emails, and notes logged on cards will appear here.</div>
+        ) : (
+          <div style={{ display:"flex", flexDirection:"column" }}>
+            {allActivity.map((a,i)=>{
+              const card = cardById[a.card_id];
+              const cardName = card?.title || (linksByCard[a.card_id]||[])[0]?.contacts?.full_name || card?.property_address || "Unknown card";
+              const stg = card ? cfg.stages.find(s=>s.id===card.stage) : null;
+              const act = actIcon(a.activity_type, a.channel);
+              const agent = (a.created_by||"").split("@")[0];
+              const content = (a.content||"").replace(/^(call|text|email|note)$/i,"").trim();
+              return (
+                <div key={a.id} style={{ display:"flex", gap:12, padding:"10px 0", borderTop:i?`1px solid ${C.border}`:"none", alignItems:"flex-start" }}>
+                  {/* icon */}
+                  <div style={{ width:32, height:32, borderRadius:8, background:act.c+"1a", border:`1px solid ${act.c}44`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:15, flexShrink:0, marginTop:1 }}>{act.i}</div>
+                  {/* body */}
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ display:"flex", alignItems:"center", gap:7, flexWrap:"wrap", marginBottom:2 }}>
+                      <span style={{ fontSize:13, fontWeight:700, color:C.text, fontFamily:FONT, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:"55%" }}>{cardName}</span>
+                      {stg && <span style={{ fontSize:10, fontWeight:700, color:stg.color, background:stg.color+"18", border:`1px solid ${stg.color}44`, borderRadius:20, padding:"1px 8px", whiteSpace:"nowrap" }}>{stg.emoji} {stg.label}</span>}
+                      <span style={{ fontSize:11, color:act.c, fontWeight:600, fontFamily:FONT }}>{act.l}</span>
+                    </div>
+                    {content && <div style={{ fontSize:12.5, color:C.text2, fontFamily:FONT, lineHeight:1.5, marginBottom:2 }}>{content}</div>}
+                    <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>{agent && <><span style={{ fontWeight:600, color:C.text3 }}>{agent}</span> · </>}{relTime(a.created_at)}</div>
+                  </div>
+                  {/* time */}
+                  <div style={{ fontSize:10, color:C.text3, fontFamily:FONT, whiteSpace:"nowrap", flexShrink:0, marginTop:2 }}>
+                    {new Date(a.created_at).toLocaleDateString("en-US",{month:"short",day:"numeric"})}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Card>
     </div>
   );
 }
@@ -6576,7 +6679,7 @@ function PipelineView({ pipeline, user }) {
 
       <div style={{ display:"flex", flexWrap:"wrap", gap:8, alignItems:"center", marginBottom:8 }}>
         <div style={{ display:"flex", gap:4, background:C.surface2, borderRadius:8, padding:3 }}>
-          {[["pipeline","Board"],["list","List"],["dashboard","Dashboard"]].map(([v,l])=>(
+          {[["dashboard","Dashboard"],["pipeline","Board"],["list","List"]].map(([v,l])=>(
             <button key={v} onClick={()=>setMode(v)} style={{ padding:"6px 14px", borderRadius:6, border:"none",
               background:mode===v?C.gold:"transparent", color:mode===v?"#0a0a0a":C.text2,
               fontSize:12, fontWeight:600, fontFamily:FONT, cursor:"pointer" }}>{l}</button>
