@@ -6285,16 +6285,18 @@ function PipeDashboard({ cards, allCards, cfg, linksByCard, pipeline }) {
   const [activities, setActivities] = useState([]);
   const [actLoading, setActLoading] = useState(true);
   useEffect(()=>{
-    const cardIds = allCards.map(c=>c.id);
-    if(!cardIds.length){ setActLoading(false); return; }
+    const cardIdSet = new Set(allCards.map(c=>c.id));
+    if(!cardIdSet.size){ setActLoading(false); return; }
     (async()=>{
-      const { data } = await supabase.from("pipeline_card_activities")
+      // Query by org_id (avoids URL-length limit of .in() with 100+ UUIDs)
+      const { data, error } = await supabase.from("pipeline_card_activities")
         .select("id,card_id,activity_type,channel,content,created_by,created_at")
-        .in("card_id", cardIds)
+        .eq("org_id", ORG_ID)
         .order("created_at",{ascending:false})
-        .limit(80);
-      // Build a card lookup from allCards
-      setActivities(data||[]);
+        .limit(300);
+      // Filter to this pipeline's cards client-side
+      const pipelineActs = (data||[]).filter(a => cardIdSet.has(a.card_id));
+      setActivities(pipelineActs);
       setActLoading(false);
     })();
     /* eslint-disable-next-line */
@@ -6564,7 +6566,12 @@ function PipeDashboard({ cards, allCards, cfg, linksByCard, pipeline }) {
                       {stg && <span style={{ fontSize:10, fontWeight:700, color:stg.color, background:stg.color+"18", border:`1px solid ${stg.color}44`, borderRadius:20, padding:"1px 8px", whiteSpace:"nowrap" }}>{stg.emoji} {stg.label}</span>}
                       <span style={{ fontSize:11, color:act.c, fontWeight:600, fontFamily:FONT }}>{act.l}</span>
                     </div>
-                    {content && <div style={{ fontSize:12.5, color:C.text2, fontFamily:FONT, lineHeight:1.5, marginBottom:2 }}>{content}</div>}
+                    {content && (
+                    <div style={{ fontSize:12.5, color:C.text2, fontFamily:FONT, lineHeight:1.6, marginBottom:3, whiteSpace:"pre-wrap", wordBreak:"break-word",
+                      ...(content.length>120?{ maxHeight:96, overflowY:"auto" }:{}) }}>
+                      {content}
+                    </div>
+                  )}
                     <div style={{ fontSize:11, color:C.text3, fontFamily:FONT }}>{agent && <><span style={{ fontWeight:600, color:C.text3 }}>{agent}</span> · </>}{relTime(a.created_at)}</div>
                   </div>
                   {/* time */}
@@ -6590,7 +6597,7 @@ function PipelineView({ pipeline, user }) {
   const [deals, setDeals] = useState([]);
   const [loading, setLoad] = useState(true);
   const [sel, setSel] = useState(null);
-  const [mode, setMode] = useState("pipeline");
+  const [mode, setMode] = useState(pipeline === "leasing" ? "dashboard" : "pipeline");
   const [q, setQ] = useState("");
   const [fAssign, setFAssign] = useState("all");
   const [fStage,  setFStage]  = useState("all");
