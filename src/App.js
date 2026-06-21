@@ -99,6 +99,7 @@ const NAV = [
   { id:"listings",  label:"Listings",  icon:"📋" },
   { id:"buyers",    label:"Buyers",    icon:"🏠" },
   { id:"leasing",   label:"Leasing",   icon:"🔑" },
+  { id:"management", label:"Management", icon:"🏢" },
   { id:"recruiting", label:"Recruiting",  icon:"🎯", recruitGate:true },
   { id:"applications",label:"Applications",icon:"📥", adminOnly:true },
   { id:"organization",label:"Organization",icon:"🏛️" },
@@ -113,7 +114,7 @@ const NAV = [
 
 // Sidebar grouping: collapsible sections. Items keep their own gating from NAV.
 const NAV_GROUPS = [
-  { group:"realestate", label:"Real Estate", icon:"🏢", items:["deals","listings","buyers","leasing"] },
+  { group:"realestate", label:"Real Estate", icon:"🏢", items:["deals","listings","buyers","leasing","management"] },
   { group:"people",     label:"People",      icon:"👥", items:["contacts","recruiting","applications"] },
   { group:"finance",    label:"Finance",     icon:"💰", items:["financials","performance"] },
   { group:"workspace",  label:"Workspace",   icon:"🗂️", items:["planning","calendar"] },
@@ -6268,6 +6269,19 @@ const PIPELINE_CONFIG = {
       { id:"Lost",           label:"Lost",           emoji:"💤", color:C.red },
     ],
   },
+  management: {
+    emoji:"🏢", name:"Management", noun:"Property", priceLabel:"Mgmt Fee/mo", dateLabel:"Start Date",
+    titleHint:"Property or owner name", roles:["Owner","Co-Owner","Tenant","Contractor","Other"],
+    stages:[
+      { id:"New Lead",     label:"New Lead",     emoji:"🌱", color:C.text2 },
+      { id:"Evaluation",   label:"Evaluation",   emoji:"🔍", color:C.blue },
+      { id:"Proposal",     label:"Proposal",     emoji:"📄", color:C.amber },
+      { id:"Signed",       label:"Signed",       emoji:"✍️", color:C.purple },
+      { id:"Active",       label:"Active",       emoji:"🏢", color:C.green },
+      { id:"Off-boarded",  label:"Off-boarded",  emoji:"📦", color:C.text3 },
+      { id:"Lost",         label:"Lost",         emoji:"💤", color:C.red },
+    ],
+  },
 };
 const CARD_EMOJIS = ["🏡","🏠","🏘️","🔑","📋","💎","⭐","🔥","🌊","🌴","🏙️","💰","📈","🤝","🛎️","🏖️"];
 
@@ -11418,6 +11432,7 @@ function MainApp() {
     listings:   ["Listings Pipeline", "Seller-side opportunities"],
     buyers:     ["Buyers Pipeline", "Buyer-side opportunities"],
     leasing:    ["Leasing Pipeline", "Tenant & rental opportunities"],
+    management: ["Management Pipeline", "Property management opportunities"],
     applications:["Applications", "Agent Onboarding Queue"],
     recruiting:["Recruiting Pipeline", "Producing-agent prospects · Admin only"],
     financials:  ["Financials",   "Agent Packages & Deal P&L"],
@@ -11475,7 +11490,8 @@ function MainApp() {
           {view==="calendar"   &&<CalendarView    user={cu} />}
           {view==="listings"   &&<PipelineView pipeline="listing" user={cu} />}
           {view==="buyers"     &&<PipelineView pipeline="buyer"   user={cu} />}
-          {view==="leasing"    &&<PipelineView pipeline="leasing" user={cu} />}
+          {view==="leasing"    &&<PipelineView pipeline="leasing"     user={cu} />}
+          {view==="management" &&<PipelineView pipeline="management" user={cu} />}
           {view==="applications"&&<ApplicationsView user={cu} />}
           {view==="recruiting"  &&<RecruitingView   user={cu} />}
           {view==="financials"  &&<FinancialsView   user={cu} />}
