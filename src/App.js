@@ -126,8 +126,14 @@ const NAV_BY_ID = Object.fromEntries(NAV.map(n=>[n.id,n]));
 
 function AriMark({ size=32 }) {
   return (
-    <img src={`${process.env.PUBLIC_URL}/logo512.png?v=4`} alt="Realty ONE Group Advantage" width={size} height={size}
+    <img src={`${process.env.PUBLIC_URL}/prism-icon.png?v=5`} alt="Realty ONE Group Advantage" width={size} height={size}
       style={{ width:size, height:size, flexShrink:0, display:"block", borderRadius:size*0.22, objectFit:"cover" }} />
+  );
+}
+function AriLoginMark({ size=80 }) {
+  return (
+    <img src={`${process.env.PUBLIC_URL}/ari-icon.png?v=5`} alt="Ari" width={size} height={size}
+      style={{ width:size, height:size, flexShrink:0, display:"block", borderRadius:size*0.185, objectFit:"cover" }} />
   );
 }
 
@@ -327,7 +333,7 @@ function LoadingScreen({ message="Loading\u2026" }) {
     <div style={{ minHeight:"100vh", background:C.bg, display:"flex",
       flexDirection:"column", alignItems:"center", justifyContent:"center", gap:20 }}>
       <div style={{ animation:"pulse 1.8s ease-in-out infinite" }}>
-        <AriMark size={48} />
+        <AriLoginMark size={60} />
       </div>
       <p style={{ color:C.text2, fontSize:13, fontFamily:FONT, margin:0 }}>{message}</p>
       <style>{`@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.55;transform:scale(0.88)}}`}</style>
@@ -342,9 +348,12 @@ function AuthCard({ children }) {
       <div style={{ width:"100%", maxWidth:400 }}>
         <div style={{ textAlign:"center", marginBottom:34 }}>
           <div style={{ display:"flex", justifyContent:"center", marginBottom:16 }}>
-            <AriMark size={52} />
+            <AriLoginMark size={80} />
           </div>
-          <BrandWordmark variant="auth" />
+          <div style={{ fontFamily:SERIF, fontWeight:800, color:C.text, fontSize:28, letterSpacing:"-0.02em", lineHeight:1.1, marginBottom:6 }}>Ari</div>
+          <div style={{ fontSize:11, color:C.text3, fontFamily:FONT, letterSpacing:"0.10em", textTransform:"uppercase" }}>
+            Realty ONE Group Advantage
+          </div>
         </div>
         <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:28 }}>
           {children}
